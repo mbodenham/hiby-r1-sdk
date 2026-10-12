@@ -5,8 +5,16 @@ New machine source: `hw/mips/x1600.c` (wired via `CONFIG_X1600` in
 `hw/mips/meson.build` + `hw/mips/Kconfig`; FRESH `./configure` is required
 after Kconfig edits — plain `ninja` does not re-evaluate Kconfig).
 
-Status: **kernel boots through the head into the early firmware-args path and
-stops at a reproducible kernel-side BUG_ON.** This file is the bring-up log.
+Status: **the stock kernel boots through its REAL head, prints through
+the emulated UART, calibrates the delay loop, runs initcalls to guest
+time ~0.44 s, and stops inside `dwc2_platform_driver_init` (USB OTG):
+the probe programs the USB PHY PLL (which lives IN the CGU block,
+DTB: /apb/otg_phy @0x10000000 size 0x100) and parks the thread waiting
+for a PLL-lock event the all-zero CGU stub can never report. Timer/IRQ
+delivery, udelay, and sched_clock all work (see v0.14–v0.17).**
+This file is the bring-up log. Sections v0.1–v0.4 below used the WRONG
+entry point (0x80010400 = `run_init_process`); v0.5+ started with the
+real `kernel_entry` and superseded that analysis.
 
 ## Boot attempt history (v0.1 – v0.2 as of this file)
 
@@ -169,3 +177,252 @@ Suspects to test next (in order):
    appears (the stub logging is in the machine code); nothing logged yet
    means no SoC block access happened BEFORE the clock-list BUG — so the
    CGU/TCU models now become trace-driven next steps.
+
+---
+
+# v0.5 – v0.13 (2026-10-12, second session): the entry-point break
+
+**Everything in v0.1–v0.4 chased the wrong PC.** A full kallsyms decode
+of the stock `vmlinux.bin` (unpacked/1.6/vmlinux.bin regenerated from
+xImage via `dd bs=1 skip=16992 | gzip -dc`; md5 dceda6683b9bc56b9a4110530b9add3f)
+pinned every address and the whole picture flipped.
+
+### v0.5: kallsyms decode + real entry point
+
+Blob decode (byte offsets inside vmlinux.bin; vma = 0x80010000 + off):
+- `kallsyms_addresses` @ file 0x5fe820: 44,589 ascending u32 VMAs,
+  0x80010000 … 0x808f9b10.
+- `kallsyms_num_syms` @ 0x62a0e0 = 0xae2d (44,589 ✓).
+- `kallsyms_names` @ 0x62a0f0 (12 bytes of pad after the count):
+  44,589 `[len][tok]…` entries ending exactly at 0x6aa18a.
+- `kallsyms_markers` @ 0x6aa190 (175 u32; first=0, last=0x7fe84).
+- `kallsyms_token_table` @ 0x6aa450 (256 NUL-terminated ASCII tokens,
+  token0="ree_", idx@0x6aa7e0).
+Tooling for this session lives in /tmp/kilo/tierc (kall*.py, dtb.py —
+temporary; regenerate on need). Result: syms.json = full (addr,name) map.
+
+Decisive symbols (image vma):
+- `kernel_entry` = **0x80585c60** — this is the address the stock stub's
+  `k0` held in v0.4 (the "decompressor" misread). It is head.S: CP0
+  Status setup, UHI-ish DTB check (`if *(0x807d414c)==d00dfeed → a0=-2,
+  a1=fdt` — `__appended_dtb`; slot EMPTY in our image ⇒ builtin
+  `__dtb_start` @0x807cdf80 (15,833 B, FDT v40) is what gets used — the
+  old "fw_arg3 DTB pointer" probe is MOOT, head handles it), .bss clear
+  [0x808e0000, 0x808f9b0c), fw_arg0..3 globals @0x808e2360/5c/58/54,
+  kernelsp @0x808e2364, then `j start_kernel` (0x807a2764).
+- `0x80010400` = `run_init_process` (`_stext` also points there). The
+  v0.1–v0.4 11-block BUG chain was: run_init_process → getname_kernel
+  (0x800d0208) → kmem_cache_alloc (0x800be228) → cache_alloc_refill
+  (0x800bdadc, BUG_ON(!array_cache @+0x58) at 0x800bdb44) — SLAB
+  uninitialized because the boot head never ran. CLOSED.
+
+Machine change: reset PC = X1600_KERNEL_ENTRY = 0x80585c60; SP seed
+retained (head sets its own: 0x8075ff28).
+
+### v0.6: plat_mem_setup reached → TCSM0 bus error
+
+With the real head, boot progressed to `plat_mem_setup` (0x807a3748,
+Ingenic vendor code): sets `mips_io_port_base=0xa0000000`, io/iomem
+resource globals @0x80764014/18 & 0x80763ff8/fc, CGU+0x20 RMW at
+0xa0000020, then `sw 0x00010003 → 0xB34F0240` (phys **0x134f0240**) and
+`sw get_fdt_addr() → 0xB34F0244`. Our machine had nothing at
+0x134f0000 → QEMU raised **DBE** → BEV=1 reset vector 0xbfc00380 (empty
+BootROM) → IBE re-loop (the earlier "frozen trace").
+
+Symbols settle the block: `plat_mem_setup` + the PM gang live there —
+`tcpu_resume/tcpu_sleep/tload_func_to_tcsm` all use 0xB34F0000 = off-chip
+PM scratch ("TCSM0"); on silicon it's SRAM, never a bus error. MODELED:
+plain RAM region at phys 0x134f0000, size 0x40000 (unsized in stock DTB;
+PM code only touches +0x0/+0x8/+0x240/+0x244). Also aligned stub sizes
+to the parsed stock DTB (pinctrl 0x1000, pdma/msc 0x10000, intc 0x100).
+
+### v0.7: FIRST SERIAL OUTPUT
+
+`Linux version 4.4.94+ (zcz@androidserver3) … bootconsole [early0]
+enabled … MIPS: machine is ingenic,x1600_halley6_module_base`.
+Fixed: UART0 SCR seeding. The early-uart scan (prom_putchar 0x800135d0 +
+scout 0x80013618) polls each UART+0x1c expecting **0xa9**; QEMU's serial
+device resets SCR to 0 → all four probes miss → putchar_dummy → silent
+boot. On silicon the SPL leaves 0xa9 in SCR. Machine now re-seeds
+UART0's scr after the serial device reset (qemu_register_reset ordering:
+device resets run before legacy handlers registered after realize).
+
+### v0.8–v0.10: fw args shape + PROM placement (bootmem stop cleared)
+
+New stop after "Wasting 512 bytes…": `__bzero` fault, TLB-store at
+A=0x7ffff000. Chain: `init_bootmem_core` (0x807ab1a0) memset(bitmap =
+(pfn<<12)|0x80000000, 0xff, size=(maxpfn-minpfn+7)/8). GDB proved the
+memset DEST = 0x7ffff000 = **((u32)-1 << 12) + 0x80000000** — bitmap pfn
+= -1. Why: setup_arch's own `arch_mem_addpart` calls (0x807a433c) build
+`boot_mem_map` @0x808e2368 with exactly two regions (the bootlog's
+"Determined physical RAM map": [0x10000,0x7a2000) and [0x7a2000,0x8e0000)
+usable-after-init) — both END below the kernel end (0x8fa000), and the
+min-pfn selection loop (setup_arch+0x180, r2-decoded with
+`-m mips:isa32r2`: s5 = max(region_start, kernel_end_page) over regions
+whose end > kernel_end_page) therefore never fires → s5 stays -1 →
+0x7ffff000. The kernel has no `mem=`-less RAM source: extra RAM must
+come from the cmdline (`mem=64M`; handler `__setup_early_parse_mem`
+@0x807d20b8 exists — the "mem=" string I grepped for initially was
+only a substring of "iomem="; the param table stores "mem").
+
+Then: `fw_init_cmdline` (0x807b0b00) semantics (from disasm): if
+fw_arg1 < 0 (signed — KSEG0 pointers ARE negative, that's the "valid"
+case) it takes fw_argc = fw_arg0 & 0xffff, _fw_argv = fw_arg1, and
+copies **argv[1..argc-1]** (argv[0] = bootloader name, SKIPPED) joined
+with spaces into boot_command_line @0x807c68d8. Our old shape
+(argc=1, argv[0]=cmdline) therefore produced an EMPTY cmdline.
+Also found via gdb: the PROM table at phys 0x000d0000 sat INSIDE the
+kernel image [0x10000, 0x7c414c) so `load_image_targphys` overwrote the
+argv table with kernel text (0x800d0000 showed `0x02402025`…).
+Fixes (one round): PROM relocated to phys **0x00a00000** (above the
+image and above the bootmem bitmap [0x8fa000,0x8fa800)), and argv shape
+a0=2, argv={name "linux", cmdline "console=ttyS0,115200 mem=64M", 0},
+envp={0} (+0xC), a2 = envp table.
+
+Result: "User-defined physical RAM map: memory 0x04000000 @ 0x00000000",
+memory zones built (64 MiB), PID hash, Dentry/inode caches, RCU,
+NR_IRQS:200, **"x1600 Clock Power Management Unit init!"** with clock
+list (all CGU-sourced rates = 0 — our CGU stub returns 0; ext_clk = 24
+MHz comes from elsewhere), then a NEW stop:
+`Data bus error, epc == 807b9c88 (ingenic_ost_init+0x168)` — driver
+read at 0xB2000000 = phys 0x12000000: the OST is unmodeled.
+
+### v0.12: OST modeled → calibrate freeze
+
+OST (`/core-ost@0x12000000`, ingenic,x1600-ost, size 0x100 per stock
+DTB) first modeled as plain RW RAM: `ingenic_ost_init` RMWs read fine
+(clocksource registered: "ingenic_clocksource mask 0xffffffffffffffff",
+sched_clock 64 bits at 1500kHz, dummy console…), boot then froze at
+**"Calibrating delay loop…"** — jiffies never tick (no event IRQ).
+
+### v0.13: OST device + OPEN: clockevent IRQ line
+
+OST now a real register block (+perf: writes stored; **+0x14 write =
+compare/event delta → arm a QEMU timer at delta/1.5 MHz; +0x0C write =
+ack → lower IRQ line**; the 1.5 MHz rate is the driver's own derived
+value printed by sched_clock). DRIVER FACTS (disasm 0x80400424-
+0x80400560): `ingenic_set_next_event` writes +0x10/+0x38 +0x0C(-2)
++0x14(delta) +0x8 +0x34 +0x10(-2); `ingenic_timer_interrupt` acks +0xC
+and calls the clockevent handler. Full register sequence captured via LOG_UNIMP
+logging in the model (x1600-ost read/write lines): arm value 0x3a97 =
+14,999 ticks ≈ 10 ms = 100 Hz tick ✓ host-gdb confirms x1600_ost_tick
+runs.
+
+REMAINING BUG: raise goes to `cpu->env.irq[4]` (stock DTB: /core-ost
+interrupt-parent = cpuintc, interrupts = <4>) but the kernel takes
+nothing (`-d int` = zero exceptions taken in 12 s). v0.10 oops dump
+showed Status 0x10000c02 = IM2|IM3 only. Next probes, in order:
+1. Wire the OST to CPU line 3 (mainline x1000.dtsi uses <3> for OST;
+   the vendor cpuintc domain `mips_cpu_intc_map`/`mips_cpu_irq_controller`
+   @0x802762e4 may map hw→IP with an offset) and re-run: watch for
+   "Calibrating delay loop... OK, xxx loops per jiffy".
+2. If that fails, host-gdb the `cpu_mips_irq_request` level=1 path and
+   read CP0_Status/CP0_Cause at arm-time to see which IM bit the kernel
+   actually unmasks (`Trace` symbol map: init_IRQ 0x807a3dec,
+   do_IRQ 0x8001947c).
+3. Then re-enable CGU-pinned reads if a later stage stalls on zero
+   clock rates (the clock-list prints 0 for every CGU-sourced clock;
+   ext=24 MHz).
+### v0.14: OST periodic auto-reload — calibration completes
+
+The v0.13 stop (IRQ raised, jiffies frozen) decoded via the full
+host-gdb → guest-gdb chain: the raise latched Cause.IP4, the guest
+TOOK the HW exception, do_IRQ(4) → ingenic_timer_interrupt ran, and
+`tick_handle_periodic` (event_handler 0x8007e400) executed — but it
+checks `clockevent_state_oneshot` and, seeing mode=2 (PERIODIC),
+returns WITHOUT reprogramming. Vendor HW semantics: a periodic OST
+compare auto-reloads the last +0x14 delta and re-fires. Our model
+armed exactly once → one jiffy, then forever silence inside
+calibrate_delay's wait-for-jiffy-edge.
+
+Fix: `x1600_ost_tick` re-arms `s->period` after each fire. Result:
+jiffies tick (59 ISR acks / 15 s), "Calibrating delay loop" completes,
+boot marches to fuse init, io schedulers, **"loop: module loaded"**,
+then freezes silently — CPU parked in the idle `wait/ei` loop, init
+thread sleeping (no MMIO, no progress).
+
+### v0.15–v0.16: name the blocker — `dwc2_platform_driver_init`
+
+Added `initcall_debug ignore_loglevel` to the machine cmdline (KERN_DEBUG
+is console-suppressed without it). Last line before the silence:
+
+```
+[    0.442656] calling  dwc2_platform_driver_init+0x0/0x10 @ 1
+```
+
+DesignWare USB OTG driver registration; the DTB already created the
+`/ahb2/otg@0x13500000` (ingenic,dwc2-hsotg) platform device, so
+`platform_driver_register` runs `dwc2_driver_probe` (0x8033de74)
+synchronously. Probe chain (kallsyms-resolved): devm_kmalloc →
+`devm_usb_get_phy_by_phandle` (0x80338d9c) → of_clk_get →
+platform_get_irq → devm_request_threaded_irq →
+devm_regulator_get_optional (-19 tolerated) → ioread32 (GSNPSID mode
+detect) → device_create_file ×3 → `usb_add_gadget_udc` (0x8035ee1c)
+→ `dwc2_hsotg_udc_start` → `dwc2_phy_init` (0x8033c2f8).
+
+`-d unimp` at the freeze: the tail is CGU reads **0xC4, 0xC4, 0x24,
+0x20, 0x24** followed by endless OST 0x20/0x24 read pairs. Decoded the
+pairs as `udelay`/`local_delay` spinning on the OST counter — and found
+the counter frozen: `x1600_ost_read` served 0x20/0x24 from the static
+regfile, which nothing ever updates, so it reads 0 forever. Any driver
+wait loop with udelay parks inside udelay. (v0.15 got further only
+because its hot path never called udelay: calibration uses jiffies, the
+early CGU PLL-stable polls are tight MMIO loops.) An earlier 438-read
+burst on CGU+0x00 / 105-read burst on CGU+0x2C is a BOUNDED
+PLL-stable poll that the kernel tolerates — boot continued past it.
+
+### v0.17: OST counter fix — probe passes PHY spin, parks on PLL-lock wait
+
+Fix: `x1600_ost_counter()` = virtual-clock ns × 1.5 MHz (the rate the
+kernel's own "sched_clock: 64 bits at 1500kHz" print derives); 0x20 =
+low 32, 0x24 = high 32; counter reads excluded from the unimp log
+(hot path). Guest timestamps now advance with real durations
+(loop_init 7656 usecs, ingenic_usb_phy_driver_init 3113 usecs) and the
+OST ISR re-arm deltas drift correctly (0x39ce → 0x39f2 → 0x39f4).
+
+Boot reaches the dwc2 call at guest 0.4426 s; the probe now runs the
+PHY PLL sequence (CGU +0xC4/+0x24/+0x20 reads — DTB confirms the PHY
+registers ARE the CGU block: /apb/otg_phy + /apb/otg_new_phy @
+0x10000000 size 0x100, ingenic,innophy-x1600 / ingenic,usbphy-x1600)
+and then the thread PARKS: CPU sits in the idle loop, jiffies + OST
+ISR re-arms continue (the timer is alive), the parked task never
+wakes — consistent with an unbounded completion/IRQ wait for the
+PLL-lock event. Two model gaps behind it:
+
+1. `x1600_stub_write` is a NO-OP (discards every write, logs nothing) —
+   the PHY PLL enable is invisible and the lock bit can never be set.
+2. CGU reads all return 0 — no PLL status semantics.
+
+OPEN (next probes):
+1. Identify the parked task + exact wait (walk the task list from the
+   captured RAM dump /tmp/kilo/tierc/ram16.bin, or break in guest gdb
+   on `schedule`/completion-wake and capture the waking context).
+2. Give the CGU stub a persistent regfile (store writes, log them) and
+   USB-PLL semantics: once the enable is written, the lock-status read
+   returns the locked value. If the driver's wait is bounded instead,
+   the probe should time out and boot continue — verify which.
+3. The OTG core region (0x13500000, size 0x40000 per DTB) is NOT yet
+   mapped; if the probe reaches core registers (it already ioreads the
+   GSNPSID — check where that lands) a bus error will follow. Add the
+   stub when the trace demands it.
+
+Reference table of pinned firmware addresses (vma):
+kernel_entry 0x80585c60 · start_kernel 0x807a2764 · setup_arch
+0x807a43a0 · plat_mem_setup 0x807a3748 · prom_init 0x807a35a0 ·
+fw_init_cmdline 0x807b0b00 · boot_command_line 0x807c68d8 ·
+boot_mem_map 0x808e2368 · fw_arg0..3 0x808e2360/5c/58/54 ·
+bss [0x808e0000, 0x808f9b10) · __dtb_start 0x807cdf80 ·
+__appended_dtb 0x807d414c (empty) · ingenic_ost_init 0x807b9b20 ·
+clocksource_probe 0x807b5cb8 · of_clk_init 0x807b7c88 ·
+ingenic_clockevent 0x808f4e80 · ingenic_timer_interrupt 0x80400514 ·
+plat_time_init 0x807a37d4 · init_IRQ 0x807a3dec · do_IRQ 0x8001947c ·
+init_bootmem_core 0x807ab1a0 · tcpu_resume/tcpu_sleep/tload_func_to_tcsm
+ 0x800136c4/0x80013b78/0x800140c8 (TCSM0 users) ·
+dwc2_driver_probe 0x8033de74 · dwc2_phy_init 0x8033c2f8 ·
+dwc2_hsotg_udc_start 0x8035216c · dwc2_platform_driver_init
+0x807b4dc8 · usb_add_gadget_udc 0x8035ee1c ·
+devm_usb_get_phy_by_phandle 0x80338d9c · ingenic_usb_phy_probe
+0x80339f8c · ingenic_usb_phy_driver_init 0x807b0128 ·
+schedule 0x805877a4 · wait_for_completion 0x805883c0 ·
+wait_for_completion_timeout 0x805883d0 · msleep 0x8006e960 ·
+init_task 0x8073fc3c.

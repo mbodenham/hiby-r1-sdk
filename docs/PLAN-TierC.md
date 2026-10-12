@@ -1,33 +1,40 @@
 # Tier C Plan — QEMU X1600 full-system emulation (v1.1)
 
-STATUS (2026-10-12, after the first bring-up sessions):
+STATUS (2026-10-12, after the second bring-up session):
 
 - **M0: DONE.** QEMU builds in-repo (mipsel-softmmu), `X1600` machine type
   registered, `XBurstR2` from upstream, regmap verified disassembly-wise
   against the stock kernel's embedded DTB (docs/x1600-regmap.md).
-- **M1: IN FLIGHT.** `hw/mips/x1600.c` skeleton boots the stock kernel
-  (`vmlinux.bin` loaded at phys 0x10000, PC 0x80010400, SPL-style fw args
-  confirmed reaching the kernel's prom globals). Boot stops reproducibly
-  at an 11-block kernel BUG_ON (pc 0x800bdb24/44, trap at the
-  `tne zero,v1,0xc`) — a NULL-list registration path whose state comes
-  from kernel internals (vma 0x8076029C/0x80760058 read 0 from .bss;
-  fw-arg shape variants do not change the trace).
-- **Stock stub finding:** the uImage stub is TWO-STAGE — it saves fw
-  args, self-clears .bss at 0x8128F000, sets its own SP (0x812A9050),
-  points at the embedded gz (0x80F04220, size 0x38A0A8) with decompress
-  target 0x80010000 and jumps to a decompressor at k0=0x80585C60 inside
-  the kernel's own text — so the SPL preloads a kernel-text chunk first.
-  Faithful stub replication is deferred to M2 (needs MTD models). The
-  direct host-decompressed kernel path (v0.2) is the correct bring-up
-  route and stays active.
-- **M1 open probes (next tests):**
-  1. fw_arg3 as a DTB pointer (kernel is DT-built; a3=0 so builtin-only):
-     copy the embedded DTB into RAM and point a3 at it.
-  2. CP0/TLB/cache state the stock SPL configures before the jump.
-  3. The Ingenic board plat_mem_setup flow may require EXCLK state —
-     check the kernel's own early setup region.
-- Boot evidence and every boot-stop decode is in docs/M1-bringup-log.md
-  (v0.1 through v0.4, includes register dumps and the 11-block trace).
+- **M1: IN FLIGHT — the kernel boots its real head, prints through the
+  emulated UART, calibrates, and runs initcalls to guest time ~0.44 s.**
+  History: the v0.1–v0.4 BUG_ON was a mis-diagnosis (PC 0x80010400 =
+  `run_init_process`, not head.S); a full kallsyms decode pinned the
+  real links (`kernel_entry` 0x80585c60, `start_kernel` 0x807a2764) —
+  M1-bringup-log v0.5. v0.7: UART earlycon. v0.8–v0.11: bootmem/cmdline
+  (PROM table + argv shape). v0.12–v0.14: OST clockevent (IRQ line 4
+  delivery worked all along; the stop was the model arming the compare
+  once instead of the vendor's periodic auto-reload). v0.17: OST
+  counter fix (frozen 0x20/0x24 reads parked every `udelay` forever).
+- **Boot state now (v0.17):** stock kernel stops inside
+  `dwc2_platform_driver_init` (named by initcall_debug): the USB OTG
+  probe programs the **USB PHY PLL — whose registers live IN the CGU
+  block** (stock DTB: /apb/otg_phy + /apb/otg_new_phy @0x10000000
+  size 0x100) — then parks the thread waiting for a PLL-lock event the
+  all-zero, write-discarding CGU stub can never produce. Timer, IRQ
+  delivery, udelay, sched_clock all work. Open probe order:
+  1. CGU stub semantics: persistent regfile (store+log writes) and
+     USB-PLL enable→locked status; if the driver's wait is bounded,
+     verify the timeout/error path lets boot continue.
+  2. Parked-task forensics (RAM dump + task-list walk / schedule-break)
+     if the probe does not proceed on a locked PLL.
+  3. OTG core region 0x13500000 (ingenic,dwc2-hsotg, size 0x40000 per
+     DTB) is still unmapped — add the stub when the probe reaches core
+     registers (trace-driven rule).
+  4. INTC (0x10001000) still a zero-return stub; TCU unmodeled —
+     required as soon as a peripheral IRQ matters (the USB PHY may
+     want one for its lock event).
+- Boot evidence, register dumps, and every boot-stop decode live in
+  docs/M1-bringup-log.md (v0.1 through v0.17).
 
 Goal: **boot the byte-identical stock firmware (v1.6 **unmodified** xImage +
 rootfs.squashfs) inside QEMU to the player's first UI frame, using it as the
