@@ -1,40 +1,37 @@
 # Tier C Plan — QEMU X1600 full-system emulation (v1.1)
 
-STATUS (2026-10-12, after the second bring-up session):
+STATUS (2026-10-12, after the third bring-up session):
 
 - **M0: DONE.** QEMU builds in-repo (mipsel-softmmu), `X1600` machine type
   registered, `XBurstR2` from upstream, regmap verified disassembly-wise
   against the stock kernel's embedded DTB (docs/x1600-regmap.md).
-- **M1: IN FLIGHT — the kernel boots its real head, prints through the
-  emulated UART, calibrates, and runs initcalls to guest time ~0.44 s.**
+- **M1: DONE (exit criterion met, v0.23).** The stock kernel boots its
+  real head, prints through the emulated UART (earlycon → real ttyS0
+  console handoff), and runs the COMPLETE initcall table to
+  `alsa_sound_last_init`, panicking only at `VFS: Cannot open root
+  device "(null)"` — zero MTD partitions, the named M2 block. Guest
+  time runs near real-time (~274 s guest / 300 s wall).
   History: the v0.1–v0.4 BUG_ON was a mis-diagnosis (PC 0x80010400 =
   `run_init_process`, not head.S); a full kallsyms decode pinned the
   real links (`kernel_entry` 0x80585c60, `start_kernel` 0x807a2764) —
   M1-bringup-log v0.5. v0.7: UART earlycon. v0.8–v0.11: bootmem/cmdline
-  (PROM table + argv shape). v0.12–v0.14: OST clockevent (IRQ line 4
-  delivery worked all along; the stop was the model arming the compare
-  once instead of the vendor's periodic auto-reload). v0.17: OST
-  counter fix (frozen 0x20/0x24 reads parked every `udelay` forever).
-- **Boot state now (v0.17):** stock kernel stops inside
-  `dwc2_platform_driver_init` (named by initcall_debug): the USB OTG
-  probe programs the **USB PHY PLL — whose registers live IN the CGU
-  block** (stock DTB: /apb/otg_phy + /apb/otg_new_phy @0x10000000
-  size 0x100) — then parks the thread waiting for a PLL-lock event the
-  all-zero, write-discarding CGU stub can never produce. Timer, IRQ
-  delivery, udelay, sched_clock all work. Open probe order:
-  1. CGU stub semantics: persistent regfile (store+log writes) and
-     USB-PLL enable→locked status; if the driver's wait is bounded,
-     verify the timeout/error path lets boot continue.
-  2. Parked-task forensics (RAM dump + task-list walk / schedule-break)
-     if the probe does not proceed on a locked PLL.
-  3. OTG core region 0x13500000 (ingenic,dwc2-hsotg, size 0x40000 per
-     DTB) is still unmapped — add the stub when the probe reaches core
-     registers (trace-driven rule).
-  4. INTC (0x10001000) still a zero-return stub; TCU unmodeled —
-     required as soon as a peripheral IRQ matters (the USB PHY may
-     want one for its lock event).
+  (PROM table + argv shape). v0.12–v0.14: OST clockevent periodic
+  auto-reload. v0.17: OST free-running counter (udelay).
+  v0.18–v0.20: **XBurstR2 Config7.WII** — the vendor idle loop
+  (`ingenic_wait_irqoff`) WAITs with IE=0 and relies on XBurst waking
+  on any pending interrupt; QEMU only woke on takeable interrupts.
+  v0.21–v0.23: USB-PHY-bank (0x10078000), SFC (0x13440000), and
+  UART0-extension stubs — each pinned by its bus error.
+- **Boot state now (v0.23):** end of kernel init, VFS root-mount
+  panic. Device model surface: DDR, TCSM0 RAM, OST clockevent (IRQ
+  line 4, periodic), 16550 UART0 + ext stub, persistent stubs: CGU,
+  TCU, RTC, pinctrl, UART1-3, PDMA, MSC0, USB-PHY bank, SFC, INTC
+  (latching, undelivered). M2 starts here: mtd + SFC/NAND backend
+  (ingenic_sfc_v2 SPI-NAND protocol: READ ID / GET-SET FEATURE / page
+  reads), QEMU nand image from the stock flash layout, `root=` on the
+  SPL cmdline. M2 entry evidence in M1-bringup-log v0.22/v0.23.
 - Boot evidence, register dumps, and every boot-stop decode live in
-  docs/M1-bringup-log.md (v0.1 through v0.17).
+  docs/M1-bringup-log.md (v0.1 through v0.23).
 
 Goal: **boot the byte-identical stock firmware (v1.6 **unmodified** xImage +
 rootfs.squashfs) inside QEMU to the player's first UI frame, using it as the
@@ -146,24 +143,24 @@ Tasks (no code):
 Exit: qemu builds, hello.mipsel runs under `-cpu xburstr2`,
 regmap doc exists.
 
-### M1 — machine skeleton + kernel early console *(~1–3 weeks part-time)*
+### M1 — machine skeleton + kernel early console *(DONE, v0.23)*
 Tasks:
-- [ ] `hw/mips/x1600.c` machine: DDR region + stub machine state +
+- [x] `hw/mips/x1600.c` machine: DDR region + stub machine state +
       `-bios`-less direct-kernel-load (QEMU `-kernel` path), initial
       `-cpu xburstr2`.
-- [ ] Device model list **for this milestone only**: Ingenic INTC, UART
-      (8250-compatible with the clock tweaks the vendor kernel plays —
-      the key unknown; mitigated by reading the exact `cpm`/clock gate
-      writes via early probe loops), TCU clocksource, CPM gate stub.
-- [ ] Earlycon validate loop: the single-line goal is `Booting Linux on
-      physical CPU 0x0` … the first dmesg lines.
-- [ ] Crash-fwd: everything after earlycon that panics is the NEXT M1
+- [x] Device model list **for this milestone only**: INTC stub, UART0
+      (serial_mm + SCR seed + ext stub), OST clockevent (TCU stayed
+      stubbed — the vendor tick is the OST), CGU gate stub — plus the
+      trace-driven additions: TCSM0 RAM, USB-PHY bank, SFC stub, and
+      the XBurstR2 Config7.WII idle-wake fix.
+- [x] Earlycon validate loop: passed — full dmesg through the real
+      ttyS0 console (see M1-bringup-log).
+- [x] Crash-fwd: everything after earlycon that panics is the NEXT M1
       unit. (panic message = task list.)
 
-Exit: kernel early log prints through emulated UART (achieved with all
-of M1's devices and nothing else), then either it reaches init/ or a
-panic whose block is queued for M2/M3 (never a "nothing after earlycon"
-state: each panic maps to a named model task).
+Exit MET (v0.23): kernel boots to the end of init and panics on the
+named M2 block (`VFS: Cannot open root device "(null)"`, zero MTD
+partitions) — exactly the queued M2 task.
 
 ### M2 — rootfs reachable at the stock layout *(~1–3 days after M1)*
 Tasks:

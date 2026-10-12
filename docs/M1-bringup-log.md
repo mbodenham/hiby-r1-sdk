@@ -426,3 +426,94 @@ devm_usb_get_phy_by_phandle 0x80338d9c · ingenic_usb_phy_probe
 schedule 0x805877a4 · wait_for_completion 0x805883c0 ·
 wait_for_completion_timeout 0x805883d0 · msleep 0x8006e960 ·
 init_task 0x8073fc3c.
+
+# v0.18 – v0.23 (2026-10-12, third session): idle-wake break → M1 exit
+
+### v0.18/v0.19: persistent stubs expose the PHY sequence, then a hard freeze
+
+Stubs became per-instance persistent regfiles (writes stored + logged).
+The CGU sequence decoded: `0xC4=0x1000` pulse (USB PLL enable),
+`0x24=0x80`, INTC `+0xC=0x2` (line-1 enable) — the clock framework's
+USB-clock enable path inside `common_phy_init` (0x80339dd4), followed by
+`usleep_range(5000,5000)` (0x8058a218; 5 ms, NOT 5 s). Then ALL guest
+activity stops: 500 s wall, guest time frozen at 0.444378, no OST ISR
+re-arms, no MMIO — the vCPU is parked, not slow.
+
+### v0.20: XBurstR2 Config7.WII — the idle-loop wake fix (QEMU target change)
+
+Guest-gdb probe at the freeze: PC 0x800193cc = `ingenic_wait_irqoff+0x54`
+(the vendor idle loop `sync; wait; ei; ehb`, called from
+`cpu_startup_entry+0xa4`), **SR=0x10001c00 (IE=0), Cause=0x40809000
+(IP4 pending), IM4|IM3|IM2 unmasked**. The Ingenic idle loop runs WAIT
+with interrupts DISABLED and relies on the core waking on any pending
+interrupt; QEMU's `mips_cpu_has_work` (target/mips/cpu.c) only wakes on
+interrupts-that-can-be-taken unless pre-R6 Config7.WII ("Wait IE
+ignore") is set. Real XBurst silicon wakes regardless of IE (the vendor
+loop's existence is the proof). Fix: `.CP0_Config7 = 1 << CP0C7_WII` on
+the XBurstR2 def (target/mips/cpu-defs.c.inc) — QEMU's own architected
+mechanism, no behavioral invention.
+
+Result: the parked 5 ms usleep completes, dwc2 probe continues,
+initcalls march on. Next stop: `x1600_phy_init+0x6c` bus error —
+`lw v1,0x30(v0)` with v0=0xB0078000.
+
+### v0.21: USB PHY bank stub 0x10078000
+
+`x1600_phy_init` (0x8033a9e8) decoded fully: base_a (CGU) writes
+0x48=0x200000, 0x3c=0x80400000, udelay(500), 0x3c=0x80000000,
+0x48=0x70000000, udelay(500); then base_b=0xB0078000 RMWs: +0x30 |= 7,
++0x40 |= 0x38, +0x10C/+0x110 &= ~0x3F |= 0x2D, +0x108 |= 8 (conditional
+on a priv byte). The 0x10078000 bank is vendor-private (ABSENT from the
+stock DTB; nearest nodes sadc@0x10070000 / aic@0x10079000 — stub sized
+0x1000, ends exactly at aic). Next stop: `sfc_clk_set_init+0x58` bus
+error — RMW of SFC+4 with a0=0xB3440000.
+
+### v0.22: SFC stub 0x13440000 — probe runs, no NAND (expected until M2)
+
+`ingenic_sfc_drv_init` now RUNS for 3.0 s and returns **-19 (ENODEV)**:
+the stub has no SPI-NAND behind it (`ingenic-sfc 13440000.sfc:
+sfc_sync_cdt error ! ... ingenic_sfc_nand_set_feature 623` — the
+driver's SET_FEATURE goes nowhere). No crash; boot continues through
+ALSA/snd_soc/TCU/MMC initcalls. Next stop:
+`serial_ingenic_set_termios+0x268` bus error — `sw v1,0x24(v0)` with
+v0=0xB0030000: the vendor serial driver touches Ingenic extension
+registers at UART+0x24/+0x28, OUTSIDE the 16550's 8<<2 window (serial_mm
+maps only 0x20 bytes).
+
+### v0.23: UART0 ext stub → FULL initcall sequence → VFS root panic = M1 EXIT
+
+UART0's 0x100 range now has a persistent stub at priority -1 under the
+real serial_mm device (regs 0x00-0x1f stay real, extensions store).
+Boot then runs the COMPLETE initcall table to `alsa_sound_last_init` +
+`clk_disable_unused` (guest time advances near real-time: 274 s guest
+in ~300 s wall), real console handoff works (`console [ttyS0] enabled`,
+`bootconsole [early0] disabled`), `kernel_init_freeable` finishes, and
+the kernel panics on exactly the M2 boundary:
+
+```
+VFS: Cannot open root device "(null)" or unknown-block(0,0): error -6
+Please append a correct "root=" boot option; here are the available
+partitions:                     <-- ZERO partitions: no MTD device
+Kernel panic - not syncing: VFS: Unable to mount root fs on unknown-block(0,0)
+```
+
+(One non-fatal warning on the way: `/dev/console` open path oopses in
+chrdev_open — init falls through to the root mount anyway.)
+
+**M1 exit criterion MET** — kernel boots through emulated UART, runs
+every initcall, and panics on the named M2 block: mtd + SFC/NAND
+backend + root= bootarg. M2 entry facts from v0.22/v0.23 evidence:
+
+- The SFC probe failure is `ingenic_sfc_nand_set_feature` (SET_FEATURE
+  command) — the real model must speak enough SPI-NAND (READ ID,
+  GET/SET FEATURE, READ FROM CACHE) backed by the stock flash image.
+- `root=` is ours to add: argv[1] cmdline (SPL would have passed it;
+  we replicate). Stock layout: `root=/dev/mtdblockX
+  rootfstype=squashfs` matching the device's /proc/mtd shape.
+- SFC register map starts at /ahb2/sfc@0x13440000 (0x10000); the
+  driver file names itself `ingenic_sfc_v2/ingenic_sfc_nand.c` —
+  Ingenic's v2 SFC controller.
+
+Session notes: a `-d unimp` run at this stage produces ~100M log lines
+in 300 s (3.4 GB — mostly UART-ext/RTC/OST noise); unimp logging is
+now for SHORT captures only.
