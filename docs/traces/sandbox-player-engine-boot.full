@@ -1,0 +1,2433 @@
+143957 brk(NULL) = 0x008e5000
+143957 mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2b2ad000
+143957 uname(0x2b2ab800) = 0
+143957 access("/etc/ld.so.preload",R_OK) = -1 errno=2 (No such file or directory)
+143957 open("/etc/ld.so.cache",O_RDONLY|O_CLOEXEC) = -1 errno=2 (No such file or directory)
+143957 open("/lib/tls/librt.so.1",O_RDONLY|O_CLOEXEC) = -1 errno=2 (No such file or directory)
+143957 stat64("/lib/tls",0x2b2ab410) = -1 errno=2 (No such file or directory)
+143957 open("/lib/librt.so.1",O_RDONLY|O_CLOEXEC) = 3
+143957 read(3,0x2b2ab564,512) = 512
+143957 prctl(46,9,724219236,512,724480000,0) = 0
+143957 lseek(3,680,SEEK_SET) = 680
+143957 read(3,0x2b2ab360,32) = 32
+143957 fstat64(3,0x2b2ab430) = 0
+143957 mmap(NULL,99008,PROT_EXEC|PROT_READ,MAP_PRIVATE|MAP_DENYWRITE,3,0) = 0x2b2e4000
+143957 mprotect(0x2b2ec000,61440,PROT_NONE) = 0
+143957 mmap(0x2b2fb000,8192,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_DENYWRITE|MAP_FIXED,3,0x7000) = 0x2b2fb000
+143957 close(3) = 0
+143957 open("/lib/libdl.so.2",O_RDONLY|O_CLOEXEC) = 3
+143957 read(3,0x2b2ab54c,512) = 512
+143957 prctl(46,8,724219212,512,724480000,0) = 0
+143957 lseek(3,640,SEEK_SET) = 640
+143957 read(3,0x2b2ab348,32) = 32
+143957 fstat64(3,0x2b2ab418) = 0
+143957 mmap(NULL,78064,PROT_EXEC|PROT_READ,MAP_PRIVATE|MAP_DENYWRITE,3,0) = 0x2b2fd000
+143957 mprotect(0x2b300000,61440,PROT_NONE) = 0
+143957 mmap(0x2b30f000,8192,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_DENYWRITE|MAP_FIXED,3,0x2000) = 0x2b30f000
+143957 close(3) = 0
+143957 open("/lib/libasound.so.2",O_RDONLY|O_CLOEXEC) = -1 errno=2 (No such file or directory)
+143957 open("/usr/lib/tls/libasound.so.2",O_RDONLY|O_CLOEXEC) = -1 errno=2 (No such file or directory)
+143957 stat64("/usr/lib/tls",0x2b2ab3e0) = -1 errno=2 (No such file or directory)
+143957 open("/usr/lib/libasound.so.2",O_RDONLY|O_CLOEXEC) = 3
+143957 read(3,0x2b2ab534,512) = 512
+143957 prctl(46,8,724219188,512,724480000,0) = 0
+143957 fstat64(3,0x2b2ab400) = 0
+143957 mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2b2ae000
+143957 mmap(NULL,929552,PROT_EXEC|PROT_READ,MAP_PRIVATE|MAP_DENYWRITE,3,0) = 0x2b311000
+143957 mprotect(0x2b3e0000,65536,PROT_NONE) = 0
+143957 mmap(0x2b3f0000,16384,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_DENYWRITE|MAP_FIXED,3,0xcf000) = 0x2b3f0000
+143957 close(3) = 0
+143957 open("/lib/libqrencode.so",O_RDONLY|O_CLOEXEC) = -1 errno=2 (No such file or directory)
+143957 open("/usr/lib/libqrencode.so",O_RDONLY|O_CLOEXEC) = 3
+143957 read(3,0x2b2ab51c,512) = 512
+143957 prctl(46,6,724219164,512,724480000,0) = 0
+143957 fstat64(3,0x2b2ab3e8) = 0
+143957 mmap(NULL,106496,PROT_EXEC|PROT_READ,MAP_PRIVATE|MAP_DENYWRITE,3,0) = 0x2b3f4000
+143957 mprotect(0x2b3fe000,61440,PROT_NONE) = 0
+143957 mmap(0x2b40d000,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_DENYWRITE|MAP_FIXED,3,0x9000) = 0x2b40d000
+143957 close(3) = 0
+143957 open("/lib/libz.so.1",O_RDONLY|O_CLOEXEC) = -1 errno=2 (No such file or directory)
+143957 open("/usr/lib/libz.so.1",O_RDONLY|O_CLOEXEC) = 3
+143957 read(3,0x2b2ab504,512) = 512
+143957 prctl(46,7,724219140,512,724480000,0) = 0
+143957 fstat64(3,0x2b2ab3d0) = 0
+143957 mmap(NULL,144672,PROT_EXEC|PROT_READ,MAP_PRIVATE|MAP_DENYWRITE,3,0) = 0x2b40e000
+143957 mprotect(0x2b422000,61440,PROT_NONE) = 0
+143957 mmap(0x2b431000,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_DENYWRITE|MAP_FIXED,3,0x13000) = 0x2b431000
+143957 close(3) = 0
+143957 open("/lib/libcrypto.so.1.1",O_RDONLY|O_CLOEXEC) = -1 errno=2 (No such file or directory)
+143957 open("/usr/lib/libcrypto.so.1.1",O_RDONLY|O_CLOEXEC) = 3
+143957 read(3,0x2b2ab4ec,512) = 512
+143957 prctl(46,7,724219116,512,724480000,0) = 0
+143957 fstat64(3,0x2b2ab3b8) = 0
+143957 mmap(NULL,2180464,PROT_EXEC|PROT_READ,MAP_PRIVATE|MAP_DENYWRITE,3,0) = 0x2b432000
+143957 mprotect(0x2b619000,65536,PROT_NONE) = 0
+143957 mmap(0x2b629000,106496,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_DENYWRITE|MAP_FIXED,3,0x1e7000) = 0x2b629000
+143957 mmap(0x2b643000,13680,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0) = 0x2b643000
+143957 close(3) = 0
+143957 open("/lib/libssl.so.1.1",O_RDONLY|O_CLOEXEC) = -1 errno=2 (No such file or directory)
+143957 open("/usr/lib/libssl.so.1.1",O_RDONLY|O_CLOEXEC) = 3
+143957 read(3,0x2b2ab4d4,512) = 512
+143957 prctl(46,6,724219092,512,724480000,0) = 0
+143957 fstat64(3,0x2b2ab3a0) = 0
+143957 mmap(NULL,533296,PROT_EXEC|PROT_READ,MAP_PRIVATE|MAP_DENYWRITE,3,0) = 0x2b647000
+143957 mprotect(0x2b6b2000,61440,PROT_NONE) = 0
+143957 mmap(0x2b6c1000,36864,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_DENYWRITE|MAP_FIXED,3,0x6a000) = 0x2b6c1000
+143957 close(3) = 0
+143957 open("/lib/libcurl.so.4",O_RDONLY|O_CLOEXEC) = -1 errno=2 (No such file or directory)
+143957 open("/usr/lib/libcurl.so.4",O_RDONLY|O_CLOEXEC) = 3
+143957 read(3,0x2b2ab4bc,512) = 512
+143957 prctl(46,7,724219068,512,724480000,0) = 0
+143957 fstat64(3,0x2b2ab388) = 0
+143957 mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2b2af000
+143957 mmap(NULL,932288,PROT_EXEC|PROT_READ,MAP_PRIVATE|MAP_DENYWRITE,3,0) = 0x2b6ca000
+143957 mprotect(0x2b79c000,65536,PROT_NONE) = 0
+143957 mmap(0x2b7ac000,8192,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_DENYWRITE|MAP_FIXED,3,0xd2000) = 0x2b7ac000
+143957 close(3) = 0
+143957 open("/lib/libm.so.6",O_RDONLY|O_CLOEXEC) = 3
+143957 read(3,0x2b2ab4a4,512) = 512
+143957 prctl(46,8,724219044,512,724480000,0) = 0
+143957 lseek(3,624,SEEK_SET) = 624
+143957 read(3,0x2b2ab2a0,32) = 32
+143957 fstat64(3,0x2b2ab370) = 0
+143957 mmap(NULL,562064,PROT_EXEC|PROT_READ,MAP_PRIVATE|MAP_DENYWRITE,3,0) = 0x2b7ae000
+143957 mprotect(0x2b827000,61440,PROT_NONE) = 0
+143957 mmap(0x2b836000,8192,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_DENYWRITE|MAP_FIXED,3,0x78000) = 0x2b836000
+143957 close(3) = 0
+143957 open("/lib/libgcc_s.so.1",O_RDONLY|O_CLOEXEC) = 3
+143957 read(3,0x2b2ab48c,512) = 512
+143957 prctl(46,7,724219020,512,724480000,0) = 0
+143957 fstat64(3,0x2b2ab358) = 0
+143957 mmap(NULL,223024,PROT_EXEC|PROT_READ,MAP_PRIVATE|MAP_DENYWRITE,3,0) = 0x2b838000
+143957 mprotect(0x2b85f000,61440,PROT_NONE) = 0
+143957 mmap(0x2b86e000,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_DENYWRITE|MAP_FIXED,3,0x26000) = 0x2b86e000
+143957 close(3) = 0
+143957 open("/lib/libpthread.so.0",O_RDONLY|O_CLOEXEC) = 3
+143957 read(3,0x2b2ab474,512) = 512
+143957 prctl(46,11,724218996,512,724480000,0) = 0
+143957 lseek(3,744,SEEK_SET) = 744
+143957 read(3,0x2b2ab268,32) = 32
+143957 fstat64(3,0x2b2ab340) = 0
+143957 mmap(NULL,185296,PROT_EXEC|PROT_READ,MAP_PRIVATE|MAP_DENYWRITE,3,0) = 0x2b86f000
+143957 mprotect(0x2b88a000,61440,PROT_NONE) = 0
+143957 mmap(0x2b899000,8192,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_DENYWRITE|MAP_FIXED,3,0x1a000) = 0x2b899000
+143957 mmap(0x2b89b000,5072,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0) = 0x2b89b000
+143957 close(3) = 0
+143957 open("/lib/libc.so.6",O_RDONLY|O_CLOEXEC) = 3
+143957 read(3,0x2b2ab45c,512) = 512
+143957 prctl(46,12,724218972,512,724480000,0) = 0
+143957 lseek(3,768,SEEK_SET) = 768
+143957 read(3,0x2b2ab258,32) = 32
+143957 fstat64(3,0x2b2ab328) = 0
+143957 mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2b89d000
+143957 mmap(NULL,1593088,PROT_EXEC|PROT_READ,MAP_PRIVATE|MAP_DENYWRITE,3,0) = 0x2b89e000
+143957 mprotect(0x2ba0b000,65536,PROT_NONE) = 0
+143957 mmap(0x2ba1b000,24576,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_DENYWRITE|MAP_FIXED,3,0x16d000) = 0x2ba1b000
+143957 mmap(0x2ba21000,7936,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0) = 0x2ba21000
+143957 close(3) = 0
+143957 open("/lib/libatomic.so.1",O_RDONLY|O_CLOEXEC) = 3
+143957 read(3,0x2b2ab2ec,512) = 512
+143957 prctl(46,6,724218604,512,724480000,0) = 0
+143957 fstat64(3,0x2b2ab1b8) = 0
+143957 mmap(NULL,86176,PROT_EXEC|PROT_READ,MAP_PRIVATE|MAP_DENYWRITE,3,0) = 0x2ba23000
+143957 mprotect(0x2ba27000,65536,PROT_NONE) = 0
+143957 mmap(0x2ba37000,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_DENYWRITE|MAP_FIXED,3,0x4000) = 0x2ba37000
+143957 mmap(0x2ba38000,160,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0) = 0x2ba38000
+143957 close(3) = 0
+143957 mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2ba39000
+143957 mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2ba3a000
+143957 set_thread_area(0x2ba41040) = 0
+143957 mprotect(0x2ba1b000,12288,PROT_READ) = 0
+143957 mprotect(0x2b899000,4096,PROT_READ) = 0
+143957 mprotect(0x2b836000,4096,PROT_READ) = 0
+143957 mprotect(0x2b30f000,4096,PROT_READ) = 0
+143957 mprotect(0x2b2fb000,4096,PROT_READ) = 0
+143957 mprotect(0x2b2e2000,4096,PROT_READ) = 0
+143957 set_tid_address(0x2ba39c18) = 143957
+143957 set_robust_list(0x2ba39c20,12) = -1 errno=89 (Function not implemented)
+143957 rt_sigaction(32,0x2b2abd50,NULL) = 0
+143957 rt_sigaction(33,0x2b2abd50,NULL) = 0
+143957 rt_sigprocmask(SIG_UNBLOCK,[32 33],NULL,16) = 0
+143957 getrlimit(3,0x2b2abe20) = 0
+143957 brk(NULL) = 0x008e5000
+143957 brk(0x0090a000) = 0x0090a000
+143957 fstat64(1,0x2b2ab7b8) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2ba3b000
+143957 prctl(15,7766216,0,0,0,0) = 0
+143957 open("/usr/resource/config.json",O_RDONLY|O_LARGEFILE) = 3
+143957 fstat64(3,0x2b2abae0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2ba4b000
+143957 fstat64(3,0x2b2abbd0) = 0
+143957 _llseek(3,0,0,0x2b2abb98,SEEK_SET) = 0
+143957 read(3,0x2ba4b000,1004) = 1004
+143957 _llseek(3,0,1004,0x2b2abb98,SEEK_SET) = 0
+143957 close(3) = 0
+143957 munmap(0x2ba4b000,65536) = 0
+143957 time(0,0,0,731897856,0,0) = 1791776828
+143957 time(0,0,0,0,0,0) = 1791776828
+143957 open("/etc/localtime",O_RDONLY|O_CLOEXEC) = -1 errno=2 (No such file or directory)
+143957 open("/sys/class/leds/red/trigger",O_WRONLY) = -1 errno=2 (No such file or directory)
+143957 open("/sys/class/leds/blue/brightness",O_WRONLY) = -1 errno=2 (No such file or directory)
+143957 open("/sys/class/leds/red/brightness",O_WRONLY) = -1 errno=2 (No such file or directory)
+143957 access("/data/mnt/sd_0/get_cover_switch",F_OK) = -1 errno=2 (No such file or directory)
+143957 open("/dev/fb0",O_RDWR|O_LARGEFILE) = 3
+143957 ioctl(3,FBIOGET_FSCREENINFO,0x008b4bcc) = -1 errno=25 (Inappropriate ioctl for device)
+143957 close(3) = 0
+143957 stat64("/dev/input",0x2b2abb68) = 0
+143957 open("/dev/input",O_RDONLY|O_DIRECTORY|O_LARGEFILE|O_NONBLOCK|O_CLOEXEC) = 3
+143957 fstat64(3,0x2b2abaa0) = 0
+143957 getdents64(3,0x8eaa78,32768) = 1064
+143957 openat(3,"event25",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event24",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event23",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event22",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event21",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event20",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event19",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event18",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event17",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event16",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event15",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event14",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event13",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event12",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event11",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event10",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event9",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event8",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event7",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event6",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event5",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event4",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event3",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event2",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event1",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 openat(3,"event0",O_RDONLY|O_LARGEFILE) = -1 errno=13 (Permission denied)
+143957 getdents64(3,0x8eaa78,32768) = 0
+143957 close(3) = 0
+143957 open("/usr/resource/ot_devices.json",O_RDONLY) = 3
+143957 fstat64(3,0x2b2ab9c0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2ba4b000
+143957 fstat64(3,0x2b2abab0) = 0
+143957 _llseek(3,0,4096,0x2b2aba78,SEEK_SET) = 0
+143957 read(3,0x2ba4b000,1898) = 1898
+143957 _llseek(3,0,0,0x2b2aba78,SEEK_SET) = 0
+143957 read(3,0x8eaa58,4096) = 4096
+143957 read(3,0x2ba4b000,4096) = 1898
+143957 close(3) = 0
+143957 munmap(0x2ba4b000,65536) = 0
+143957 open("/sys/class/android_usb/f_uac_sa/dsd_native_enable",O_WRONLY) = -1 errno=2 (No such file or directory)
+143957 mmap(NULL,262144,PROT_EXEC|PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK,-1,0) = 0x2ba4b000
+143957 mprotect(0x2ba4b000,4096,PROT_NONE) = 0
+143957 clone(CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID,child_stack=0x2ba89ff0,parent_tidptr=0x2ba8a4f8,tls=0x2ba91920,child_tidptr=0x2ba8a4f8) = 143973
+143973 set_robust_list(0x2ba8a500,12) = -1 errno=89 (Function not implemented)
+143957 open("/sys/class/switch/headset/state",O_RDONLY) = -1 errno=2 (No such file or directory)
+143973 prctl(15,8247852,732471096,732471096,337,0) = 0
+143957 open("/sys/class/switch/lineout/state",O_RDONLY) = -1 errno=2 (No such file or directory)
+143957 open("/sys/class/switch/balance/state",O_RDONLY) = -1 errno=2 (No such file or directory)
+143957 open("/sys/class/switch/spdif/state",O_RDONLY)143973 clock_gettime(CLOCK_REALTIME,0x2ba89eb0) = 0 ({tv_sec = 1791776828,tv_nsec = 304596049})
+ = -1 errno=2 (No such file or directory)
+143957 open("/sys/class/switch/i2s/state",O_RDONLY) = -1 errno=2 (No such file or directory)
+143973 futex(0x008d7de0,FUTEX_CLOCK_REALTIME|FUTEX_WAIT_BITSET,1,{tv_sec = 1791776829,tv_nsec = 304596049},NULL,0)143957 futex(0x008d7de0,FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 1
+ = 0
+143973 futex(0x008d7dc8,FUTEX_PRIVATE_FLAG|FUTEX_WAIT,2,NULL,NULL,0)143957 futex(0x008d7dc8,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 1
+ = 0
+143973 futex(0x008d7dc8,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 0
+143973 clock_gettime(CLOCK_REALTIME,0x2ba89eb0) = 0 ({tv_sec = 1791776828,tv_nsec = 305961427})
+143973 futex(0x008d7de0,FUTEX_CLOCK_REALTIME|FUTEX_WAIT_BITSET,1,{tv_sec = 1791776829,tv_nsec = 305961427},NULL,0)143957 mmap(NULL,8388608,PROT_EXEC|PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK,-1,0) = 0x2ba8b000
+143957 mprotect(0x2ba8b000,4096,PROT_NONE) = 0
+143957 clone(CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID,child_stack=0x2c289ff0,parent_tidptr=0x2c28a4f8,tls=0x2c291920,child_tidptr=0x2c28a4f8) = 143974
+143974 set_robust_list(0x2c28a500,12) = -1 errno=89 (Function not implemented)
+143957 futex(0x008ea83c,FUTEX_PRIVATE_FLAG|FUTEX_WAIT,2,NULL,0x00451ba0,4529056)143974 prctl(15,7737056,740859704,740859704,0,0) = 0
+143974 futex(0x008ea83c,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 1
+ = 0
+143957 futex(0x008ea83c,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 0
+143957 open("/dev/sa-config",O_RDWR|O_LARGEFILE) = 3
+143957 ioctl(3,0xffff00f0,0x2b2abda4) = -1 errno=25 (Inappropriate ioctl for device)
+143957 close(3) = 0
+143974 nanosleep(740857520,0,0,10000,0,0)143957 open("/proc/jz/efuse/efuse_chip_id",O_RDONLY) = -1 errno=2 (No such file or directory)
+143957 futex(0x2b644f70,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,2147483647,NULL,0x2b8a2020,730472480) = 0
+143957 futex(0x2b644f64,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,2147483647,NULL,0x2b8a2020,730472480) = 0
+143957 futex(0x2b644f5c,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,2147483647,NULL,0x2b8a2020,730472480) = 0
+143957 futex(0x2b644f18,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,2147483647,NULL,0x2b8a2020,730472480) = 0
+143957 futex(0x2b6427e4,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,2147483647,NULL,0x2b8a2020,730472480) = 0
+143957 futex(0x2b644e74,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,2147483647,NULL,0x2b8a2020,730472480) = 0
+143957 futex(0x2b644dfc,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,2147483647,NULL,0x2b8a2020,730472480) = 0
+143957 futex(0x2b644df0,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,2147483647,NULL,0x2b8a2020,730472480) = 0
+143957 brk(0x0092b000) = 0x0092b000
+143957 futex(0x2b644f54,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,2147483647,NULL,0x2b8a2020,730472480) = 0
+143957 futex(0x2b644f10,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,2147483647,NULL,0x2b8a2020,730472480) = 0
+ = 0
+143957 open("/etc/ssl/openssl.cnf",O_RDONLY|O_LARGEFILE) = 3
+143974 nanosleep(740857520,0,0,10000,0,0)143957 fstat64(3,0x2b2ab710) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2c28b000
+143957 read(3,0x2c28b000,4096) = 4096
+143957 read(3,0x2c28b000,4096) = 4096
+143957 read(3,0x2c28b000,4096) = 2717
+143957 read(3,0x2c28b000,4096) = 0
+143957 close(3) = 0
+143957 munmap(0x2c28b000,65536) = 0
+143957 socket(10,SOCK_DGRAM,IPPROTO_IP) = 3
+143957 close(3) = 0
+143957 rt_sigaction(SIGINT,0x2b2aad20,0x2b2aad00) = 0
+143957 rt_sigaction(SIGQUIT,0x2b2aad20,0x2b2aad00) = 0
+143957 rt_sigprocmask(SIG_BLOCK,[SIGCHLD],0x2b2aadf0,16) = 0 (oldset=[])
+143957 clone(CLONE_PARENT_SETTID|0x12,child_stack=0x00000000,parent_tidptr=0x2b2aae90,tls=0x00000000,child_tidptr=0x2ba26e10) = 0
+ = 143975
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143957 waitpid(143975,0x2b2aae94,0)143975 rt_sigaction(SIGINT,0x2b2aad20,NULL) = 0
+143975 rt_sigaction(SIGQUIT,0x2b2aad20,NULL) = 0
+143975 rt_sigprocmask(SIG_SETMASK,[],NULL,16) = 0
+143975 execve("/bin/sh",{"sh","-c","nanddump -s 0x20000 -l 256 /dev/mtd5 -a > /data/theme_id 2>/dev/null",NULL}) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 
+143957 rt_sigaction(SIGINT,0x2b2aad20,NULL) = 0
+143957 rt_sigaction(SIGQUIT,0x2b2aad20,NULL) = 0
+143957 rt_sigprocmask(SIG_SETMASK,[],NULL,16) = 0
+143957 write(2,0x2b2a88b8,51)[ERROR] nanddump failed: No such file or directory
+ = 51
+143957 open("/data/user.ini",O_RDONLY|O_LARGEFILE) = 3
+143957 fstat64(3,0x2b2aaf38) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2c28b000
+143957 read(3,0x2c28b000,4096) = 2768
+143957 close(3) = 0
+143957 munmap(0x2c28b000,65536) = 0
+143957 open("/usr/resource/litegui/theme1/boot_animation/en/config.ini",O_RDONLY|O_LARGEFILE) = 3
+143957 fstat64(3,0x2b2aaea8) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2c28b000
+143957 read(3,0x2c28b000,4096) = 0
+143957 close(3) = 0
+143957 munmap(0x2c28b000,65536) = 0
+143957 mmap(NULL,8388608,PROT_EXEC|PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK,-1,0) = 0x2c28b000
+143957 mprotect(0x2c28b000,4096,PROT_NONE) = 0
+143957 clone(CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID,child_stack=0x2ca89ff0,parent_tidptr=0x2ca8a4f8,tls=0x2ca91920,child_tidptr=0x2ca8a4f8) = 143979
+143979 set_robust_list(0x2ca8a500,12) = -1 errno=89 (Function not implemented)
+143957 futex(0x0090d534,FUTEX_PRIVATE_FLAG|FUTEX_WAIT,2,NULL,0x004544a0,4539552)143979 prctl(15,7738672,749248312,749248312,0,0) = 0
+143979 futex(0x0090d534,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 1
+ = 0
+143979 nanosleep(749248240,0,0,10000,0,0)143957 futex(0x0090d534,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 0
+143957 futex(0x0090d564,FUTEX_PRIVATE_FLAG|FUTEX_WAIT,2,NULL,0x2b8a2020,730472480) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143979 futex(0x0090d564,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 1
+ = 0
+143957 futex(0x0090d564,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 0
+143979 madvise(0x2c28b000,8249344,MADV_DONTNEED) = 0
+143979 exit(0)
+143957 clone(CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID,child_stack=0x2ca89ff0,parent_tidptr=0x2ca8a4f8,tls=0x2ca91920,child_tidptr=0x2ca8a4f8) = 143980
+143980 set_robust_list(0x2ca8a500,12) = -1 errno=89 (Function not implemented)
+143957 futex(0x0090d5a4,FUTEX_PRIVATE_FLAG|FUTEX_WAIT,2,NULL,0x0042f4c0,4388032)143980 prctl(15,7716368,0,749248288,0,0) = 0
+143980 nanosleep(749247728,0,0,0,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = -1 errno=145 (Connection timed out)
+143973 clock_gettime(CLOCK_REALTIME,0x2ba89eb0) = 0 ({tv_sec = 1791776829,tv_nsec = 306241300})
+143973 futex(0x008d7de0,FUTEX_CLOCK_REALTIME|FUTEX_WAIT_BITSET,1,{tv_sec = 1791776830,tv_nsec = 306241300},NULL,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+143980 futex(0x0090d5a4,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 1
+ = 0
+143957 futex(0x0090d5a4,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 0
+143980 futex(0x0090d6ec,FUTEX_CLOCK_REALTIME|FUTEX_WAIT_BITSET,1,NULL,NULL,0)143957 mmap(NULL,8388608,PROT_EXEC|PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK,-1,0) = 0x2ca8b000
+143957 mprotect(0x2ca8b000,4096,PROT_NONE) = 0
+143957 clone(CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID,child_stack=0x2d289ff0,parent_tidptr=0x2d28a4f8,tls=0x2d291920,child_tidptr=0x2d28a4f8) = 144189
+144189 set_robust_list(0x2d28a500,12) = -1 errno=89 (Function not implemented)
+143957 futex(0x0090d5a4,FUTEX_PRIVATE_FLAG|FUTEX_WAIT,2,NULL,0x004bc7e0,4966368)144189 prctl(15,7874288,757636920,757636920,0,0) = 0
+144189 futex(0x0090d5a4,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 1
+ = 0
+144189 futex(0x0090d82c,FUTEX_CLOCK_REALTIME|FUTEX_WAIT_BITSET,1,NULL,NULL,0)143957 futex(0x0090d5a4,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 0
+143957 mmap(NULL,8388608,PROT_EXEC|PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK,-1,0) = 0x2d28b000
+143957 mprotect(0x2d28b000,4096,PROT_NONE) = 0
+143957 clone(CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID,child_stack=0x2da89ff0,parent_tidptr=0x2da8a4f8,tls=0x2da91920,child_tidptr=0x2da8a4f8) = 144190
+144190 set_robust_list(0x2da8a500,12) = -1 errno=89 (Function not implemented)
+144190 prctl(15,7767140,9491876,0,0,0) = 0
+143957 rt_sigaction(SIGINT,0x2b2abbf8,0x2b2abbd8) = 0
+143957 rt_sigaction(SIGTERM,0x2b2abbf8,0x2b2abbd8) = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385076},NULL)
+143957 rt_sigaction(SIGBUS,0x2b2abbf8,0x2b2abbd8) = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385147},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385164},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385181},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385198},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385215},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385232},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385250},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385267},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385284},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385301},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385317},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385334},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385350},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385372},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385394},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385411},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385428},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385445},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385462},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385478},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385494},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385511},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385527},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 385543},NULL)
+143957 rt_sigaction(SIGSEGV,0x2b2abbf8,0x2b2abbd8) = 0
+144190 nanosleep(766025440,0,0,10000,0,0)143957 rt_sigaction(SIGIOT,0x2b2abbf8,0x2b2abbd8) = 0
+143957 rt_sigaction(SIGPIPE,0x2b2abbf8,0x2b2abbd8) = 0
+143957 unlink("/var/run/sys_client") = -1 errno=2 (No such file or directory)
+143957 socket(PF_UNIX,SOCK_STREAM,0) = 3
+143957 bind(3,{sun_family=AF_UNIX,sun_path="/var/run/sys_client"},110) = -1 errno=2 (No such file or directory)
+143957 mmap(NULL,8388608,PROT_EXEC|PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK,-1,0) = 0x2da8b000
+143957 mprotect(0x2da8b000,4096,PROT_NONE) = 0
+143957 clone(CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID,child_stack=0x2e289ff0,parent_tidptr=0x2e28a4f8,tls=0x2e291920,child_tidptr=0x2e28a4f8) = 144191
+144191 set_robust_list(0x2e28a500,12) = -1 errno=89 (Function not implemented)
+144191 prctl(15,7718268,774414136,774414136,0,0) = 0
+144191 unlink("/data/dmr_streamer") = 0
+144191 socket(PF_UNIX,SOCK_STREAM,0) = 4
+144191 bind(4,{sun_family=AF_UNIX,sun_path="/data/dmr_streamer"},110) = 0
+143957 brk(0x0094c000)144191 listen(4,10) = 0
+144191 accept(4,0x2e289df8,[110]) = 0x0094c000
+143957 socketpair(1,2,0,9598180,0,0) = 0
+143957 fcntl64(6,F_GETFL) = 8194
+143957 fcntl64(6,F_SETFL,O_RDWR|O_LARGEFILE|O_NONBLOCK) = 0
+143957 fcntl64(7,F_GETFL) = 8194
+143957 fcntl64(7,F_SETFL,O_RDWR|O_LARGEFILE|O_NONBLOCK) = 0
+143957 brk(0x0096e000) = 0x0096e000
+143957 gettimeofday(0x2b2abd60,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 387795},NULL)
+143957 brk(0x0099c000) = 0x0099c000
+143957 mmap(NULL,8388608,PROT_EXEC|PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK,-1,0) = 0x2e28b000
+143957 mprotect(0x2e28b000,4096,PROT_NONE) = 0
+143957 clone(CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID,child_stack=0x2ea89ff0,parent_tidptr=0x2ea8a4f8,tls=0x2ea91920,child_tidptr=0x2ea8a4f8) = 144192
+144192 set_robust_list(0x2ea8a500,12) = -1 errno=89 (Function not implemented)
+143957 futex(0x00926c44,FUTEX_PRIVATE_FLAG|FUTEX_WAIT,2,NULL,0x00731fc0,7544768)144192 futex(0x00926c44,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 1
+ = 0
+144192 gettimeofday(0x2ea89ed8,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 388279},NULL)
+143957 futex(0x00926c44,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 0
+144192 nanosleep(782802680,0,0,20000,0,0)143957 mmap(NULL,8388608,PROT_EXEC|PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK,-1,0) = 0x2ea8b000
+143957 mprotect(0x2ea8b000,4096,PROT_NONE) = 0
+143957 clone(CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID,child_stack=0x2f289ff0,parent_tidptr=0x2f28a4f8,tls=0x2f291920,child_tidptr=0x2f28a4f8) = 144193
+144193 set_robust_list(0x2f28a500,12) = -1 errno=89 (Function not implemented)
+143957 open("/proc/sys/kernel/random/uuid",O_RDONLY) = -1 errno=2 (No such file or directory)
+144193 prctl(15,7718400,791191352,791191352,0,0) = 0
+144193 nanosleep(791191232,0,0,20000,0,0)143957 open("/data/user.ini",O_RDONLY|O_LARGEFILE) = 8
+143957 fstat64(8,0x2b2ab050) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2f28b000
+143957 read(8,0x2f28b000,4096) = 2768
+143957 _llseek(8,0,0,0x2b2ab058,SEEK_SET) = 0
+143957 read(8,0x2f28b000,4096) = 2768
+143957 close(8) = 0
+143957 munmap(0x2f28b000,65536) = 0
+ = 0
+143957 open("/data/eq.ini",O_RDONLY|O_LARGEFILE)143974 nanosleep(740857520,0,0,10000,0,0) = -1 errno=2 (No such file or directory)
+143957 mmap(NULL,1540096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2f28b000
+143957 mmap(NULL,1540096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2f403000
+143957 lstat64("/data/usrlocal_media.db",0x2b2abb80) = 0
+143957 stat64("/data/usrlocal_media.db",0x2b2ab758) = 0
+143957 open("/data/usrlocal_media.db",O_RDWR|O_CREAT|O_LARGEFILE|O_CLOEXEC,0644) = 8
+143957 fstat64(8,0x2b2ab960) = 0
+143957 fstat64(8,0x2b2ab698) = 0
+143957 stat64("/data/usrlocal_media.db",0x2b2ab5d8) = 0
+143957 _llseek(8,0,0,0x2b2abbf0,SEEK_SET) = 0
+143957 read(8,0x2b2abc70,100) = 100
+ = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395720},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395737},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395752},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395766},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395781},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395795},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395810},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395824},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395839},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395853},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395868},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395882},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395897},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395911},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395926},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395940},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395955},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395969},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395984},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 395998},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 396013},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 396026},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 396037},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 396049},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 396060},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0)143957 fcntl64(8,F_SETLK64,0x2b2ab680) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab680) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab680) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab678) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab640) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab678) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab640) = 0
+143957 _llseek(8,0,0,0x2b2ab668,SEEK_SET) = 0
+143957 read(8,0x994be0,4096) = 4096
+ = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406158},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406173},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406184},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406196},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406207},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406225},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406236},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406247},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406259},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406270},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406282},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406293},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406304},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406316},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406327},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406339},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406350},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406361},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406381},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406392},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406404},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406415},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406427},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406438},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 406449},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0) = 0
+144192 gettimeofday(0x2ea89ed8,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 408743},NULL)
+144192 nanosleep(782802680,0,0,20000,0,0) = 0
+144193 nanosleep(791191232,0,0,20000,0,0)143957 _llseek(8,0,102400,0x2b2ab2a8,SEEK_SET) = 0
+143957 read(8,0x996280,4096) = 4096
+ = 0
+143974 nanosleep(740857520,0,0,10000,0,0)143957 _llseek(8,0,106496,0x2b2ab2a8,SEEK_SET) = 0
+143957 read(8,0x99a6d8,4096) = 4096
+143957 brk(0x009bd000) = 0x009bd000
+143957 _llseek(8,0,196608,0x2b2ab2a0,SEEK_SET) = 0
+143957 read(8,0x99e7e0,4096) = 4096
+ = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416538},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416552},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416564},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416575},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416587},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416598},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416609},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416621},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416632},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416643},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416656},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416673},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416685},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416697},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416708},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416720},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416731},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416743},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416754},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416766},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416783},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416794},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416806},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416818},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 416829},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0)143957 fcntl64(8,F_SETLK64,0x2b2ab2d8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab8b0) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab8b0) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab8b0) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab8a8) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab870) = 0
+143957 _llseek(8,0,24,0x2b2ab8f0,SEEK_SET) = 0
+143957 read(8,0x2b2ab970,16) = 16
+143957 fstat64(8,0x2b2ab870) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab8a8) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab870) = 0
+143957 _llseek(8,0,126976,0x2b2ab8c0,SEEK_SET) = 0
+143957 read(8,0x9a1830,4096) = 4096
+143957 fcntl64(8,F_SETLK64,0x2b2abbb8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab8b0) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab8b0) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab8b0) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab8a8) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab870) = 0
+143957 _llseek(8,0,24,0x2b2ab8f0,SEEK_SET) = 0
+143957 read(8,0x2b2ab970,16) = 16
+143957 fstat64(8,0x2b2ab870) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab8a8) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab870) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2abbb8) = 0
+ = 0
+143974 nanosleep(740857520,0,0,10000,0,0)143957 fstat64(8,0x2b2abc08) = 0
+143957 stat64("/data/usrlocal_media.db",0x2b2abb48) = 0
+143957 close(8) = 0
+143957 brk(0x009a3000) = 0x009a3000
+143957 lstat64("/data/usrlocal_media.db",0x2b2abb08) = 0
+143957 stat64("/data/usrlocal_media.db",0x2b2ab6e0) = 0
+143957 open("/data/usrlocal_media.db",O_RDWR|O_CREAT|O_LARGEFILE|O_CLOEXEC,0644) = 8
+143957 fstat64(8,0x2b2ab8e8) = 0
+143957 fstat64(8,0x2b2ab620) = 0
+143957 stat64("/data/usrlocal_media.db",0x2b2ab560) = 0
+143957 _llseek(8,0,0,0x2b2abb78,SEEK_SET) = 0
+143957 read(8,0x2b2abbf8,100) = 100
+143957 fcntl64(8,F_SETLK64,0x2b2ab638) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab638) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab638) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab630) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab5f8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab630) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab5f8) = 0
+143957 _llseek(8,0,0,0x2b2ab620,SEEK_SET) = 0
+143957 read(8,0x995160,4096) = 4096
+143957 _llseek(8,0,102400,0x2b2ab260,SEEK_SET) = 0
+143957 read(8,0x996800,4096) = 4096
+143957 _llseek(8,0,106496,0x2b2ab260,SEEK_SET) = 0
+143957 read(8,0x99ac58,4096) = 4096
+143957 _llseek(8,0,196608,0x2b2ab258,SEEK_SET) = 0
+143957 read(8,0x99ed28,4096) = 4096
+143957 fcntl64(8,F_SETLK64,0x2b2ab290) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab868) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab868) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab868) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab860) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab828) = 0
+143957 _llseek(8,0,24,0x2b2ab8a8,SEEK_SET) = 0
+143957 read(8,0x2b2ab928,16) = 16
+143957 fstat64(8,0x2b2ab828) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab860) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab828) = 0
+143957 _llseek(8,0,126976,0x2b2ab878,SEEK_SET) = 0
+143957 read(8,0x9a1d78,4096) = 4096
+143957 fcntl64(8,F_SETLK64,0x2b2abb70) = 0
+143957 fstat64(8,0x2b2abb90) = 0
+143957 stat64("/data/usrlocal_media.db",0x2b2abad0) = 0
+143957 close(8) = 0
+143957 lstat64("/data/usrlocal_media.db",0x2b2aaf50) = 0
+143957 stat64("/data/usrlocal_media.db",0x2b2aab28) = 0
+143957 open("/data/usrlocal_media.db",O_RDWR|O_CREAT|O_LARGEFILE|O_CLOEXEC,0644) = 8
+143957 fstat64(8,0x2b2aad30) = 0
+143957 fstat64(8,0x2b2aaa68) = 0
+143957 stat64("/data/usrlocal_media.db",0x2b2aa9a8) = 0
+143957 _llseek(8,0,0,0x2b2aafc0,SEEK_SET) = 0
+143957 read(8,0x2b2ab040,100) = 100
+143957 fcntl64(8,F_SETLK64,0x2b2aac78) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac78) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac78) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2aac70) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2aac38) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2aac70) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2aac38) = 0
+143957 _llseek(8,0,0,0x2b2aac60,SEEK_SET) = 0
+143957 read(8,0x994958,4096) = 4096
+143957 _llseek(8,0,102400,0x2b2aa8a0,SEEK_SET) = 0
+143957 read(8,0x996e60,4096) = 4096
+ = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 426923},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 426937},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 426949},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 426960},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 426972},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 426983},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 426994},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427006},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427017},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427028},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427040},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427051},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427063},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427075},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427089},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427103},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427117},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427132},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427146},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427160},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427174},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427188},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427203},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427217},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 427231},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0)143957 _llseek(8,0,106496,0x2b2aa8a0,SEEK_SET) = 0
+143957 read(8,0x99aec0,4096) = 4096
+143957 _llseek(8,0,196608,0x2b2aa898,SEEK_SET) = 0
+143957 read(8,0x99ef98,4096) = 4096
+ = 0
+144192 gettimeofday(0x2ea89ed8,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 428845},NULL)
+144192 nanosleep(782802680,0,0,20000,0,0)143957 fcntl64(8,F_SETLK64,0x2b2aa8d0) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac50) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac50) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac50) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2aac48) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2aac10) = 0
+143957 _llseek(8,0,24,0x2b2aac90,SEEK_SET) = 0
+143957 read(8,0x2b2aad10,16) = 16
+143957 fstat64(8,0x2b2aac10) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2aac48) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2aac10) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac70) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac50) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac50) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac50) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2aac48) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2aac10) = 0
+143957 _llseek(8,0,24,0x2b2aac90,SEEK_SET) = 0
+143957 read(8,0x2b2aad10,16) = 16
+143957 fstat64(8,0x2b2aac10) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2aac48) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2aac10) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac70) = 0
+ = 0
+144193 nanosleep(791191232,0,0,20000,0,0)143957 fcntl64(8,F_SETLK64,0x2b2aac50) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac50) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac50) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2aac48) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2aac10) = 0
+143957 _llseek(8,0,24,0x2b2aac90,SEEK_SET) = 0
+143957 read(8,0x2b2aad10,16) = 16
+143957 fstat64(8,0x2b2aac10) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2aac48) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2aac10) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac70) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac50) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac50) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac50) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2aac48) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2aac10) = 0
+143957 _llseek(8,0,24,0x2b2aac90,SEEK_SET) = 0
+143957 read(8,0x2b2aad10,16) = 16
+143957 fstat64(8,0x2b2aac10) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2aac48) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2aac10) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2aac70) = 0
+143957 fstat64(8,0x2b2aafd8) = 0
+143957 stat64("/data/usrlocal_media.db",0x2b2aaf18) = 0
+143957 close(8) = 0
+143957 lstat64("/data/usrlocal_media.db",0x2b2abb38) = 0
+143957 stat64("/data/usrlocal_media.db",0x2b2ab710) = 0
+143957 open("/data/usrlocal_media.db",O_RDWR|O_CREAT|O_LARGEFILE|O_CLOEXEC,0644) = 8
+143957 fstat64(8,0x2b2ab918) = 0
+143957 fstat64(8,0x2b2ab650) = 0
+143957 stat64("/data/usrlocal_media.db",0x2b2ab590) = 0
+143957 _llseek(8,0,0,0x2b2abba8,SEEK_SET) = 0
+143957 read(8,0x2b2abc28,100) = 100
+ = 0
+143974 nanosleep(740857520,0,0,10000,0,0)143957 fcntl64(8,F_SETLK64,0x2b2ab7d0) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7d0) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7d0) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7c8) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab790) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7c8) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab790) = 0
+143957 _llseek(8,0,0,0x2b2ab7b8,SEEK_SET) = 0
+143957 read(8,0x995650,4096) = 4096
+143957 _llseek(8,0,102400,0x2b2ab3f8,SEEK_SET) = 0
+143957 read(8,0x996cf0,4096) = 4096
+143957 _llseek(8,0,106496,0x2b2ab3f8,SEEK_SET) = 0
+143957 read(8,0x99b148,4096) = 4096
+143957 _llseek(8,0,196608,0x2b2ab3f0,SEEK_SET) = 0
+143957 read(8,0x99f218,4096) = 4096
+143957 fcntl64(8,F_SETLK64,0x2b2ab428) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+ = 0
+144190 gettimeofday(0x2da89ee0,NULL)143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = 0 ({tv_sec = 1791776829,tv_usec = 437341},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437433},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437456},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437478},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437501},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437524},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437548},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437572},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437594},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437618},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437643},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437667},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437695},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437722},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437747},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437772},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437796},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437820},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437846},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437869},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437893},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437915},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437932},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437948},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 437964},NULL)
+ = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16)144190 nanosleep(766025440,0,0,10000,0,0) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 _llseek(8,0,24,0x2b2ab838,SEEK_SET) = 0
+143957 read(8,0x2b2ab8b8,16) = 16
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab7f0) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab7b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab818) = 0
+ = 0
+143974 nanosleep(740857520,0,0,10000,0,0)143957 fcntl64(8,F_SETLK64,0x2b2ab858) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab858) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab858) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab850) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab818) = 0
+143957 _llseek(8,0,24,0x2b2ab898,SEEK_SET) = 0
+143957 read(8,0x2b2ab918,16) = 16
+143957 fstat64(8,0x2b2ab818) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab850) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab818) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab8e8) = 0
+143957 brk(0x009c4000) = 0x009c4000
+143957 _llseek(8,0,126976,0x2b2ab840,SEEK_SET) = 0
+143957 read(8,0x9a3278,4096) = 4096
+143957 _llseek(8,0,131072,0x2b2ab800,SEEK_SET) = 0
+143957 read(8,0x9a4328,4096) = 4096
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab7f8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab840) = 0
+ = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448112},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448129},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448144},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448158},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448172},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448186},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448201},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448215},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448229},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448243},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448257},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448272},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448286},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448300},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448314},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448329},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448343},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448357},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448381},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448395},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448409},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448423},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448437},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448452},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448466},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0) = 0
+144192 gettimeofday(0x2ea89ed8,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 448941},NULL)
+144192 nanosleep(782802680,0,0,20000,0,0) = 0
+144193 nanosleep(791191232,0,0,20000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0)143957 brk(0x009e5000) = 0x009e5000
+ = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458560},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458578},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458593},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458613},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458628},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458642},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458656},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458671},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458685},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458699},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458714},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458728},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458742},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458757},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458771},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458785},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458799},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458814},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458828},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458842},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458857},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458871},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458885},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458899},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 458914},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0)143957 brk(0x00a06000) = 0x00a06000
+ = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469006},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469022},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469036},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469049},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469062},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469075},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469088},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469101},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469114},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469127},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469140},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469155},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469172},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469188},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469204},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469220},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469236},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469253},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469270},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469288},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469305},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469322},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469339},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469357},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469384},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0) = 0
+144192 gettimeofday(0x2ea89ed8,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 469423},NULL)
+144192 nanosleep(782802680,0,0,20000,0,0) = 0
+144193 nanosleep(791191232,0,0,20000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0)143957 brk(0x00a27000) = 0x00a27000
+ = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479484},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479502},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479516},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479531},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479545},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479559},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479573},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479588},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479602},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479616},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479630},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479644},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479658},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479673},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479687},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479701},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479715},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479729},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479743},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479758},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479772},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479786},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479800},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479814},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 479828},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0)143957 brk(0x00a48000) = 0x00a48000
+143957 brk(0x00a47000) = 0x00a47000
+143957 open("/usr/resource/str/english/exception.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab9f0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2f57b000
+143957 fstat64(9,0x2b2abae0) = 0
+143957 _llseek(9,0,8192,0x2b2abaa8,SEEK_SET) = 0
+143957 read(9,0x2f57b000,2396) = 2396
+143957 _llseek(9,0,0,0x2b2abaa8,SEEK_SET) = 0
+143957 read(9,0xa2f664,8192) = 8192
+143957 read(9,0x2f57b000,4096) = 2396
+143957 close(9) = 0
+143957 munmap(0x2f57b000,65536) = 0
+143957 open("/usr/resource/str/english/exception.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab9f0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2f57b000
+143957 fstat64(9,0x2b2abae0) = 0
+143957 _llseek(9,0,8192,0x2b2abaa8,SEEK_SET) = 0
+143957 read(9,0x2f57b000,2396) = 2396
+143957 _llseek(9,0,0,0x2b2abaa8,SEEK_SET) = 0
+143957 read(9,0xa2f664,8192) = 8192
+143957 read(9,0x2f57b000,4096) = 2396
+143957 close(9) = 0
+143957 munmap(0x2f57b000,65536) = 0
+143957 open("/usr/resource/str/english/exception.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab9f0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2f57b000
+143957 fstat64(9,0x2b2abae0) = 0
+143957 _llseek(9,0,8192,0x2b2abaa8,SEEK_SET) = 0
+143957 read(9,0x2f57b000,2396) = 2396
+143957 _llseek(9,0,0,0x2b2abaa8,SEEK_SET) = 0
+143957 read(9,0xa2f664,8192) = 8192
+143957 read(9,0x2f57b000,4096) = 2396
+143957 close(9) = 0
+143957 munmap(0x2f57b000,65536) = 0
+143957 open("/usr/resource/str/english/exception.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2aba20) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x2f57b000
+143957 fstat64(9,0x2b2abb10) = 0
+143957 _llseek(9,0,8192,0x2b2abad8,SEEK_SET) = 0
+143957 read(9,0x2f57b000,2396) = 2396
+143957 _llseek(9,0,0,0x2b2abad8,SEEK_SET) = 0
+143957 read(9,0xa2f664,8192) = 8192
+143957 read(9,0x2f57b000,4096) = 2396
+143957 close(9) = 0
+143957 munmap(0x2f57b000,65536) = 0
+143957 access("/data/radio.db",F_OK) = 0
+143957 lstat64("/data/radio.db",0x2b2ab930) = 0
+143957 stat64("/data/radio.db",0x2b2ab508) = 0
+143957 open("/data/radio.db",O_RDWR|O_CREAT|O_LARGEFILE|O_CLOEXEC,0644) = 9
+143957 fstat64(9,0x2b2ab710) = 0
+143957 fstat64(9,0x2b2ab448) = 0
+143957 stat64("/data/radio.db",0x2b2ab388) = 0
+143957 _llseek(9,0,0,0x2b2ab9a0,SEEK_SET) = 0
+143957 read(9,0x2b2aba20,100) = 100
+143957 fcntl64(9,F_SETLK64,0x2b2ab228) = 0
+143957 fcntl64(9,F_SETLK64,0x2b2ab228) = 0
+143957 fcntl64(9,F_SETLK64,0x2b2ab228) = 0
+143957 stat64("/data/radio.db-journal",0x2b2ab220) = -1 errno=2 (No such file or directory)
+143957 fstat64(9,0x2b2ab1e8) = 0
+143957 stat64("/data/radio.db-wal",0x2b2ab220) = -1 errno=2 (No such file or directory)
+143957 fstat64(9,0x2b2ab1e8) = 0
+143957 _llseek(9,0,0,0x2b2ab210,SEEK_SET) = 0
+143957 read(9,0xa2fcc0,1024) = 1024
+143957 fcntl64(9,F_SETLK64,0x2b2aae80) = 0
+143957 fcntl64(9,F_SETLK64,0x2b2ab458) = 0
+143957 fcntl64(9,F_SETLK64,0x2b2ab458) = 0
+143957 fcntl64(9,F_SETLK64,0x2b2ab458) = 0
+143957 stat64("/data/radio.db-journal",0x2b2ab450) = -1 errno=2 (No such file or directory)
+143957 fstat64(9,0x2b2ab418) = 0
+143957 _llseek(9,0,24,0x2b2ab498,SEEK_SET) = 0
+143957 read(9,0x2b2ab518,16) = 16
+143957 fstat64(9,0x2b2ab418) = 0
+143957 stat64("/data/radio.db-wal",0x2b2ab450) = -1 errno=2 (No such file or directory)
+143957 fstat64(9,0x2b2ab418) = 0
+143957 _llseek(9,0,5120,0x2b2ab468,SEEK_SET) = 0
+143957 read(9,0xa2f668,1024) = 1024
+143957 fcntl64(9,F_SETLK64,0x2b2ab478) = 0
+143957 fcntl64(9,F_SETLK64,0x2b2ab690) = 0
+143957 fcntl64(9,F_SETLK64,0x2b2ab690) = 0
+143957 fcntl64(9,F_SETLK64,0x2b2ab690) = 0
+143957 stat64("/data/radio.db-journal",0x2b2ab688) = -1 errno=2 (No such file or directory)
+143957 fstat64(9,0x2b2ab650) = 0
+143957 _llseek(9,0,24,0x2b2ab6d0,SEEK_SET) = 0
+143957 read(9,0x2b2ab750,16) = 16
+143957 fstat64(9,0x2b2ab650) = 0
+143957 stat64("/data/radio.db-wal",0x2b2ab688) = -1 errno=2 (No such file or directory)
+143957 fstat64(9,0x2b2ab650) = 0
+143957 _llseek(9,0,3072,0x2b2ab6a0,SEEK_SET) = 0
+143957 read(9,0xa40af0,1024) = 1024
+143957 _llseek(9,0,6144,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa412f8,1024) = 1024
+143957 _llseek(9,0,7168,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa417a8,1024) = 1024
+143957 _llseek(9,0,8192,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa41c58,1024) = 1024
+143957 _llseek(9,0,9216,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa42108,1024) = 1024
+143957 _llseek(9,0,10240,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa425b8,1024) = 1024
+143957 _llseek(9,0,11264,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa42a68,1024) = 1024
+143957 _llseek(9,0,12288,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa42f18,1024) = 1024
+143957 _llseek(9,0,13312,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa433c8,1024) = 1024
+143957 _llseek(9,0,14336,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa43878,1024) = 1024
+143957 _llseek(9,0,15360,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa43d28,1024) = 1024
+143957 _llseek(9,0,16384,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa441d8,1024) = 1024
+143957 _llseek(9,0,19456,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa44688,1024) = 1024
+143957 _llseek(9,0,20480,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa44b38,1024) = 1024
+143957 _llseek(9,0,21504,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa44fe8,1024) = 1024
+143957 _llseek(9,0,22528,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa45498,1024) = 1024
+143957 _llseek(9,0,23552,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa45948,1024) = 1024
+143957 _llseek(9,0,24576,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa45df8,1024) = 1024
+143957 _llseek(9,0,25600,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa462a8,1024) = 1024
+143957 _llseek(9,0,26624,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa46758,1024) = 1024
+143957 brk(0x00a68000) = 0x00a68000
+143957 _llseek(9,0,27648,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa46c08,1024) = 1024
+143957 _llseek(9,0,29696,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa470b8,1024) = 1024
+143957 _llseek(9,0,30720,0x2b2ab680,SEEK_SET) = 0
+143957 read(9,0xa47568,1024) = 1024
+143957 _llseek(9,0,31744,0x2b2ab678,SEEK_SET) = 0
+143957 read(9,0xa47a18,1024) = 1024
+143957 fcntl64(9,F_SETLK64,0x2b2ab9c0) = 0
+143957 brk(0x00a62000) = 0x00a62000
+143957 fstat64(9,0x2b2ab9b8) = 0
+143957 stat64("/data/radio.db",0x2b2ab8f8) = 0
+143957 close(9) = 0
+143957 brk(0x00a50000) = 0x00a50000
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab690) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab658) = 0
+143957 _llseek(8,0,24,0x2b2ab6d8,SEEK_SET) = 0
+143957 read(8,0x2b2ab758,16) = 16
+143957 fstat64(8,0x2b2ab658) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab690) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab658) = 0
+143957 _llseek(8,0,200704,0x2b2ab6a8,SEEK_SET) = 0
+143957 read(8,0xa2f668,4096) = 4096
+143957 fcntl64(8,F_SETLK64,0x2b2ab9c8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab690) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab658) = 0
+143957 _llseek(8,0,24,0x2b2ab6d8,SEEK_SET) = 0
+143957 read(8,0x2b2ab758,16) = 16
+143957 fstat64(8,0x2b2ab658) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab690) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab658) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab6b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab690) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab658) = 0
+143957 _llseek(8,0,24,0x2b2ab6d8,SEEK_SET) = 0
+143957 read(8,0x2b2ab758,16) = 16
+143957 fstat64(8,0x2b2ab658) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab690) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab658) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab9c8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab690) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab658) = 0
+143957 _llseek(8,0,24,0x2b2ab6d8,SEEK_SET) = 0
+143957 read(8,0x2b2ab758,16) = 16
+143957 fstat64(8,0x2b2ab658) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab690) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab658) = 0
+ = 0
+144192 gettimeofday(0x2ea89ed8,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 489528},NULL)
+143957 fcntl64(8,F_SETLK64,0x2b2ab6b8) = 0
+144192 nanosleep(782802680,0,0,20000,0,0)143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab690) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab658) = 0
+143957 _llseek(8,0,24,0x2b2ab6d8,SEEK_SET) = 0
+143957 read(8,0x2b2ab758,16) = 16
+143957 fstat64(8,0x2b2ab658) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab690) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab658) = 0
+ = 0
+144193 nanosleep(791191232,0,0,20000,0,0)143957 fcntl64(8,F_SETLK64,0x2b2ab9c8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab698) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab690) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab658) = 0
+143957 _llseek(8,0,24,0x2b2ab6d8,SEEK_SET) = 0
+143957 read(8,0x2b2ab758,16) = 16
+143957 fstat64(8,0x2b2ab658) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab690) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab658) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab6b8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab8e0) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab8e0) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab8e0) = 0
+143957 stat64("/data/usrlocal_media.db-journal",0x2b2ab8d8) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab8a0) = 0
+143957 _llseek(8,0,24,0x2b2ab920,SEEK_SET) = 0
+143957 read(8,0x2b2ab9a0,16) = 16
+143957 fstat64(8,0x2b2ab8a0) = 0
+143957 stat64("/data/usrlocal_media.db-wal",0x2b2ab8d8) = -1 errno=2 (No such file or directory)
+143957 fstat64(8,0x2b2ab8a0) = 0
+ = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490033},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490066},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490092},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490110},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490129},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490148},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490167},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490186},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490204},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490223},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490242},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490261},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490279},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490314},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490335},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490353},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490379},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490397},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490416},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490435},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490453},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490472},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490491},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490509},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 490528},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0)143957 fcntl64(8,F_SETLK64,0x2b2ab970) = 0
+143957 _llseek(8,0,266240,0x2b2ab888,SEEK_SET) = 0
+143957 read(8,0xa30718,4096) = 4096
+ = 0
+143974 nanosleep(740857520,0,0,10000,0,0)143957 _llseek(8,0,270336,0x2b2ab888,SEEK_SET) = 0
+143957 read(8,0xa317c8,4096) = 4096
+143957 fcntl64(8,F_SETLK64,0x2b2ab930) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab930) = 0
+143957 _llseek(8,0,0,0x2b2ab848,SEEK_SET) = 0
+143957 write(8,0x995650,4096) = 4096
+143957 _llseek(8,0,266240,0x2b2ab848,SEEK_SET) = 0
+143957 write(8,0xa30718,4096) = 4096
+143957 _llseek(8,0,270336,0x2b2ab848,SEEK_SET) = 0
+143957 write(8,0xa317c8,4096) = 4096
+143957 fcntl64(8,F_SETLK64,0x2b2ab8e8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab8e8) = 0
+143957 fcntl64(8,F_SETLK64,0x2b2ab900) = 0
+143957 open("/dev/sa-config",O_RDWR|O_LARGEFILE) = 9
+143957 ioctl(9,0xffff00f1,0x2b2abd70) = -1 errno=25 (Inappropriate ioctl for device)
+143957 close(9) = 0
+143957 mmap(NULL,8388608,PROT_EXEC|PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK,-1,0) = 0x2f57b000
+143957 mprotect(0x2f57b000,4096,PROT_NONE) = 0
+143957 clone(CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID,child_stack=0x2fd79ff0,parent_tidptr=0x2fd7a4f8,tls=0x2fd81920,child_tidptr=0x2fd7a4f8) = 144194
+144194 set_robust_list(0x2fd7a500,12) = -1 errno=89 (Function not implemented)
+143957 futex(0x009ccde4,FUTEX_PRIVATE_FLAG|FUTEX_WAIT,2,NULL,0x00424020,4341792)144194 prctl(15,7707756,802660152,802660152,0,0) = 0
+144194 futex(0x009ccde4,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 1
+ = 0
+143957 futex(0x009ccde4,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,1,NULL,0x2b8a2020,730472480) = 0
+144194 nanosleep(802657352,0,0,10000,0,0)143957 mmap(NULL,8388608,PROT_EXEC|PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK,-1,0) = 0x2fd7b000
+143957 mprotect(0x2fd7b000,4096,PROT_NONE) = 0
+143957 clone(CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID,child_stack=0x30579ff0,parent_tidptr=0x3057a4f8,tls=0x30581920,child_tidptr=0x3057a4f8) = 144195
+144195 set_robust_list(0x3057a500,12) = -1 errno=89 (Function not implemented)
+143957 mmap(NULL,8388608,PROT_EXEC|PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK,-1,0)144195 prctl(15,8080076,811048760,811048760,0,0) = 0
+ = 0x3057b000
+143957 mprotect(0x3057b000,4096,PROT_NONE) = 0
+143957 clone(CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID,child_stack=0x30d79ff0,parent_tidptr=0x30d7a4f8,tls=0x30d81920,child_tidptr=0x30d7a4f8)144195 futex(0x00a26870,FUTEX_CLOCK_REALTIME|FUTEX_WAIT_BITSET,1,NULL,NULL,0) = 144196
+144196 set_robust_list(0x30d7a500,12) = -1 errno=89 (Function not implemented)
+144196 prctl(15,8080056,819437368,819437368,0,0) = 0
+143957 brk(0x00a71000)144196 nanosleep(819437304,0,0,30000,0,0) = 0x00a71000
+143957 open("/usr/resource/unicode/big5_unicode_tbl.bin",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2abb08) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2abbf8) = 0
+143957 _llseek(9,0,53248,0x2b2abbc0,SEEK_SET) = 0
+143957 read(9,0x30d7b000,764) = 764
+143957 _llseek(9,0,0,0x2b2abbc0,SEEK_SET) = 0
+143957 read(9,0xa58bdc,53248) = 53248
+143957 read(9,0x30d7b000,4096) = 764
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/unicode/gb18030_unicode_tbl.bin",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2abb08) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2abbf8) = 0
+143957 _llseek(9,0,94208,0x2b2abbc0,SEEK_SET) = 0
+143957 read(9,0x30d7b000,1552) = 1552
+143957 brk(0x00a9e000) = 0x00a9e000
+143957 _llseek(9,0,0,0x2b2abbc0,SEEK_SET) = 0
+143957 read(9,0xa65eec,94208) = 94208
+143957 read(9,0x30d7b000,4096) = 1552
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/unicode/gb18030_unicode_tbldword.bin",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2abb08) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2abbf8) = 0
+143957 _llseek(9,0,311296,0x2b2abbc0,SEEK_SET) = 0
+143957 read(9,0x30d7b000,4048) = 4048
+143957 mmap(NULL,315392,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d8b000
+143957 _llseek(9,0,0,0x2b2abbc0,SEEK_SET) = 0
+143957 read(9,0x30d8b00c,311296) = 311296
+143957 read(9,0x30d7b000,4096) = 4048
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/unicode/cp949_to_unicode_tbl.bin",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2abb08) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2abbf8) = 0
+143957 _llseek(9,0,65536,0x2b2abbc0,SEEK_SET) = 0
+143957 read(9,0x30d7b000,2656) = 2656
+143957 _llseek(9,0,0,0x2b2abbc0,SEEK_SET) = 0
+143957 read(9,0xa7d514,65536) = 65536
+143957 read(9,0x30d7b000,4096) = 2656
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/unicode/cp932_to_unicode_tbl.bin",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2abb08) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2abbf8) = 0
+143957 _llseek(9,0,28672,0x2b2abbc0,SEEK_SET) = 0
+143957 read(9,0x30d7b000,2476) = 2476
+143957 _llseek(9,0,0,0x2b2abbc0,SEEK_SET) = 0
+143957 read(9,0xa8df8c,28672) = 28672
+143957 read(9,0x30d7b000,4096) = 2476
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/unicode/iso_8859_2_unicode_tbl.bin",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2abb08) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2abbf8) = 0
+143957 _llseek(9,0,0,0x2b2abbc0,SEEK_SET) = 0
+143957 read(9,0x30d7b000,380) = 380
+143957 _llseek(9,0,380,0x2b2abbc0,SEEK_SET) = 0
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/unicode/iso_8859_5_unicode_tbl.bin",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2abb08) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2abbf8) = 0
+143957 _llseek(9,0,0,0x2b2abbc0,SEEK_SET) = 0
+143957 read(9,0x30d7b000,64) = 64
+143957 _llseek(9,0,64,0x2b2abbc0,SEEK_SET) = 0
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/litegui/theme1/config.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab7b0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2ab8a0) = 0
+143957 _llseek(9,0,0,0x2b2ab868,SEEK_SET) = 0
+143957 read(9,0x30d7b000,1230) = 1230
+143957 _llseek(9,0,1230,0x2b2ab868,SEEK_SET) = 0
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/litegui/theme1/config.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab7b0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2ab8a0) = 0
+143957 _llseek(9,0,0,0x2b2ab868,SEEK_SET) = 0
+143957 read(9,0x30d7b000,1230) = 1230
+143957 _llseek(9,0,1230,0x2b2ab868,SEEK_SET) = 0
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/litegui/theme1/config.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab7b0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2ab8a0) = 0
+143957 _llseek(9,0,0,0x2b2ab868,SEEK_SET) = 0
+143957 read(9,0x30d7b000,1230) = 1230
+143957 _llseek(9,0,1230,0x2b2ab868,SEEK_SET) = 0
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/litegui/theme1/config.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab7b0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2ab8a0) = 0
+143957 _llseek(9,0,0,0x2b2ab868,SEEK_SET) = 0
+143957 read(9,0x30d7b000,1230) = 1230
+143957 _llseek(9,0,1230,0x2b2ab868,SEEK_SET) = 0
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/litegui/theme1/config.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab7b0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2ab8a0) = 0
+143957 _llseek(9,0,0,0x2b2ab868,SEEK_SET) = 0
+143957 read(9,0x30d7b000,1230) = 1230
+143957 _llseek(9,0,1230,0x2b2ab868,SEEK_SET) = 0
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/litegui/theme1/config.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab7b0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2ab8a0) = 0
+143957 _llseek(9,0,0,0x2b2ab868,SEEK_SET) = 0
+143957 read(9,0x30d7b000,1230) = 1230
+143957 _llseek(9,0,1230,0x2b2ab868,SEEK_SET) = 0
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/litegui/theme1/config.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab7b0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2ab8a0) = 0
+143957 _llseek(9,0,0,0x2b2ab868,SEEK_SET) = 0
+143957 read(9,0x30d7b000,1230) = 1230
+143957 _llseek(9,0,1230,0x2b2ab868,SEEK_SET) = 0
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/litegui/theme1/config.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab7b0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2ab8a0) = 0
+143957 _llseek(9,0,0,0x2b2ab868,SEEK_SET) = 0
+143957 read(9,0x30d7b000,1230) = 1230
+143957 _llseek(9,0,1230,0x2b2ab868,SEEK_SET) = 0
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/litegui/theme1/config.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab7b0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2ab8a0) = 0
+143957 _llseek(9,0,0,0x2b2ab868,SEEK_SET) = 0
+143957 read(9,0x30d7b000,1230) = 1230
+143957 _llseek(9,0,1230,0x2b2ab868,SEEK_SET) = 0
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/litegui/theme1/config.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab7b0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2ab8a0) = 0
+143957 _llseek(9,0,0,0x2b2ab868,SEEK_SET) = 0
+143957 read(9,0x30d7b000,1230) = 1230
+143957 _llseek(9,0,1230,0x2b2ab868,SEEK_SET) = 0
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/litegui/theme1/config.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab7b0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2ab8a0) = 0
+143957 _llseek(9,0,0,0x2b2ab868,SEEK_SET) = 0
+143957 read(9,0x30d7b000,1230) = 1230
+143957 _llseek(9,0,1230,0x2b2ab868,SEEK_SET) = 0
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+143957 open("/usr/resource/litegui/theme1/config.ini",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab7b0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2ab8a0) = 0
+143957 _llseek(9,0,0,0x2b2ab868,SEEK_SET) = 0
+143957 read(9,0x30d7b000,1230) = 1230
+143957 _llseek(9,0,1230,0x2b2ab868,SEEK_SET) = 0
+143957 close(9) = 0
+143957 munmap(0x30d7b000,65536) = 0
+ = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500627},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500646},NULL)
+143957 open("/data/mnt/sd_0/font/custom_font_config.ini",O_RDONLY|O_LARGEFILE)144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500681},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500700},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500719},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500737},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500756},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500774},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500792},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500810},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500828},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500846},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500865},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500882},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500901},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500915},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500928},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500942},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500955},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500972},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500985},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 500998},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 501015},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 501034},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 501052},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0) = -1 errno=2 (No such file or directory)
+ = 0
+143974 nanosleep(740857520,0,0,10000,0,0)143957 mmap(NULL,233472,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30dd8000
+143957 open("/usr/resource/fonts/msyh.ttf",O_RDONLY|O_LARGEFILE) = 9
+143957 fstat64(9,0x2b2ab9c0) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30d7b000
+143957 fstat64(9,0x2b2abab0) = 0
+143957 _llseek(9,0,2789376,0x2b2aba78,SEEK_SET) = 0
+143957 read(9,0x30d7b000,52) = 52
+143957 _llseek(9,0,0,0x2b2aba78,SEEK_SET) = 0
+143957 read(9,0x30d7b000,4096) = 4096
+ = 0
+143957 _llseek(9,0,4096,0x2b2ab8d8,SEEK_SET) = 0
+144194 nanosleep(802657352,0,0,10000,0,0)143957 _llseek(9,0,4096,0x2b2ab858,SEEK_SET) = 0
+143957 _llseek(9,0,4096,0x2b2ab858,SEEK_SET) = 0
+143957 _llseek(9,0,4096,0x2b2ab858,SEEK_SET) = 0
+143957 _llseek(9,0,4096,0x2b2ab8e8,SEEK_SET) = 0
+143957 _llseek(9,0,36864,0x2b2ab8f0,SEEK_SET) = 0
+143957 read(9,0x30d7b000,4096) = 4096
+143957 brk(0x00ac5000) = 0x00ac5000
+143957 read(9,0xa9d820,28672) = 28672
+143957 read(9,0x30d7b000,4096) = 4096
+143957 _llseek(9,0,2686976,0x2b2ab8c8,SEEK_SET) = 0
+143957 read(9,0x30d7b000,4096) = 4096
+143957 read(9,0x30d7b000,4096) = 4096
+143957 _llseek(9,0,2695168,0x2b2ab8f0,SEEK_SET) = 0
+143957 _llseek(9,0,0,0x2b2ab8f0,SEEK_SET) = 0
+143957 read(9,0x30d7b000,4096) = 4096
+143957 _llseek(9,0,4096,0x2b2ab8e0,SEEK_SET) = 0
+143957 _llseek(9,0,4096,0x2b2ab8e8,SEEK_SET) = 0
+143957 _llseek(9,0,2691072,0x2b2ab8d8,SEEK_SET) = 0
+143957 read(9,0x30d7b000,4096) = 4096
+143957 _llseek(9,0,2695168,0x2b2ab8d8,SEEK_SET) = 0
+143957 _llseek(9,0,106496,0x2b2ab980,SEEK_SET) = 0
+143957 read(9,0x30d7b000,4096) = 4096
+143957 _llseek(9,0,69632,0x2b2ab980,SEEK_SET) = 0
+143957 read(9,0x30d7b000,4096) = 4096
+143957 read(9,0xaa5c1c,32768) = 32768
+143957 read(9,0x30d7b000,4096) = 4096
+143957 open("/usr/resource/fonts/default.otf",O_RDONLY|O_LARGEFILE) = 10
+143957 fstat64(10,0x2b2ab9d8) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30e11000
+143957 fstat64(10,0x2b2abac8) = 0
+143957 _llseek(10,0,8343552,0x2b2aba90,SEEK_SET) = 0
+143957 read(10,0x30e11000,448) = 448
+143957 _llseek(10,0,0,0x2b2aba90,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,4096,0x2b2ab8f0,SEEK_SET) = 0
+143957 _llseek(10,0,4096,0x2b2ab998,SEEK_SET) = 0
+143957 _llseek(10,0,4096,0x2b2ab8f0,SEEK_SET) = 0
+143957 _llseek(10,0,4096,0x2b2ab900,SEEK_SET) = 0
+143957 _llseek(10,0,4096,0x2b2ab908,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 read(10,0xaaff04,28672) = 28672
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,0,0x2b2ab8e0,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,36864,0x2b2ab908,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,0,0x2b2ab908,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,8220672,0x2b2ab8f8,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,8343552,0x2b2ab908,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 448
+143957 _llseek(10,0,8044544,0x2b2ab8f8,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,0,0x2b2ab900,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,4096,0x2b2ab8f0,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,36864,0x2b2ab998,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,40960,0x2b2ab960,SEEK_SET) = 0
+143957 _llseek(10,0,40960,0x2b2ab960,SEEK_SET) = 0
+143957 _llseek(10,0,40960,0x2b2ab960,SEEK_SET) = 0
+143957 _llseek(10,0,40960,0x2b2ab960,SEEK_SET) = 0
+143957 _llseek(10,0,40960,0x2b2ab960,SEEK_SET) = 0
+143957 _llseek(10,0,40960,0x2b2ab960,SEEK_SET) = 0
+143957 read(10,0xab8a4c,4096) = 4096
+143957 read(10,0x30e11000,4096) = 4096
+ = 0
+144192 gettimeofday(0x2ea89ed8,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 509639},NULL)
+143957 _llseek(10,0,36864,0x2b2ab940,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096)144192 nanosleep(782802680,0,0,20000,0,0) = 4096
+ = 0
+144193 nanosleep(791191232,0,0,20000,0,0)143957 _llseek(10,0,40960,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,86016,0x2b2ab998,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,180224,0x2b2ab960,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7593984,0x2b2ab960,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7598080,0x2b2ab960,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab960,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab780,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab760,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab780,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab760,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab780,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab760,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab780,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+ = 0
+143957 read(10,0xabda59,16384)144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511203},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511223},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511239},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511255},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511271},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511287},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511302},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511318},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511334},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511373},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511391},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511407},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511422},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511438},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511454},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511469},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511485},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511501},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511517},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511532},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511548},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511564},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511583},NULL)
+ = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 16384
+143957 read(10,0x30e11000,4096)144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511633},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 511651},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0) = 4096
+143957 _llseek(10,0,7593984,0x2b2ab760,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 read(10,0x30e11000,4096) = 4096
+143957 brk(0x00ae6000) = 0x00ae6000
+143957 _llseek(10,0,7593984,0x2b2ab770,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7618560,0x2b2ab7b8,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7622656,0x2b2ab780,SEEK_SET) = 0
+143957 _llseek(10,0,7622656,0x2b2ab760,SEEK_SET) = 0
+143957 _llseek(10,0,7593984,0x2b2ab770,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7618560,0x2b2ab7b8,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7622656,0x2b2ab780,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7618560,0x2b2ab760,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7593984,0x2b2ab770,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7622656,0x2b2ab7b8,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7626752,0x2b2ab780,SEEK_SET) = 0
+143957 _llseek(10,0,7626752,0x2b2ab760,SEEK_SET) = 0
+143957 _llseek(10,0,7593984,0x2b2ab770,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7622656,0x2b2ab7b8,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7626752,0x2b2ab780,SEEK_SET) = 0
+143957 _llseek(10,0,7626752,0x2b2ab760,SEEK_SET) = 0
+143957 _llseek(10,0,7593984,0x2b2ab770,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7622656,0x2b2ab7b8,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7626752,0x2b2ab780,SEEK_SET) = 0
+143957 _llseek(10,0,7626752,0x2b2ab760,SEEK_SET) = 0
+143957 _llseek(10,0,7593984,0x2b2ab770,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7622656,0x2b2ab7b8,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7626752,0x2b2ab780,SEEK_SET) = 0
+143957 _llseek(10,0,7626752,0x2b2ab760,SEEK_SET) = 0
+143957 _llseek(10,0,7593984,0x2b2ab770,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7622656,0x2b2ab7b8,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7626752,0x2b2ab780,SEEK_SET) = 0
+143957 _llseek(10,0,7626752,0x2b2ab760,SEEK_SET) = 0
+143957 _llseek(10,0,7593984,0x2b2ab770,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7622656,0x2b2ab7b8,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7626752,0x2b2ab780,SEEK_SET) = 0
+143957 _llseek(10,0,7626752,0x2b2ab760,SEEK_SET) = 0
+143957 _llseek(10,0,7593984,0x2b2ab770,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7622656,0x2b2ab7b8,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7692288,0x2b2ab780,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 mmap(NULL,339968,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30e21000
+143957 read(10,0x30e216a2,335872) = 335872
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7622656,0x2b2ab760,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 brk(0x00b0f000) = 0x00b0f000
+143957 read(10,0xade628,65536) = 65536
+143957 read(10,0x30e11000,4096) = 4096
+143957 brk(0x00afe000) = 0x00afe000
+ = 0
+144194 nanosleep(802657352,0,0,10000,0,0)143957 _llseek(10,0,7593984,0x2b2ab770,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,8032256,0x2b2ab7b8,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,8036352,0x2b2ab780,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,8032256,0x2b2ab760,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7593984,0x2b2ab770,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,8036352,0x2b2ab7b8,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,8040448,0x2b2ab780,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,8036352,0x2b2ab760,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7593984,0x2b2ab770,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,8040448,0x2b2ab7b8,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,8044544,0x2b2ab780,SEEK_SET) = 0
+143957 _llseek(10,0,8044544,0x2b2ab760,SEEK_SET) = 0
+143957 _llseek(10,0,7593984,0x2b2ab770,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab770,SEEK_SET) = 0
+143957 _llseek(10,0,7598080,0x2b2ab7b8,SEEK_SET) = 0
+143957 _llseek(10,0,8040448,0x2b2ab7b8,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,8044544,0x2b2ab780,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,8040448,0x2b2ab760,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,86016,0x2b2ab998,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,36864,0x2b2ab940,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,45056,0x2b2ab998,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+143957 brk(0x00b29000) = 0x00b29000
+143957 read(10,0x30e11000,4096) = 4096
+143957 read(10,0x30e11000,4096) = 4096
+143957 read(10,0x30e11000,4096) = 4096
+143957 read(10,0x30e11000,4096) = 4096
+143957 read(10,0x30e11000,4096) = 4096
+143957 read(10,0x30e11000,4096) = 4096
+143957 read(10,0x30e11000,4096) = 4096
+143957 read(10,0x30e11000,4096) = 4096
+143957 read(10,0x30e11000,4096) = 4096
+143957 read(10,0x30e11000,4096) = 4096
+143957 _llseek(10,0,36864,0x2b2ab918,SEEK_SET) = 0
+143957 read(10,0x30e11000,4096) = 4096
+ = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521747},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521765},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521779},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521792},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521806},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521820},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521841},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521856},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521872},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521888},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521904},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521919},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521933},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521947},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521961},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521975},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 521989},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 522003},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 522016},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 522030},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 522044},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 522058},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 522072},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 522086},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 522100},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0)143957 open("/usr/resource/fonts/Korean.ttf",O_RDONLY|O_LARGEFILE) = 11
+143957 fstat64(11,0x2b2ab9d8) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30e74000
+143957 fstat64(11,0x2b2abac8) = 0
+143957 _llseek(11,0,4292608,0x2b2aba90,SEEK_SET) = 0
+143957 read(11,0x30e74000,736) = 736
+143957 _llseek(11,0,0,0x2b2aba90,SEEK_SET) = 0
+143957 read(11,0x30e74000,4096) = 4096
+143957 _llseek(11,0,4096,0x2b2ab8f0,SEEK_SET) = 0
+143957 _llseek(11,0,4096,0x2b2ab870,SEEK_SET) = 0
+143957 _llseek(11,0,4096,0x2b2ab870,SEEK_SET) = 0
+143957 _llseek(11,0,4096,0x2b2ab870,SEEK_SET) = 0
+143957 _llseek(11,0,4096,0x2b2ab900,SEEK_SET) = 0
+143957 _llseek(11,0,81920,0x2b2ab908,SEEK_SET) = 0
+143957 read(11,0x30e74000,4096) = 4096
+143957 read(11,0xb16a68,45056) = 45056
+143957 read(11,0x30e74000,4096) = 4096
+143957 _llseek(11,0,4288512,0x2b2ab8e0,SEEK_SET) = 0
+143957 read(11,0x30e74000,4096) = 4096
+143957 _llseek(11,0,4292608,0x2b2ab908,SEEK_SET) = 0
+143957 read(11,0x30e74000,4096) = 736
+143957 _llseek(11,0,0,0x2b2ab908,SEEK_SET) = 0
+143957 read(11,0x30e74000,4096) = 4096
+143957 _llseek(11,0,4096,0x2b2ab8f8,SEEK_SET) = 0
+143957 _llseek(11,0,4096,0x2b2ab900,SEEK_SET) = 0
+143957 _llseek(11,0,4292608,0x2b2ab8f0,SEEK_SET) = 0
+143957 read(11,0x30e74000,4096) = 736
+143957 _llseek(11,0,4288512,0x2b2ab8f8,SEEK_SET) = 0
+143957 read(11,0x30e74000,4096) = 4096
+143957 _llseek(11,0,4292608,0x2b2ab8f0,SEEK_SET) = 0
+143957 read(11,0x30e74000,4096) = 736
+ = 0
+144194 nanosleep(802657352,0,0,10000,0,0)143957 _llseek(11,0,217088,0x2b2ab998,SEEK_SET) = 0
+143957 read(11,0x30e74000,4096) = 4096
+143957 _llseek(11,0,135168,0x2b2ab998,SEEK_SET) = 0
+143957 read(11,0x30e74000,4096) = 4096
+143957 brk(0x00b57000) = 0x00b57000
+143957 read(11,0xb2370c,77824) = 77824
+143957 read(11,0x30e74000,4096) = 4096
+143957 _llseek(11,0,135168,0x2b2ab958,SEEK_SET) = 0
+143957 read(11,0x30e74000,4096) = 4096
+143957 _llseek(11,0,131072,0x2b2ab998,SEEK_SET) = 0
+143957 read(11,0x30e74000,4096) = 4096
+143957 _llseek(11,0,135168,0x2b2ab998,SEEK_SET) = 0
+143957 read(11,0x30e74000,4096) = 4096
+143957 open("/usr/resource/fonts/Thai.ttf",O_RDONLY|O_LARGEFILE) = 12
+143957 fstat64(12,0x2b2ab9d8) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30e84000
+143957 fstat64(12,0x2b2abac8) = 0
+143957 _llseek(12,0,28672,0x2b2aba90,SEEK_SET) = 0
+143957 read(12,0x30e84000,1660) = 1660
+143957 _llseek(12,0,0,0x2b2aba90,SEEK_SET) = 0
+143957 read(12,0x30e84000,4096) = 4096
+143957 _llseek(12,0,4096,0x2b2ab8f0,SEEK_SET) = 0
+143957 _llseek(12,0,4096,0x2b2ab870,SEEK_SET) = 0
+143957 _llseek(12,0,4096,0x2b2ab870,SEEK_SET) = 0
+143957 _llseek(12,0,4096,0x2b2ab870,SEEK_SET) = 0
+143957 _llseek(12,0,4096,0x2b2ab900,SEEK_SET) = 0
+143957 _llseek(12,0,4096,0x2b2ab908,SEEK_SET) = 0
+143957 _llseek(12,0,24576,0x2b2ab8e0,SEEK_SET) = 0
+143957 read(12,0x30e84000,4096) = 4096
+143957 _llseek(12,0,28672,0x2b2ab908,SEEK_SET) = 0
+143957 _llseek(12,0,0,0x2b2ab908,SEEK_SET) = 0
+143957 read(12,0x30e84000,4096) = 4096
+143957 _llseek(12,0,4096,0x2b2ab8f8,SEEK_SET) = 0
+143957 _llseek(12,0,4096,0x2b2ab900,SEEK_SET) = 0
+143957 _llseek(12,0,24576,0x2b2ab8f0,SEEK_SET) = 0
+143957 read(12,0x30e84000,4096) = 4096
+143957 _llseek(12,0,28672,0x2b2ab8f0,SEEK_SET) = 0
+143957 _llseek(12,0,28672,0x2b2ab8f0,SEEK_SET) = 0
+143957 _llseek(12,0,0,0x2b2ab998,SEEK_SET) = 0
+143957 read(12,0x30e84000,4096) = 4096
+143957 _llseek(12,0,4096,0x2b2ab998,SEEK_SET) = 0
+143957 open("/usr/resource/litegui/theme1/number/0.png",O_RDONLY|O_LARGEFILE) = 13
+143957 fstat64(13,0x2b2ab878) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30e94000
+143957 read(13,0x30e94000,4096) = 280
+143957 close(13) = 0
+143957 munmap(0x30e94000,65536) = 0
+143957 open("/usr/resource/litegui/theme1/number/0.png",O_RDONLY|O_LARGEFILE) = 13
+143957 fstat64(13,0x2b2ab868) = 0
+143957 mmap(NULL,65536,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0) = 0x30e94000
+143957 read(13,0x30e94000,4096) = 280
+--- SIGBUS {si_signo=SIGBUS, si_code=1, si_addr=0x00b38cc4} ---
+ = 0
+144196 nanosleep(819437304,0,0,30000,0,0)143957 futex(0x2ba21e50,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,2147483647,NULL,0x2b8a2020,730472480) = 0
+143957 futex(0x2b86e530,FUTEX_PRIVATE_FLAG|FUTEX_WAKE,2147483647,NULL,0x2b8a2020,730472480) = 0
+ = 0
+144192 gettimeofday(0x2ea89ed8,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 529761},NULL)
+144192 nanosleep(782802680,0,0,20000,0,0) = 0
+144193 nanosleep(791191232,0,0,20000,0,0)143957 rt_sigaction(SIGINT,0x2b2ab450,0x2b2ab430) = 0
+143957 rt_sigaction(SIGQUIT,0x2b2ab450,0x2b2ab430) = 0
+143957 rt_sigprocmask(SIG_BLOCK,[SIGCHLD],0x2b2ab520,16) = 0 (oldset=[SIGBUS])
+143957 clone(CLONE_PARENT_SETTID|0x12,child_stack=0x00000000,parent_tidptr=0x2b2ab5c0,tls=0x00000000,child_tidptr=0x2ba26e10) = 144197
+143957 waitpid(144197,0x2b2ab5c4,0) = 0
+144197 rt_sigaction(SIGINT,0x2b2ab450,NULL) = 0
+144197 rt_sigaction(SIGQUIT,0x2b2ab450,NULL) = 0
+144197 rt_sigprocmask(SIG_SETMASK,[SIGBUS],NULL,16) = 0
+144197 execve("/bin/sh",{"sh","-c","cat /proc/143957/maps",NULL}) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532205},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532221},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532236},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532250},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532264},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532278},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532292},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532306},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532321},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532335},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532349},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532371},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532385},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532399},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532414},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532428},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532447},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532462},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532476},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532490},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532504},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532519},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532533},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532547},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 532561},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0) = 0
+144194 nanosleep(802657352,0,0,10000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542659},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542677},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542691},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542705},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542720},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542734},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542748},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542762},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542777},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542791},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542805},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542819},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542834},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542848},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542862},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542877},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542891},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542905},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542919},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542933},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542948},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542962},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542976},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 542990},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 543005},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0) = 0
+144194 nanosleep(802657352,0,0,10000,0,0) = 0
+ = 0
+144192 gettimeofday(0x2ea89ed8,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 549874},NULL)
+144193 nanosleep(791191232,0,0,20000,0,0)144192 nanosleep(782802680,0,0,20000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553099},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553118},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553133},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553150},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553164},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553178},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553192},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553207},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553227},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553242},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553256},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553270},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553284},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553299},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553313},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553327},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553341},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553355},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553381},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553396},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553410},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553425},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553440},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553457},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 553473},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0) = 0
+144194 nanosleep(802657352,0,0,10000,0,0) = 0
+144196 nanosleep(819437304,0,0,30000,0,0) = 0
+143974 nanosleep(740857520,0,0,10000,0,0) = 0
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563573},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563592},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563608},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563625},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563641},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563658},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563675},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563693},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563710},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563727},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563744},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563762},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563779},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563796},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563813},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563830},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563848},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563865},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563897},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563916},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563932},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563950},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563967},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 563984},NULL)
+144190 gettimeofday(0x2da89ee0,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 564001},NULL)
+144190 nanosleep(766025440,0,0,10000,0,0) = 0
+144194 nanosleep(802657352,0,0,10000,0,0)cat: can't open '/proc/143957/maps': No such file or directory
+ = 
+143957 rt_sigaction(SIGINT,0x2b2ab450,NULL) = 0
+143957 rt_sigaction(SIGQUIT,0x2b2ab450,NULL) = 0
+143957 rt_sigprocmask(SIG_SETMASK,[SIGBUS],NULL,16) = 0
+ = 0
+144193 nanosleep(791191232,0,0,20000,0,0) = 0
+144192 gettimeofday(0x2ea89ed8,NULL) = 0 ({tv_sec = 1791776829,tv_usec = 570001},NULL)
+144192 nanosleep(782802680,0,0,20000,0,0)143957 write(1,0x2ba3b000,2591)lg_system_main in
+(GUI:D)lg_system: build time: Dec 29 2025 18:22:00.
+(hgl_fb: E) failed to get fb0 info
+(GUI:E)lg_system: Access fb failed.
+(hgl_ts: E) event0 init fail
+(GUI:E)lg_system: event init fail
+(GUI:D)x1000: lg platform init.
+(GUI:D)lg_class: lg class init.
+(MGR:E):ot_json: 32000
+(MGR:E):ot_json: 44100
+(MGR:E):ot_json: 48000
+(MGR:E):ot_json: 88200
+(MGR:E):ot_json: 96000
+(MGR:E):ot_json: 176400
+(MGR:E):ot_json: 192000
+(MGR:E):ot_json: 352800
+(MGR:E):ot_json: 384000
+(MGR:E):ot_json: 44100
+(MGR:E):ot_json: 48000
+(MGR:E):ot_json: 88200
+(MGR:E):ot_json: 96000
+(MGR:E):ot_json: 176400
+(MGR:E):ot_json: 192000
+(MGR:E):ot_json: 44100
+(MGR:E):ot_json: 48000
+(MGR:E):ot_json: 88200
+(MGR:E):ot_json: 96000
+(MGR:E):ot_json: 176400
+(MGR:E):ot_json: 192000
+(MGR:I):ot_device: Imported 4 devices.
+(MGR:I):ot_device: Found a new default device: headset
+(MGR:I):ot_device: Imported 4 ports.
+(MGR:I):ot_device: Imported 101 HDB gains.
+(MGR:I):ot_device: Imported 101 MDB gains.
+(MGR:I):ot_device: Imported 101 LDB gains.
+(MGR:I):ot_device: Imported 7 DSD gains.
+(MGR:I):ot_device: Imported 101 SW gains.
+(MGR:I):ot_device: Imported 2 volumes.
+product name: 
+OTA_SERVICE: version(1.0)
+(GUI:D)lg_system: lg_platform_init
+(SYS:D) Libsystem Build Dec 13 2025 17:32:45 ba63c26
+(MGR:E):server: bind failed.
+(MGR:E):manager: open server error.
+(GUI:D)lg_dlna: output_process.
+(GUI:D)lg_dlna: waiting for incoming connection...
+(GUI:D)../app/system_set.c: v:0
+(GUI:D)../app/system_set.c: disable vol warn
+(GUI:D)lg_helper_equalizer: EQ read file.
+(GUI:E)lg_music_db_init: warning :call lg_music_db_init
+set music db soft heap limit is 1MB
+SAM/I HiBy Engine 5e4c22e Build Aug 15 2025 17:11:10 http://www.hiby.com
+SAM/I Options: [LINUX][SA_MAX_META=128][DSD2PCM_DSD64_Q=1][DSD2PCM_DSD128_Q=2][DSD2PCM_DSD256_Q=3][DSD2PCM_DSD512_Q=3]
+BAL/D Balance module init
+BAL/D HiBy host magic = 79426948
+BAL/D HiBy host version = 1.2
+mseb/D MSEB module init
+mseb/D HiBy host magic = 0x79426948
+mseb/D HiBy host version = 1.2
+STEREO/D Sound Field module init
+STEREO/D HiBy host magic = 79426948
+STEREO/D HiBy host version = 1.2
+sony_select/D sony_select module init
+sony_select/D HiBy host magic = 79426948
+sony_select/D HiBy host version = 1.2
+STEREO/D construct
+BAL/D construct
+sa_thread_begin status:0
+sa_thread_begin status:0
+(GUI:D)lg_textview: lg_textview_list=00a589ec
+(GUI:D)lg_font_ft2: construct.
+(GUI:E)get_str_res.c: line: 150 open a:\font\custom_font_config.ini fail!
+(GUI:D)lg_font_log: construct.
+
+
+HiBy Player crashed by signal SIGUSR1.
+Call Trace:
+	/usr/bin/hiby_player() [0x6fbdec]
+Process maps:
+
+
+ = 2591
+143957 _llseek(13,4294967295,4294967024,0x2b2ab4c8,SEEK_CUR) = 0
+143957 _llseek(12,4294967295,4294965296,0x2b2ab4c8,SEEK_CUR) = 0
+143957 _llseek(11,4294967295,4294963338,0x2b2ab4c8,SEEK_CUR) = 0
+143957 _llseek(10,4294967295,4294964363,0x2b2ab4c8,SEEK_CUR) = 0
+143957 _llseek(9,4294967295,4294966488,0x2b2ab4c8,SEEK_CUR) = 0
+143957 exit_group(-1)

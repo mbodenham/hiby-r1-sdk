@@ -1,0 +1,23 @@
+132819 open("/usr/resource/config.json",O_RDONLY|O_LARGEFILE) = 3
+132819 open("/sys/class/leds/red/trigger",O_WRONLY) = -1 errno=2 (No such file or directory)
+132819 open("/sys/class/leds/blue/brightness",O_WRONLY) = -1 errno=2 (No such file or directory)
+132819 open("/sys/class/leds/red/brightness",O_WRONLY) = -1 errno=2 (No such file or directory)
+132819 access("/data/mnt/sd_0/get_cover_switch",F_OK) = -1 errno=2 (No such file or directory)
+132819 open("/dev/fb0",O_RDWR|O_LARGEFILE) = -1 errno=13 (Permission denied)
+132819 stat64("/dev/input",0x2b2abaf8) = 0
+132819 open("/dev/input",O_RDONLY|O_DIRECTORY|O_LARGEFILE|O_NONBLOCK|O_CLOEXEC) = 3
+132819 open("/usr/resource/ot_devices.json",O_RDONLY) = 3
+132819 open("/sys/class/android_usb/f_uac_sa/dsd_native_enable",O_WRONLY) = -1 errno=2 (No such file or directory)
+132819 open("/sys/class/switch/headset/state",O_RDONLY) = -1 errno=2 (No such file or directory)
+132819 open("/sys/class/switch/lineout/state",O_RDONLY) = -1 errno=2 (No such file or directory)
+132819 open("/sys/class/switch/balance/state",O_RDONLY) = -1 errno=2 (No such file or directory)
+132819 open("/sys/class/switch/spdif/state",O_RDONLY) = -1 errno=2 (No such file or directory)
+132819 open("/sys/class/switch/i2s/state",O_RDONLY) = -1 errno=2 (No such file or directory)
+132822 nanosleep(740857520,0,0,10000,0,0)132819 open("/dev/sa-config",O_RDWR|O_LARGEFILE) = -1 errno=2 (No such file or directory)
+132819 open("/proc/jz/efuse/efuse_chip_id",O_RDONLY) = -1 errno=2 (No such file or directory)
+132823 execve("/bin/sh",{"sh","-c","nanddump -s 0x20000 -l 256 /dev/mtd5 -a > /data/theme_id 2>/dev/null",NULL})sh: 1: cannot create /data/theme_id: Permission denied
+132819 open("/data/user.ini",O_RDONLY|O_LARGEFILE) = -1 errno=2 (No such file or directory)
+132819 open("/usr/resource/litegui/theme1/boot_animation/en/config.ini",O_RDONLY|O_LARGEFILE) = 3
+132825 open("/usr/resource/litegui/theme1/boot_animation/en/0.png",O_RDONLY|O_LARGEFILE) = 3
+132825 open("/usr/resource/litegui/theme1/boot_animation/en/0.png",O_RDONLY|O_LARGEFILE) = 3
+--- SIGBUS {si_signo=SIGBUS, si_code=1, si_addr=0x2cb006a4} ---
