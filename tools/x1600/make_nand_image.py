@@ -69,11 +69,12 @@ def main():
     poke_file(buf, OFF_ROOTFS2, os.path.join(fw, "rootfs.squashfs"))
 
     # mtd5 ota: boot-target flag at 0 (padded to 256 like nandwrite -p),
-    # theme id at 0x20000 (S11jpeg_display_shell reads 7 bytes there).
+    # theme id at 0x20000 (S11jpeg_display_shell nanddumps the raw 7
+    # bytes there and compares against "theme:1" / "theme:2").
     flag = b"ota:kernel"
     poke(buf, OFF_OTA, flag + b" " * (256 - len(flag)))
-    theme = b"1"
-    poke(buf, OFF_OTA + 0x20000, theme + b" " * (7 - len(theme)))
+    theme = b"theme:1"
+    poke(buf, OFF_OTA + 0x20000, theme)
 
     # Ingenic in-flash partition table at byte 0x5800 (driver default
     # when the DT has no partition-offset — decoded from the vendor
