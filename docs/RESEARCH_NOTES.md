@@ -132,7 +132,12 @@ unicorn code. Tier plan:
   chroot — device-tree fakes (fb/input/snd/switch stubs, `/usr/data`) come with it.
 - **Tier B:** `sudo apt-get install -y qemu-system-mips` (not yet installed) →
   boot a generic MIPS32r2 kernel with our `rootfs.squashfs` as root (`-m 64M`!).
-- **Tier C:** custom QEMU X1600 machine to boot the stock kernel itself.
+- **Tier C (the main track, in flight):** custom QEMU X1600 machine in
+  `tools/vendors/qemu` (in-tree, `hw/mips/x1600.c`). State as of the M2
+  session: M0/M1 done; M2 core done — the stock kernel boots, rootfs
+  mounts from the emulated SPI-NAND (stock partition layout), rcS loads
+  ~14 modules and parks in the soc_msc (SD card) probe. Authoritative
+  state: `docs/PLAN-TierC.md` + `docs/M1-bringup-log.md`.
 
 qemu-user observations: player loads all libs through the -L prefix, probes
 fb0 → input → sa-config → efuse → mtd5, then exits by SIGBUS under qemu

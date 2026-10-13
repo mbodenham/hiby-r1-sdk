@@ -28,7 +28,7 @@ X1600_E+Data+Sheet.pdf            Ingenic X1600E datasheet
 docs/
   RESEARCH_NOTES.md               RE notes on the firmware format and OS
   PLAN-TierC.md                   QEMU X1600 bring-up plan and status
-  M1-bringup-log.md               M1 boot trace analysis
+  M1-bringup-log.md               M1+M2 boot bring-up log (trace-driven)
   x1600-regmap.md                 verified register map
   regmap/                         DTB sources
   traces/                         strace / boot traces
@@ -40,7 +40,8 @@ tools/
   qrun.sh                         qemu-user runner for a single binary
   fb-viewer.py                    watch /dev/fb0 from the sandbox
   shim/                           MIPS32r2 LD_PRELOAD shim source
-  tierc/                          cross-compile smoke test (hello.mipsel)
+  tierc/                          cross-compile smoke test (hello.mipsel) +
+                                  make_nand_image.py (emulated flash image)
   vendors/                        cross toolchains (gitignored)
 ```
 

@@ -5,16 +5,16 @@ New machine source: `hw/mips/x1600.c` (wired via `CONFIG_X1600` in
 `hw/mips/meson.build` + `hw/mips/Kconfig`; FRESH `./configure` is required
 after Kconfig edits — plain `ninja` does not re-evaluate Kconfig).
 
-Status: **the stock kernel boots through its REAL head, prints through
-the emulated UART, calibrates the delay loop, runs initcalls to guest
-time ~0.44 s, and stops inside `dwc2_platform_driver_init` (USB OTG):
-the probe programs the USB PHY PLL (which lives IN the CGU block,
-DTB: /apb/otg_phy @0x10000000 size 0x100) and parks the thread waiting
-for a PLL-lock event the all-zero CGU stub can never report. Timer/IRQ
-delivery, udelay, and sched_clock all work (see v0.14–v0.17).**
-This file is the bring-up log. Sections v0.1–v0.4 below used the WRONG
-entry point (0x80010400 = `run_init_process`); v0.5+ started with the
-real `kernel_entry` and superseded that analysis.
+Status: **M2 — the stock kernel boots, rootfs (squashfs) mounts from
+the emulated SPI-NAND, and the rcS module chain runs ~14 modules before
+parking in the `soc_msc` (SD card) probe, which sleeps waiting on a
+card-detect event the stub MSC never raises (see the M2 section below +
+`docs/PLAN-TierC.md`).** All M1 milestones — real head, UART earlycon,
+OST tick, XBurstR2 idle-wake (Config7.WII), full initcall sequence —
+are done; this file is the running bring-up log (v0.1 → v0.62).
+Sections v0.1–v0.4 used the WRONG entry point (0x80010400 =
+`run_init_process`); v0.5+ started with the real `kernel_entry` and
+superseded that analysis.
 
 ## Boot attempt history (v0.1 – v0.2 as of this file)
 
