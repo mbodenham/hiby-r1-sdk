@@ -768,3 +768,118 @@ e. UBIFS on erased userdata still works; after the sound-card oops
 3. SADC minimal conversion semantics — clears the 220 ms spam.
 4. JPEG block stub 0x13050000 — clears the splash oops.
 5. rcS → theme → `S92_03_start_music_player` — the M2 exit.
+
+## v0.65 (2026-10-13, sixth session, IN PROGRESS): the R5/-34 root cause + the RES byte-window model
+
+### The -34 root cause — SOLVED (binary-verified on both sides)
+
+Two disassemblies pinned the CMD52 response contract exactly:
+
+- **Vendor host driver** (`soc_msc.ko` `ingenic_mmc_command_done`): the core
+  response word is composed from **THREE separate RES reads** —
+  `resp[0] = (RES1<<24) | (RES2<<8) | (RES3 & 0xff)` for 32-bit responses
+  (R1/R4/R5/R6/R7), and `resp[i] = (RES1<<24)|(RES2<<8)|(RES3>>8)` per word
+  for R2 (12 reads). The Ingenic RES register delivers the response in
+  byte steps, not as a static word.
+- **Vendor core** (`vmlinux.bin` `mmc_io_rw_direct` @ VA 0x803902f8): the R5
+  flag masks are NOT upstream-4.4 positions — `resp[0] & 0x800` → -EIO,
+  `& 0x200` → -EINVAL, **`& 0x100` → -ERANGE (the -34!)**, and the data
+  byte is `resp[0] & 0xff` (non-SPI path). The SPI path extracts data from
+  `resp[15:8]` instead.
+- The MANFID tuple parser (@ VA 0x80390cb4) stores `func->vendor` at
+  func+0x16a and `func->device` at func+0x16c (LE, body[0]|body[1]<<8),
+  plus card->vendor/device at card+0x2cc/0x2ce.
+
+**The v0.64 bug**: the model returned the SAME value on all three RES reads,
+so the composition ORed data bits into the flag positions — a CIS byte like
+0x21 (bit 0 set) landed on bit 8 → -ERANGE. v0.64's `mmc0: error -34
+whilst initialising SDIO card` ×3 died exactly there.
+
+**Fix (x1600.c)**: model RES as a byte-window queue
+(`x1600_msc_res_pop`) — read n returns, with `p = n + (n+1)/3`:
+`bytes[p]` at [7:0] (n%3==0), `(bytes[p]<<8)|bytes[p+1]` (n%3==1),
+`(bytes[p]<<8)|bytes[p]` duplicated (n%3==2, satisfying both the `&0xff`
+and `>>8` forms). The queue is filled per command from the response word
+(4 bytes MSB-first; empty on no-card timeout).
+
+**Verified by boot (v0.65-a/b/c)**: ZERO `-34` lines — the SDIO card now
+enumerates completely: `mmc0: new SDIO card at address 0001` (15.6-15.7 s,
+right after the DHD powers the wifi rail). CCCR reads, the common CIS,
+FBR1 and its CIS pointer all complete.
+
+### The F1 CIS chain (func1 device id = 0x0004)
+
+`bcmsdh_sdmmc_probe` (cywdhd 0x88928) gates the WLAN path on
+**`func->device == 4`** (`lhu 364(s0); li v1,4; bne → bail`). Since the
+DHD is the R1's own module and works on real hardware, the real card's F1
+CIS MANFID must be {0x02d0, 0x0004}. The model now serves a separate F1
+chain at fn0 0x1200 (FBR1 CIS ptr → 0x1200) beside the common CIS at
+0x1000 (MANFID {0x02d0, 0xa9a6} — the chip id). Boot trace confirmed the
+core reads the F1 chain at 0x1200-0x120a.
+
+### NEW open fault: the DHD never registers its sdio driver
+
+With the card enumerating, the DHD STILL fails (5 power-cycle retries →
+-19 → re-probe EEXIST → dangling device → module-chain tail oopses #2-#7
+→ the same rcS stall as v0.63/64). Evidence gathered:
+
+- The sdio bus bind never happens: **zero DHD prints** although
+  `dhd_msg_level` defaults to 0x100801 (DHD_ERROR on) and the sdioh layer
+  `sd_msglevel` = 0x1 — the probe's prints would show. The probe does not
+  run.
+- The id table `bcmsdh_sdmmc_ids` (11 × 12-byte entries) is fine: nine
+  Broadcom entries + catch-all {class 0x00, vendor 0xffff, device 0xffff}
+  + terminator. The vendor core's `sdio_match_one` (@ VA 0x803908e0,
+  decoded) matches the catch-all against func1 {class 0, vendor 0x02d0,
+  device 4} — the match logic is NOT the problem.
+- **gdb breakpoint evidence** (module core base 0x816dc000, solved from a
+  pmemsave RAM dump via the probe prologue signature; probe =
+  0x81764928, dummy = 0x81764dd0, register_client_driver = 0x81764f74):
+  **zero hits** on all three, including `bcmsdh_register_client_driver`
+  — so `sdio_register_driver` is NEVER called. The DHD's driver never
+  registers with the sdio bus.
+- Registration chain decoded from the module:
+  `init_module` → `bt_power_dev_init` + `bt_power_init` +
+  `dhd_wifi_platform_register_drv` (registers THREE platform drivers),
+  and separately `dhd_bus_register` (0x9f070) → `bcmsdh_register`
+  (0x85500) → `bcmsdh_register_client_driver` (→ `sdio_register_driver`).
+  **dhd_bus_register's caller is NOT init_module** — the candidate is the
+  platform-device probe path (bt_power_probe @ 0x8175fba4 /
+  `dhd_wifi_platform_load` @ 0x8174aba8). PENDING: find why the chain
+  stops before dhd_bus_register.
+- The probe flow once registration works (decoded for the next round):
+  `bcmsdh_sdmmc_probe` → `dhd_wifi_platform_get_adapter(3, ...)` →
+  `wl_cfg80211_set_parent_dev` → `osl_attach` (NULL → -12) →
+  `osl_static_mem_init` → `sdioh_attach` (sdio_enable_func → CCCR 0x02
+  IOE write; sdio_set_block_size) → `sdioh_cfg_read` → `bcmsdh_probe` →
+  dhdsdio probe → backplane (CMD53 modelling needed later).
+- Note: the DHD reads "firmware and NVRAM path by CIS" (string in the
+  module; `firmware_path`/`nvram_path` module params are read by
+  init_module) — the rootfs has fw_bcm43438a1.bin + nvram_ap6212a.txt.
+- Also observed: 16× FBR1+0x10/0x11 block-size writes with data=0 come
+  from the soc_msc host driver itself (guest PC c017da38) — a vendor
+  driver quirk, not the DHD.
+- gdb/HMP mechanics that work: HMP `pmemsave` needs the filename QUOTED
+  (`pmemsave 0 0x4000000 "/tmp/kilo/ram-e2.bin"`); gdb needs
+  `set architecture mips:isa32r2` before `target remote`; the batch
+  `interrupt` + `info breakpoints` path is flaky — prefer a definite-hit
+  breakpoint or HMP stop while gdb is attached.
+
+### Model state (x1600.c, uncommitted in the vendored QEMU repo)
+
+RES byte-queue + per-command status clearing; fn0 space `cccr[0x1000]` +
+`cis[0x400]` (common chain @0x1000, F1 chain @0x1200); CCCR rev 0x11;
+CIS pointers 0x09-0x0b → 0x1000 and FBR1 0x109-0x10b → 0x1200; DEBUG
+guest-PC annotation on the MSC trace lines (`x1600_msc_cpu`).
+
+### Next
+
+1. Find `dhd_bus_register`'s caller and why the registration chain stops
+   (gdb: breakpoints on `bt_power_probe` 0x8175fba4 /
+   `dhd_wifi_platform_load` 0x8174aba8 / `dhd_bus_register` 0x8177b070
+   with a reliable stop; the last run was inconclusive on mechanics).
+2. Once the sdio driver registers: walk the probe chain; the first card
+   access will be CCCR 0x02 (IOE) via CMD52 — verify against the MSC
+   trace, then the F1 backplane reads (CMD53 eventually).
+3. EFUSE stub, SADC conversion semantics, JPEG stub 0x13050000 (M2 exit
+   queue, unchanged).
