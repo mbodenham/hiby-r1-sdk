@@ -1,6 +1,6 @@
 # Plan — QEMU X1600 full-system emulation (v1.1)
 
-STATUS (2026-10-13, after the v0.63 root-cause session):
+STATUS (2026-10-13, after the v0.64 MSC/SDIO session):
 
 - **M0: DONE.** QEMU builds in-repo (mipsel-softmmu), `X1600` machine type
   registered, `XBurstR2` from upstream, regmap verified disassembly-wise
@@ -33,30 +33,38 @@ STATUS (2026-10-13, after the v0.63 root-cause session):
   module-load cascade (the "soc_msc park" root cause: oopsed insmods leak
   `dev->mutex`); soc_i2c/soc_aic/soc_adc load clean, both msc hosts
   register, **UBIFS on erased userdata works**, userland runs.
-- **Boot state now (v0.63):** ALL soc modules load: soc_i2c/soc_aic/soc_adc
-  clean, **both msc hosts register**, touch probes over the I2C stub, UBIFS
-  on erased userdata works (`UBIFS (ubi1:0): default file-system created`),
-  userland runs. Root cause of the v0.60+ "soc_msc park" solved: oopsed
-  insmods (soc_i2c/soc_aic) died holding `dev->mutex` (4.4 `__driver_attach`
-  holds it across probes), so soc_msc's attach blocked on the leaked lock —
-  fixed by the I2C/AIC/SADC/msc1 stubs; CGU divider/gate enables are
-  self-clearing triggers (poll-for-zero) — modeled, clock warnings and the
-  rescan-kworker oops gone. Device model surface now: DDR, TCSM0, OST
-  clockevent (line 4), 16550 UART0 + ext, SFC+SPI-NAND (line 7), real INTC
-  (→CPU line 2), RTC (write-protocol), CGU (PLL-lock + CE-trigger), I2C0-2,
-  AIC, SADC, MSC0+MSC1, persistent: TCU, pinctrl, UART1-3, PDMA, USB-PHY.
-- **Next (M2 exit):** the rcS stall is now the sound-card insmod blocked on
-  a codec-board mutex leaked by probes that died on cywdhd's dangling
-  device. cywdhd fails because the R1's wifi is an SDIO device on msc1 and
-  the inert stub never enumerates it (39 s wait → EEXIST → freed module →
-  dangling device → cascade). **Fix = MSC1 + SDIO card-present model**
-  (register map decoded free from the driver's REG dump: CTRL2/STAT/CLKRT/
-  CMDAT/RESTO/RDTO/BLKLEN/NOB/SNOB/IMASK/IFLG/CMD/ARG/RES/LPM/DMAC/DMANDA/
-  DMADA/DMALEN/DMACMD/RTCNT/DEBUG; flow seen CMD55+ACMD41 then op:8), plus
-  cheap EFUSE/SADC/JPEG stubs. Then rcS reaches theme →
-  `S92_03_start_music_player`. Boot evidence: docs/M1-bringup-log.md v0.63.
+  **v0.64:** MSC0/MSC1 became real jzmmc_v12 host models — msc0 with the
+  SDIO wifi card present, msc1 an empty TF slot; the mmc core sees the
+  card but SDIO card init fails -34 at the CMD52/CCCR stage (open).
+- **Boot state now (v0.64):** MSC0/MSC1 are real jzmmc_v12 host models
+  (qemu e282fd9, exported as patch 0005): **msc0 @0x13450000 (INTC 37)
+  carries the SDIO wifi card** (BCM43438/AP6212 — the wifi is on msc0,
+  not msc1 as v0.63 guessed: the DHD's wifi_platform_bus_enumerate
+  drives jzmmc_manual_detect(0) synchronously), **msc1 @0x13460000
+  (INTC 36) is the empty TF slot** completing fast with STAT_TIME_OUT_RES
+  (v0.63's 6-s op:55 retry spam gone). The mmc core now sees the wifi
+  card (CMD5 OCR handshake OK, SDIO attach starts) but card init fails
+  **-34 (-ERANGE, R5_OUT_OF_RANGE) at the CMD52/CCCR stage**, so cywdhd
+  still fails (5 power-cycle loops → -19 → re-probe EEXIST → dangling
+  device → module-chain tail oopses #2-#7, sound card last) — the rcS
+  stall is unchanged. Everything upstream of that still works: all soc
+  modules load, touch probes over the I2C stub, UBIFS on erased userdata
+  (`UBIFS (ubi1:0): default file-system created`), userland runs. Device
+  model surface now: DDR, TCSM0, OST clockevent (line 4), 16550 UART0 +
+  ext, SFC+SPI-NAND (line 7), real INTC (→CPU line 2), RTC
+  (write-protocol), CGU (PLL-lock + CE-trigger), I2C0-2, AIC, SADC,
+  **MSC0 + SDIO card, MSC1 + empty TF**, persistent: TCU, pinctrl,
+  UART1-3, PDMA, USB-PHY.
+- **Next (M2 exit):** 1. root-cause the R5/-ERANGE at the CMD52/CCCR
+  stage (decode soc_msc.ko's resp[0] handling + the vendor core's
+  mmc_io_rw_direct_host/R5_* masks — the ONE open fault on the wifi
+  path); 2. EFUSE stub (serve efuse_chip_id); 3. SADC minimal conversion
+  semantics (clears the 220 ms spam); 4. JPEG stub 0x13050000 (clears
+  the splash oops); then rcS reaches theme →
+  `S92_03_start_music_player`. Boot evidence: docs/M1-bringup-log.md
+  v0.64.
 - Boot evidence, register dumps, and every boot-stop decode live in
-  docs/M1-bringup-log.md (v0.1 through v0.63, incl. the M2 section).
+  docs/M1-bringup-log.md (v0.1 through v0.64, incl. the M2 section).
 
 Goal: **boot the byte-identical stock firmware (v1.6 **unmodified** xImage +
 rootfs.squashfs) inside QEMU to the player's first UI frame, using it as the
@@ -204,14 +212,15 @@ Remaining — Phase 1: get rcS past the modules to the player launch
       `__driver_attach` holds it across probes); soc_msc blocked on the
       leaked lock. Fixed by the I2C/AIC/SADC/msc1 stubs + CGU CE-trigger
       semantics; both msc hosts now register.
-- [ ] **2. MSC1 + SDIO card-present model** (upgraded from "no-card"):
-      the R1's wifi is an SDIO device on msc1; cywdhd waits 39 s for it,
-      fails EEXIST, and its freed module leaves a dangling bus device
-      that kills every later attach (the current rcS stall chains from
-      this). Enumerate CMD5/CMD3/CMD7 against a fake SDIO card so the
-      DHD module loads cleanly. Register map free from the driver's REG
-      dump (CTRL2/STAT/CLKRT/CMDAT/RESTO/RDTO/BLKLEN/NOB/SNOB/IMASK/
-      IFLG/CMD/ARG/RES/LPM/DMAC/DMANDA/DMADA/DMALEN/DMACMD/RTCNT/DEBUG).
+- [ ] **2. MSC0/MSC1 host models + SDIO wifi card** — MODELS BUILT
+      (v0.64, qemu e282fd9 / patch 0005; msc0 @0x13450000 = wifi SDIO
+      card BCM43438, CMD5/CMD3/CMD7/13/52 + CMD52 CCCR/CIS; msc1
+      @0x13460000 = empty TF slot, fast timeouts. Correction: the wifi
+      is on **msc0**, not msc1 — the DHD's wifi_platform_bus_enumerate
+      drives jzmmc_manual_detect(0)). Remaining: the mmc core reaches
+      SDIO card init but fails -34 (-ERANGE, R5_OUT_OF_RANGE) at the
+      CMD52/CCCR stage — decode soc_msc.ko's resp[0] handling + the
+      vendor core's R5_* masks, fix the RES layout in x1600.c.
       *verify: cywdhd returns 0, no page-fault cascade, rcS proceeds*
 - [x] **3. I2C + AIC + SADC stubs** — DONE (v0.63); SADC still needs
       minimal conversion semantics (220 ms timeout spam from a poller).
@@ -252,8 +261,9 @@ variant chosen for least CI friction). No firmware bytes are modified.
 The regression gate is then: any OS change → repack → boot in VM →
 screen renders.
 
-Ranked risks (updated with M2 velocity data): (a) MSC park being
-weirder than card-detect — killed cheaply by step 1's gdb session;
+Ranked risks (updated with M2 velocity data): (a) the R5/-ERANGE
+CMD52/CCCR decode being weirder than a RES byte-layout fix (fallback:
+empirically model whichever R5 flag bits the vendor core checks);
 (b) UBI-on-erased-mtd edge cases; (c) player hard-needing audio at
 startup (evidence says graceful); (d) fb0 without panel init (soc_fb
 loading clean suggests it works). The original 1–2 week estimate

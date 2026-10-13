@@ -6,12 +6,15 @@ New machine source: `hw/mips/x1600.c` (wired via `CONFIG_X1600` in
 after Kconfig edits — plain `ninja` does not re-evaluate Kconfig).
 
 Status: **M2 — the stock kernel boots, rootfs (squashfs) mounts from
-the emulated SPI-NAND, and the rcS module chain runs ~14 modules before
-parking in the `soc_msc` (SD card) probe, which sleeps waiting on a
-card-detect event the stub MSC never raises (see the M2 section below +
-`docs/PLAN.md`).** All M1 milestones — real head, UART earlycon,
-OST tick, XBurstR2 idle-wake (Config7.WII), full initcall sequence —
-are done; this file is the running bring-up log (v0.1 → v0.62).
+the emulated SPI-NAND, the rcS module chain runs (~14 soc_* modules +
+touch/codec/UBIFS working), and the remaining stall chains from the
+wifi path: msc0 now carries an SDIO wifi card model and the mmc core
+reaches SDIO card init, but card init fails -34 at the CMD52/CCCR
+stage, so cywdhd still fails and its dangling device kills the
+module-chain tail (see the v0.64 section + `docs/PLAN.md`).** All M1
+milestones — real head, UART earlycon, OST tick, XBurstR2 idle-wake
+(Config7.WII), full initcall sequence — are done; this file is the
+running bring-up log (v0.1 → v0.64).
 Sections v0.1–v0.4 used the WRONG entry point (0x80010400 =
 `run_init_process`); v0.5+ started with the real `kernel_entry` and
 superseded that analysis.
@@ -691,3 +694,77 @@ into the dead-held device and blocked forever. The MSC stub was innocent.
 4. JPEG block stub 0x13050000 — clears the splash oops.
 5. Then rcS continues past the sound-card mutex (no more leaks) to the
    theme and `S92_03_start_music_player` — the M2 exit.
+
+## v0.64 (2026-10-13, fifth session): MSC0/MSC1 host models + SDIO wifi card
+
+### What was built (qemu commit e282fd9, exported as patch 0005)
+
+Task 1 of the v0.63 list, on the register map the driver's REG dump gave
+for free (CTRL2 STAT CLKRT CMDAT RESTO RDTO BLKLEN NOB SNOB IMASK IFLG
+CMD ARG RES LPM DMAC DMANDA DMADA DMALEN DMACMD RTCNT DEBUG — jzmmc_v12
+layout, cross-checked against the X1000 SDK's jzmmc_v12):
+
+- **Correction first**: the wifi is on **msc0**, not msc1 as v0.63
+  guessed. msc0 is rm_method=manual — the DHD's
+  wifi_platform_bus_enumerate(1) triggers jzmmc_manual_detect(0)
+  synchronously — and the boot log's SDIO activity is all on mmc0.
+- **msc0 @0x13450000 (INTC 37) = the wifi host, card present.** Card
+  model = BCM43438/AP6212 (per the rootfs firmware fw_bcm43438a1.bin +
+  nvram_ap6212a.txt; vendor 0x02d0 device 0xa9a6): CMD5 (R4 OCR: ready,
+  1 IO function, voltage window covering the host's 1800–3300 mV — the
+  first R4 window missed the host ocr_avail and mmc_select_voltage
+  bailed with -EINVAL, boot13), CMD3 (RCA=1), CMD7/CMD13 (tran state),
+  CMD52 IO_RW_DIRECT (R5: func-0 CCCR space 0x00-0xff, common CIS at
+  0x1000 with CISTPL_MANFID 0x02d0/0xa9a6).
+- **msc1 @0x13460000 (INTC 36) = the TF slot, empty.** Commands complete
+  FAST with STAT_TIME_OUT_RES so card scans fail cleanly — the v0.63
+  6-second "timeout 3000ms op:55" retry spam is GONE (md_ingenic,mmc.1:
+  "Got CD GPIO", "register success!", no loop).
+- Completion protocol: synchronous — on CTRL_START_OP the command
+  executes against the card model, STAT gets END_CMD_RES (+TIME_OUT_RES
+  when no card), RES holds the response, IFLG latches the sources, and
+  the INTC line asserts while (IFLG & ~IMASK) != 0. Per-command status
+  is cleared first (a stale TIME_OUT_RES from a previous no-card scan
+  became cmd->error = -ETIMEDOUT and reset-looped the enumeration).
+
+### Boot evidence (v0.64, this session's run)
+
+Progress: the mmc core now SEES the wifi card. Both hosts register at
+4.5 s with no TF spam, and at 15.5 s the SDIO attach chain runs — the
+core decided an SDIO card exists (CMD5 OCR handshake OK) and is
+initialising it.
+
+Still failing, in causal order:
+
+a. **SDIO card init fails -34 (-ERANGE) at the CMD52/CCCR stage**
+   (`mmc0: error -34 whilst initialising SDIO card` ×3 at 15.5 s — the
+   rescan's per-frequency retries). -ERANGE in the mmc core =
+   R5_OUT_OF_RANGE seen in resp[0]; our CMD52 RES carries only the
+   8-bit data byte, so either the vendor host driver (soc_msc.ko)
+   reassembles RES before storing cmd->resp[0] (flag/data placement),
+   or the vendor core's R5 flag masks differ. NEXT DECODE: soc_msc.ko's
+   response path + the vendor core's mmc_io_rw_direct_host / R5_* masks
+   (kallsyms + disasm of vmlinux.bin) — no guess-fix.
+b. cywdhd: the cascade is unchanged — 5 power-cycle loops 15.4→54.4 s
+   ("failed to power up DHD generic adapter, 3 retry left" ...),
+   dhd_module_init returns -19 (ENODEV), the immediate re-probe oopses
+   on duplicate sysfs `/devices/platform/md_bcmdhd_bt_power`
+   (-EEXIST → initcall -17), module freed → dangling device
+   (c04060a8 region) on the platform bus.
+c. The dangling device kills the module-chain tail again: keyboard_adc
+   (#2), leds_pwm (#3), sa_config (#4), sa_earpods (#5), tcs1421 (#6),
+   and the last initcall x1600_hiby_r1_sound_card (#7) — all
+   `__device_attach_driver+0x24` paging fault, same as v0.63.
+d. soc_efuse -1 twice ("EFUSE: failed to get efuse cfg wr_strobe").
+e. UBIFS on erased userdata still works; after the sound-card oops
+   (~55 s) the boot idles in the 220 ms ADC-timeout poll; rcS end
+   state unchanged (theme / `S92_03_start_music_player` not reached).
+
+### Next
+
+1. Root-cause the R5/-ERANGE (a) — decode soc_msc.ko's resp[0]
+   handling; expect a small RES-layout fix in x1600.c.
+2. EFUSE stub (M2 task 4) — serve the chip ID, clear the -1.
+3. SADC minimal conversion semantics — clears the 220 ms spam.
+4. JPEG block stub 0x13050000 — clears the splash oops.
+5. rcS → theme → `S92_03_start_music_player` — the M2 exit.
