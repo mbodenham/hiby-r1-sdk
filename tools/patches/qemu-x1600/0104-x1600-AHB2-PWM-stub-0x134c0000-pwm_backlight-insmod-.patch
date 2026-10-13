@@ -1,0 +1,60 @@
+From 5cf252a1dcc0574c6a5bd956661bb303e8f5c342 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Tue, 13 Oct 2026 17:21:01 +0900
+Subject: [PATCH 104/104] =?UTF-8?q?x1600:=20AHB2=20PWM=20stub=20(0x134c000?=
+ =?UTF-8?q?0)=20=E2=80=94=20pwm=5Fbacklight=20insmod=20survives?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The fifth unmapped block, pinned by the v0.66 boot (with the LCD stub
+in): pwm_backlight's insmod died at 4.16 s with 'Data bus error,
+epc == ... pwm_set_clk_div+0xd4 [soc_pwm]' ($16 = 0xb34c0040 — the
++0x40 RMW) — soc_pwm.ko hard-codes KSEG1 0xb34c0000 in 16 sites
+(pwm_set_clk_div, set_pwm_mode, set_pwm_init_level,
+set_pwm_idle_level, pwm2_set_level, pwm_enable_channels...). The
+block is /ahb2/pwm@0x134c0000 (size 0x10000) in the stock DTB.
+
+Model: plain persistent regfile (jz_pwm_init's 'pwm clk source rate'
+print now comes from the seeded CGU; no polled PWM semantics pinned
+by the boot). Unblocks pwm_backlight, the S11 backlight write and
+leds_pwm_add's PWM LEDs.
+---
+ hw/mips/x1600.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 94fceef..4f7265e 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -131,6 +131,16 @@
+  * get efuse cfg wr_strobe"); see the CGU seed in x1600_mach_init. */
+ #define X1600_EFUSE_BASE   0x13540000
+ #define X1600_EFUSE_SIZE   0x10000
++/* AHB2 PWM (0x134c0000): /ahb2/pwm@0x134c0000 (size 0x10000) in the stock
++ * DTB; soc_pwm.ko hard-codes KSEG1 0xb34c0000 in 16 sites (pwm_set_clk_div,
++ * set_pwm_mode, set_pwm_init_level, set_pwm_idle_level, pwm2_set_level,
++ * pwm_enable_channels...). Pinned by the v0.66 boot: pwm_backlight's
++ * insmod died at 4.16 s with "Data bus error, epc == ... pwm_set_clk_div
++ * +0xd4 [soc_pwm]" ($16 = 0xb34c0040 -- the +0x40 RMW), seconds before the
++ * splash; S11's "echo 60 > /sys/class/backlight/backlight_pwm0/brightness"
++ * and leds_pwm_add need it too. */
++#define X1600_PWM_BASE     0x134c0000
++#define X1600_PWM_SIZE     0x10000
+ #define X1600_SFC_BASE     0x13440000            /* /ahb2/sfc (ingenic,x1600-sfc):
+                             * SPI flash controller; v0.21 bus error in
+                             * sfc_clk_set_init RMW of +4 (clock divider). */
+@@ -1753,6 +1763,10 @@ static void x1600_mach_init(MachineState *ms)
+                           &x1600_efuse_dev, "x1600.efuse", X1600_EFUSE_SIZE);
+     memory_region_add_subregion(sysmem, X1600_EFUSE_BASE, &x1600_efuse_dev.mmio);
+ 
++    /* AHB2 PWM 0x134c0000: persistent regfile (soc_pwm RMWs its div/mode/
++     * level registers; no polled semantics pinned by the boot yet). */
++    x1600_add_stub(sysmem, "x1600-pwm", X1600_PWM_BASE, X1600_PWM_SIZE);
++
+     /* SFC + SPI-NAND (M2): command engine backed by the raw page+OOB
+      * image next to the kernel (built by tools/tierc/make_nand_image.py);
+      * IRQ on INTC line 7 (stock DTB). */
+-- 
+2.53.0
+
