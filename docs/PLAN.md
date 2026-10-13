@@ -1,6 +1,6 @@
 # Plan — QEMU X1600 full-system emulation (v1.1)
 
-STATUS (2026-10-13, after the M2 bring-up session):
+STATUS (2026-10-13, after the v0.63 root-cause session):
 
 - **M0: DONE.** QEMU builds in-repo (mipsel-softmmu), `X1600` machine type
   registered, `XBurstR2` from upstream, regmap verified disassembly-wise
@@ -29,20 +29,34 @@ STATUS (2026-10-13, after the M2 bring-up session):
   write-protocol model, and a CGU PLL-lock model — each pinned by a boot
   symptom. `VFS: Mounted root (squashfs) readonly on device 50:2`, then
   devtmpfs and the rcS module-load chain (~14 `soc_*` modules).
-- **Boot state now (v0.62):** rcS module loading, **parked in the
-  `soc_msc` (SD card) probe** — it sleeps after clock + GPIO/pinctrl
-  setup, before any MSC MMIO, waiting on a card-detect/MSC event the
-  inert MSC stub never raises (guest frozen ~3.5 s). Non-fatal module
-  oopses on unmapped I2C (0x10050000) + AIC (0x10079000) stubs.
-  Device model surface now: DDR, TCSM0, OST clockevent (line 4), 16550
-  UART0 + ext, SFC+SPI-NAND (line 7), real INTC (→CPU line 2), RTC
-  (write-protocol), CGU (PLL-lock), persistent stubs: TCU, pinctrl,
-  UART1-3, PDMA, MSC0/1, USB-PHY bank.
-- **Next (M2 exit):** model the MSC controller's no-card path so the
-  probe completes (rcS → `mount_ubifs` → theme → `S92_03_start_music_
-  player`); add I2C + AIC stubs to clear the module oopses.
+  **v0.63:** I2C/AIC/SADC/msc1 stubs + CGU CE-trigger semantics fixed the
+  module-load cascade (the "soc_msc park" root cause: oopsed insmods leak
+  `dev->mutex`); soc_i2c/soc_aic/soc_adc load clean, both msc hosts
+  register, **UBIFS on erased userdata works**, userland runs.
+- **Boot state now (v0.63):** ALL soc modules load: soc_i2c/soc_aic/soc_adc
+  clean, **both msc hosts register**, touch probes over the I2C stub, UBIFS
+  on erased userdata works (`UBIFS (ubi1:0): default file-system created`),
+  userland runs. Root cause of the v0.60+ "soc_msc park" solved: oopsed
+  insmods (soc_i2c/soc_aic) died holding `dev->mutex` (4.4 `__driver_attach`
+  holds it across probes), so soc_msc's attach blocked on the leaked lock —
+  fixed by the I2C/AIC/SADC/msc1 stubs; CGU divider/gate enables are
+  self-clearing triggers (poll-for-zero) — modeled, clock warnings and the
+  rescan-kworker oops gone. Device model surface now: DDR, TCSM0, OST
+  clockevent (line 4), 16550 UART0 + ext, SFC+SPI-NAND (line 7), real INTC
+  (→CPU line 2), RTC (write-protocol), CGU (PLL-lock + CE-trigger), I2C0-2,
+  AIC, SADC, MSC0+MSC1, persistent: TCU, pinctrl, UART1-3, PDMA, USB-PHY.
+- **Next (M2 exit):** the rcS stall is now the sound-card insmod blocked on
+  a codec-board mutex leaked by probes that died on cywdhd's dangling
+  device. cywdhd fails because the R1's wifi is an SDIO device on msc1 and
+  the inert stub never enumerates it (39 s wait → EEXIST → freed module →
+  dangling device → cascade). **Fix = MSC1 + SDIO card-present model**
+  (register map decoded free from the driver's REG dump: CTRL2/STAT/CLKRT/
+  CMDAT/RESTO/RDTO/BLKLEN/NOB/SNOB/IMASK/IFLG/CMD/ARG/RES/LPM/DMAC/DMANDA/
+  DMADA/DMALEN/DMACMD/RTCNT/DEBUG; flow seen CMD55+ACMD41 then op:8), plus
+  cheap EFUSE/SADC/JPEG stubs. Then rcS reaches theme →
+  `S92_03_start_music_player`. Boot evidence: docs/M1-bringup-log.md v0.63.
 - Boot evidence, register dumps, and every boot-stop decode live in
-  docs/M1-bringup-log.md (v0.1 through v0.62, incl. the M2 section).
+  docs/M1-bringup-log.md (v0.1 through v0.63, incl. the M2 section).
 
 Goal: **boot the byte-identical stock firmware (v1.6 **unmodified** xImage +
 rootfs.squashfs) inside QEMU to the player's first UI frame, using it as the
@@ -185,30 +199,30 @@ Done:
 
 Remaining — Phase 1: get rcS past the modules to the player launch
 *(~1–2 days at current pace; each step verify-then-next, trace-driven)*:
-- [ ] **1. MSC no-card path** (blocks everything — rcS runs
-      `insmod soc_msc` synchronously):
-  - first one gdb session to pin the exact parked frame in
-    `mmc_ingenic_probe` (sleeps after clock+GPIO setup, pre-MMIO —
-    likely a card-detect completion/timer)
-  - model: MSC regs 0x13450000/0x13460000 report "no card" (CD status
-    per `msc1_cd=PB22 cd-inverted`), CD IRQ lines 36/37 quiescent
-  - *verify: `msc_init returned`, next module loads*
-- [ ] **2. I2C controller** (0x10050000) — the keystone; one model
-      unblocks five modules (soc_i2c oops, axp2101, cw2015, codec,
-      LCD, touch):
-  - register map from the soc_i2c disasm (its oops already half-decodes
-    it)
-  - first slave: **axp2101 PMIC @0x34** — battery voltage/status/charge
-    with plausible values
-  - *verify: soc_i2c + axp2101 load clean, battery nodes serve values*
-- [ ] **3. AIC stub** (0x10079000, persistent regfile) — clears the
-      second oops; sa-config registers, audio degrades gracefully later
+- [x] **1. MSC probe park ROOT-CAUSED (v0.63)** — not an MSC event: the
+      oopsed soc_i2c/soc_aic insmods died holding `dev->mutex` (4.4
+      `__driver_attach` holds it across probes); soc_msc blocked on the
+      leaked lock. Fixed by the I2C/AIC/SADC/msc1 stubs + CGU CE-trigger
+      semantics; both msc hosts now register.
+- [ ] **2. MSC1 + SDIO card-present model** (upgraded from "no-card"):
+      the R1's wifi is an SDIO device on msc1; cywdhd waits 39 s for it,
+      fails EEXIST, and its freed module leaves a dangling bus device
+      that kills every later attach (the current rcS stall chains from
+      this). Enumerate CMD5/CMD3/CMD7 against a fake SDIO card so the
+      DHD module loads cleanly. Register map free from the driver's REG
+      dump (CTRL2/STAT/CLKRT/CMDAT/RESTO/RDTO/BLKLEN/NOB/SNOB/IMASK/
+      IFLG/CMD/ARG/RES/LPM/DMAC/DMANDA/DMADA/DMALEN/DMACMD/RTCNT/DEBUG).
+      *verify: cywdhd returns 0, no page-fault cascade, rcS proceeds*
+- [x] **3. I2C + AIC + SADC stubs** — DONE (v0.63); SADC still needs
+      minimal conversion semantics (220 ms timeout spam from a poller).
 - [ ] **4. EFUSE stub** — `/proc/jz/efuse/efuse_chip_id` is on the
-      player's probe list; block address from DTB, serve chip ID
-- [ ] **5. UBI on erased userdata** — SFC erase/program already exist;
-      verify `ubiattach -m 6` forms an empty UBI, `/usr/data` mounts
-      (script does flash_erase + retry)
-- [ ] **6. Theme + splash** (mtd5 ota/theme already in the image)
+      player's probe list; soc_efuse currently returns -1. Block address
+      from DTB, serve chip ID.
+- [x] **5. UBI on erased userdata** — DONE (v0.63): ubi1 attaches mtd6,
+      empty-device path forms the volume, UBIFS created.
+- [ ] **6. JPEG block stub 0x13050000** — the splash (cmd_jpeg_display)
+      dies on it; cheap.
+- [ ] **7. Theme + splash** (mtd5 ota/theme already in the image)
   - 🏁 *Milestone: `S92_03_start_music_player` execs `hiby_player`*
 
 Exit (M2): rootfs mounts (DONE); rcS runs to the player's attempt;

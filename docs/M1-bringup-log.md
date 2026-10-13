@@ -606,13 +606,88 @@ slots, `rootfs.squashfs` in both rootfs slots, the `ota:kernel` flag +
 theme at the ota partition, and the in-flash partition table at 0x5800.
 Everything else erased (0xFF).
 
-## Next (to reach the M2 exit)
+## v0.63 (2026-10-13, fourth session): the "soc_msc park" root cause + I2C/AIC/SADC/msc1/CGU fixes
 
-1. **Model the MSC controller** (0x13450000 msc0, 0x13460000 msc1)
-   enough for the probe's no-card path to complete: the card-detect /
-   state-machine event the probe waits on. `soc_msc.sh` configures msc1
-   with `cd=PB22 cd-inverted, pwr=PC25, bus_width=4`.
-2. Add I2C (0x10050000) + AIC (0x10079000) stubs to clear the module
-   oopses (cosmetic; boot already continues past them).
-3. Then rcS should run `mount_ubifs.sh` (userdata), the theme, and
-   `S92_03_start_music_player` — the M2 exit.
+### The park was never an MSC event — it was a leaked device mutex
+
+v0.60+ concluded the probe "waits on an MSC event". Wrong. Method: parked-VM
+RAM dump + kernel-stack forensics (module base solved via the loader's own
+relocated symtab found in the dump; core VA c017c000 confirmed by five
+self-consistent internal call targets). The parked thread's stack:
+
+    insmod(soc_msc) -> do_init_module -> do_one_initcall -> msc_init
+    -> __platform_driver_register -> driver_register -> bus_add_driver
+    -> bus_for_each_dev -> __driver_attach -> device_lock(dev)
+    -> mutex_lock -> __mutex_lock_slowpath -> schedule  (idle)
+
+In 4.4 `__driver_attach` holds `dev->mutex` across each probe. The prior
+modules **soc_i2c** (`jz_i2c_hal_disable_smb`, 0x10050000 unmapped) and
+**soc_aic** (`aic_hal_init`, 0x10079000 unmapped) had died in data-bus-error
+oopses *mid-probe while holding that mutex* — a kernel oops kills the insmod
+task and the mutex is never released. soc_msc's attach then walked the bus
+into the dead-held device and blocked forever. The MSC stub was innocent.
+
+### Fixes (all verified by boot)
+
+1. **Persistent stubs** for I2C0/1/2 (0x10050000/51000/52000), AIC
+   (0x10079000), SADC (0x10070000 — soc_adc died the same way), and msc1
+   (0x13460000 — the msc1 probe itself bus-errored on MSC1+0x8).
+   Result: soc_i2c/soc_aic/soc_adc load clean; **both msc hosts register**
+   ("md_ingenic,mmc.0/1: register success!").
+2. **CGU trigger semantics.** cgu_divider_enable (0x803ff640) writes the CE
+   bit (e.g. +0x20=0x8 div_msc0, +0x74=0x20000000, +0x68 gate RMW) then
+   polls the SAME register for ZERO — HW applies and self-clears (~1M
+   bounded poll). Persistent read-back kept the poll failing ("WARNING :
+   why cannot wait cgu stable ???" ×N), the vendor framework's error path
+   oopsed the mmc_rescan kworker (clk_set_rate unlocking a mutex with a
+   corrupt wait list), and the kworker died mid-unlock leaving
+   module_mutex with a stale WAITERS flag. Fix: CGU offsets written since
+   reset read back 0 (+0x2c stays the all-locked PLL status). Warnings
+   gone; msc registration 5.5/8.1s -> 4.3/4.3s.
+
+### Boot state now (v0.63)
+
+- ALL soc modules load through the full rcS chain: touch probe succeeds
+  over the I2C stub ("Touch Screen(I2C BUS) driver prboe successfully"),
+  LCD registers, wifi powers up, sound-card modules chain.
+- **UBIFS on erased userdata WORKS** (M2 task 5): ubi1 attaches mtd6,
+  empty-device path, "UBIFS (ubi1:0): default file-system created".
+- Userland runs (splash: cmd_jpeg_display — oopses on the unmapped JPEG
+  block 0x13050000, non-fatal, killed by SIGBUS-style die).
+- Remaining faults, in causal order:
+  a. **cywdhd (wifi) fails EEXIST after a 39 s SDIO wait**: it registers
+     its wifi device at 15.5 s, waits for the SDIO card on msc1 (the
+     R1's wifi IS an SDIO device on msc1 — our inert stub never
+     enumerates one), re-registers "md_bcmdhd_bt_power" at 54.7 s ->
+     -EEXIST -> module freed -> **dangling device at c04060a4** on the
+     platform bus.
+  b. The dangling device kills every later device-registration attach
+     (`__device_attach_driver+0x24` page fault; keyboard_adc, leds_pwm,
+     sa_config, sa_earpods insmods die — each leaking whatever its probe
+     held).
+  c. The sound-card insmod (x1600_hiby_r1_sound_card, last initcall)
+     blocks in mutex_lock on a codec-board mutex leaked by one of those
+     dead probes — **the current rcS stall** (boot silent except a 220 ms
+     adc-timeout kworker poll; SADC stub needs minimal conversion
+     semantics eventually).
+  d. soc_efuse returns -1 twice (EFUSE block unmapped — M2 task 4).
+- **MSC register map for free**: the driver's own timeout REG dump names
+  the block: CTRL2 STAT CLKRT CMDAT RESTO RDTO BLKLEN NOB SNOB IMASK
+  IFLG CMD ARG RES LPM DMAC DMANDA DMADA DMALEN DMACMD RTCNT DEBUG
+  (e.g. CMD=0x37/ARG=0xc00 = CMD55, CMD=0x34 = ACMD41-ish writes seen).
+
+### Next (revised — to reach the M2 exit)
+
+1. **MSC1 + SDIO card-present model** (upgraded from "no-card path"): the
+   R1's wifi lives on msc1, so cywdhd needs the SDIO enumeration to
+   complete (CMD5/CMD3/CMD7 + the card-interrupt path is NOT needed for
+   module load). That removes the 39 s wait, the EEXIST, the dangling
+   device and the whole cascade in one move. The register map above is
+   the modeling contract; CMD flow observed: CMD8?, CMD55+ACMD41 loop
+   (op:55 arg:0), then op:8.
+2. EFUSE stub (task 4) — cheap, clears the -1.
+3. SADC minimal semantics (answer conversions) — clears the 220 ms spam
+   and un-blocks adc-dependent probes.
+4. JPEG block stub 0x13050000 — clears the splash oops.
+5. Then rcS continues past the sound-card mutex (no more leaks) to the
+   theme and `S92_03_start_music_player` — the M2 exit.
