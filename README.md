@@ -42,6 +42,8 @@ tools/
   shim/                           MIPS32r2 LD_PRELOAD shim source
   x1600/                          cross-compile smoke test (hello.mipsel) +
                                   make_nand_image.py (emulated flash image)
+  patches/qemu-x1600/             X1600E machine-model patch series (rebuilds
+                                  the gitignored vendors/qemu tree)
   vendors/                        cross toolchains (gitignored)
 ```
 

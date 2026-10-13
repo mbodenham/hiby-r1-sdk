@@ -1,0 +1,811 @@
+From 0d544ce98089f7b5a75ac032044395d36577283e Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Tue, 13 Oct 2026 12:44:59 +0900
+Subject: [PATCH 3/5] =?UTF-8?q?x1600:=20M2=20device=20models=20=E2=80=94?=
+ =?UTF-8?q?=20SFC+SPI-NAND,=20INTC,=20RTC,=20CGU;=20rootfs=20mounts?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Roots the boot at a mounted squashfs rootfs read from an emulated
+SPI-NAND (VFS: Mounted root readonly on device 50:2), then into the
+rcS module-load chain. Each model was pinned by a boot symptom
+(trace-driven), per docs/M1-bringup-log M2 section.
+
+- SFC (ingenic_sfc_v2) + SPI-NAND: CDT command engine (0x9f read id,
+  0x0f/0x1f get/set feature, 0x13 page read, 0xd8 erase, 0x10 program
+  exec) over a PIO FIFO (reg 0x1000) + DMA descriptor chains (reg 0x90).
+  GD5F1GQ4UC chip (0xC8/0xD1). ROW_ADDR=0x84 / COL_ADDR=0x80. Backed by
+  a raw page+OOB image (2112 B/page, 1024 blocks); OOB 0xFF (no bad
+  blocks). The 0x90 descriptor base is a guest virtual address (kseg1
+  alias) -> phys = 0x90 - 0x20000000.
+- INTC: real jz4780-style controller (2x32 banks, IMR resets all-masked,
+  IPR = ISR & ~IMR) with the output wired to CPU IRQ line 2 — delivers
+  the SFC (line 7) and UART (line 51) interrupts the kernel now takes.
+- RTC: write-protocol model (+0x00 bit7 write-ready, +0x3c 0xa55a key
+  then bit31 write-accepted). The plain stub made every write time out
+  and the set-time retry spun the CPU in a +0x3c read storm.
+- CGU: persistent regfile + PLL-status (+0x2c) reads all-locked, so the
+  clock framework's clk_set_rate lock poll (used by the MSC clock)
+  completes instead of retrying forever.
+
+Boot now: rootfs + devtmpfs mount, ~14 soc_* modules load (i2c/aic
+oops on unmapped 0x10050000/0x10079000 are non-fatal), then parks in
+the soc_msc (SD card) probe before any MSC MMIO — the MSC no-card path
+is the next model.
+---
+ hw/mips/x1600.c | 676 ++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 652 insertions(+), 24 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index f10bb73..e020983 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -39,11 +39,17 @@
+ #include "hw/core/irq.h"
+ #include "system/system.h"
+ #include "system/memory.h"
++#include "system/address-spaces.h"
++#include "system/dma.h"
+ #include "system/reset.h"
+ #include "target/mips/cpu.h"
+ #include "qom/object.h"
+ #include "qemu/error-report.h"
+ #include "qemu/log.h"
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <sys/stat.h>
++#include <libgen.h>
+ 
+ #define X1600_DDR_BASE     0x00000000
+ #define X1600_RAM_SIZE     (64 * MiB)
+@@ -77,6 +83,7 @@
+ #define X1600_UART3_BASE   0x10033000
+ #define X1600_UART_SIZE    0x100
+ #define X1600_RTC_BASE     0x10003000
++#define X1600_RTC_SIZE     0x4c
+ #define X1600_PINCTRL_BASE 0x10010000
+ #define X1600_PDMA_BASE    0x13420000
+ #define X1600_MSC0_BASE    0x13450000
+@@ -226,8 +233,68 @@ static void x1600_uart_scr_seed(void *opaque)
+ }
+ 
+ /* ----------------------------------------------------------------- */
+-/* INTC stub: regfile that reads zero; IRQ inputs are latched only    */
+-/* (real delivery comes when the boot trace demands it).             */
++/* CGU (clock generator unit) — persistent regfile (vendor kernel RMWs
++ * PLL/gate blocks; read-back is the minimum correct semantics, v0.18)
++ * plus one modelled status: +0x2c (PLL status) reads all-locked. The
++ * clock framework's enable path polls +0x2c for the lock bit after
++ * programming +0x24; the all-zero stub made soc_msc's init retry the
++ * clock enable forever (v0.59 stop: thousands of +0x2c/+0 polls with
++ * no other activity while insmod(soc_msc) hung). Real X1600 locks the
++ * PLL in ~us; advertising lock is faithful for a boot model.          */
++/* ----------------------------------------------------------------- */
++
++typedef struct X1600Cgu {
++    MemoryRegion mmio;
++    uint32_t regs[0x100 / 4];
++} X1600Cgu;
++
++static X1600Cgu x1600_cgu_dev;
++
++static uint64_t x1600_cgu_read(void *opaque, hwaddr addr, unsigned size)
++{
++    X1600Cgu *s = opaque;
++
++    if (addr == 0x2c) {
++        return 0xffffffff;
++    }
++    if (addr < sizeof(s->regs)) {
++        qemu_log_mask(LOG_UNIMP, "x1600-cgu read %#llx = %#llx\n",
++                      (unsigned long long)addr,
++                      (unsigned long long)s->regs[addr / 4]);
++        return s->regs[addr / 4];
++    }
++    return 0;
++}
++
++static void x1600_cgu_write(void *opaque, hwaddr addr,
++                            uint64_t val, unsigned size)
++{
++    X1600Cgu *s = opaque;
++
++    if (addr >= sizeof(s->regs)) {
++        return;
++    }
++    s->regs[addr / 4] = val;
++    qemu_log_mask(LOG_UNIMP, "x1600-cgu write %#llx = %#llx\n",
++                  (unsigned long long)addr, (unsigned long long)val);
++}
++
++static const MemoryRegionOps x1600_cgu_ops = {
++    .read = x1600_cgu_read,
++    .write = x1600_cgu_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
++/* ----------------------------------------------------------------- */
++/* INTC: jz4780-style interrupt controller (ingenic,ingenic-intc).    */
++/* Two 32-line banks, stride 0x20: ISR+0x00, IMR+0x04, IMSR+0x08,     */
++/* IMCR+0x0C, IPR+0x10. IMR resets all-masked; IPR = ISR & ~IMR; the  */
++/* output line (wired to CPU IRQ 2 per the stock DTB core-intc node)  */
++/* asserts while any IPR bit is set. Level-triggered inputs.          */
++/* Model pinned by: v0.18 IMCR writes (OTG line 1, PDMA/MCU 3/4/5),   */
++/* M2 SFC command completion on line 7.                               */
+ /* ----------------------------------------------------------------- */
+ 
+ #define TYPE_X1600_INTC "x1600-intc"
+@@ -236,7 +303,76 @@ OBJECT_DECLARE_SIMPLE_TYPE(X1600Intc, X1600_INTC)
+ struct X1600Intc {
+     SysBusDevice parent_obj;
+     MemoryRegion mmio;
+-    uint32_t latch;
++    qemu_irq out;
++    uint32_t isr[2];    /* raw line levels */
++    uint32_t imr[2];    /* mask, 1 = masked */
++};
++
++static void x1600_intc_update(X1600Intc *s)
++{
++    uint32_t ipr = (s->isr[0] & ~s->imr[0]) | (s->isr[1] & ~s->imr[1]);
++
++    qemu_set_irq(s->out, ipr != 0);
++}
++
++static void x1600_intc_set_irq(void *opaque, int irq, int level)
++{
++    X1600Intc *s = X1600_INTC(opaque);
++    uint32_t mask = 1u << (irq & 31);
++
++    if (level) {
++        s->isr[irq >> 5] |= mask;
++    } else {
++        s->isr[irq >> 5] &= ~mask;
++    }
++    x1600_intc_update(s);
++}
++
++static uint64_t x1600_intc_read(void *opaque, hwaddr addr, unsigned size)
++{
++    X1600Intc *s = X1600_INTC(opaque);
++    int bank = (addr >> 5) & 1;
++    uint64_t ret;
++
++    switch (addr & 0x1f) {
++    case 0x00:  ret = s->isr[bank]; break;
++    case 0x04:  ret = s->imr[bank]; break;
++    case 0x10:  ret = s->isr[bank] & ~s->imr[bank]; break;
++    default:    ret = 0; break;
++    }
++    qemu_log_mask(LOG_UNIMP, "x1600-intc read %#llx = %#llx\n",
++                  (unsigned long long)addr, (unsigned long long)ret);
++    return ret;
++}
++
++static void x1600_intc_write(void *opaque, hwaddr addr,
++                             uint64_t val, unsigned size)
++{
++    X1600Intc *s = X1600_INTC(opaque);
++    int bank = (addr >> 5) & 1;
++
++    qemu_log_mask(LOG_UNIMP, "x1600-intc write %#llx = %#llx\n",
++                  (unsigned long long)addr, (unsigned long long)val);
++    switch (addr & 0x1f) {
++    case 0x04:
++        s->imr[bank] = val;
++        break;
++    case 0x08:              /* IMSR: set mask bits */
++        s->imr[bank] |= val;
++        break;
++    case 0x0c:              /* IMCR: clear mask bits */
++        s->imr[bank] &= ~val;
++        break;
++    }
++    x1600_intc_update(s);
++}
++
++static const MemoryRegionOps x1600_intc_ops = {
++    .read = x1600_intc_read,
++    .write = x1600_intc_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
+ };
+ 
+ /* Per-instance stub regfile (v0.18): MMIO registers STORE their writes —
+@@ -252,17 +388,6 @@ typedef struct X1600Stub {
+     hwaddr size;
+ } X1600Stub;
+ 
+-static void x1600_stub_set_irq(void *opaque, int irq, int level)
+-{
+-    X1600Intc *s = X1600_INTC(opaque);
+-
+-    if (level) {
+-        s->latch |= (1u << irq);
+-    } else {
+-        s->latch &= ~(1u << irq);
+-    }
+-}
+-
+ static uint64_t x1600_stub_read(void *opaque, hwaddr addr, unsigned size)
+ {
+     X1600Stub *s = opaque;
+@@ -305,13 +430,13 @@ static X1600Stub *x1600_stub_new(const char *name, hwaddr size)
+ static void x1600_intc_realize(DeviceState *dev, Error **errp)
+ {
+     X1600Intc *s = X1600_INTC(dev);
+-    X1600Stub *stub = x1600_stub_new("x1600-intc", X1600_INTC_SIZE);
+ 
+-    stub->mr = s->mmio;
+-    memory_region_init_io(&s->mmio, OBJECT(s), &x1600_stub_ops,
+-                          stub, "x1600-intc", X1600_INTC_SIZE);
++    s->imr[0] = s->imr[1] = 0xffffffff;   /* hardware reset: all masked */
++    memory_region_init_io(&s->mmio, OBJECT(s), &x1600_intc_ops,
++                          s, "x1600-intc", X1600_INTC_SIZE);
+     sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->mmio);
+-    qdev_init_gpio_in(dev, x1600_stub_set_irq, 64);
++    qdev_init_gpio_in(dev, x1600_intc_set_irq, 64);
++    qdev_init_gpio_out(dev, &s->out, 1);
+ }
+ 
+ static void x1600_intc_class_init(ObjectClass *klass, const void *data)
+@@ -335,6 +460,478 @@ static void x1600_intc_register_types(void)
+ 
+ type_init(x1600_intc_register_types)
+ 
++/* ----------------------------------------------------------------- */
++/* RTC (ingenic,x1600-rtc) — write-protocol model. The vendor driver  */
++/* (ingenic_rtc_writel, 0x80415874) does, per write:                  */
++/*   1. poll +0x00 for bit7 (0x80) "write-ready"                      */
++/*   2. write 0xa55a to +0x3c (write-enable key)                      */
++/*   3. poll +0x3c for bit31 set (write-accepted)                     */
++/*   4. write the value to the target register                        */
++/* A plain persistent stub returns 0 for +0x00 and 0xa55a (positive)  */
++/* for +0x3c, so both polls time out every call and the RTC set-time  */
++/* retry loop spins the CPU in a +0x3c read storm (v0.53 stop: it     */
++/* starved the soc_msc insmod thread). Satisfy the protocol so writes */
++/* complete without timeout.                                          */
++/* ----------------------------------------------------------------- */
++
++typedef struct X1600Rtc {
++    MemoryRegion mmio;
++    uint32_t regs[X1600_RTC_SIZE / 4];
++} X1600Rtc;
++
++static X1600Rtc x1600_rtc_dev;
++
++static uint64_t x1600_rtc_read(void *opaque, hwaddr addr, unsigned size)
++{
++    X1600Rtc *s = opaque;
++    uint64_t ret;
++
++    if (addr == 0x00) {
++        ret = 0x80;                                   /* write-ready */
++    } else if (addr == 0x3c) {
++        ret = s->regs[addr / 4] | 0x80000000u;        /* write-accepted */
++    } else if (addr < sizeof(s->regs)) {
++        ret = s->regs[addr / 4];
++    } else {
++        ret = 0;
++    }
++    return ret;
++}
++
++static void x1600_rtc_write(void *opaque, hwaddr addr,
++                            uint64_t val, unsigned size)
++{
++    X1600Rtc *s = opaque;
++
++    if (addr < sizeof(s->regs)) {
++        s->regs[addr / 4] = val;
++    }
++    qemu_log_mask(LOG_UNIMP, "x1600-rtc write %#llx = %#llx\n",
++                  (unsigned long long)addr, (unsigned long long)val);
++}
++
++static const MemoryRegionOps x1600_rtc_ops = {
++    .read = x1600_rtc_read,
++    .write = x1600_rtc_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
++/* ----------------------------------------------------------------- */
++/* SFC (ingenic_sfc_v2) + SPI-NAND, M2 model. Register semantics      */
++/* decoded from the vendor driver disassembly + v0.22 stub MMIO log:  */
++/*   0x00 glb ctrl (bit6 = DMA descriptor mode, set when cdt+13!=0)   */
++/*   0x04 cfg / 0x2c total-len / 0x60,0x74,0x78 scratch               */
++/*   0x64 ctrl: bit0 START (W1S), bit1 stop; 0x68 irq status:         */
++/*        bit0/1 error, bit2 RX-fifo, bit3 TX-fifo, bit4 DONE;        */
++/*   0x6c/0x70 write-1-clear on 0x68; 0x7c [5:0]=CDT index,           */
++/*        bit31=has-cmd-phase, bit30=TX(out); 0x80..0x8c params       */
++/*        (feature/page addr at 0x88, value at 0x8c per the log);     */
++/*   0x90 descriptor chain phys (DMA mode); 0x800..0x9ff CDT table    */
++/*        (16B entries, opcode = entry[1].low byte);                  */
++/*   0x1000 PIO data FIFO (word).                                     */
++/* Completion protocol (ingenic_sfc_pio_irq_callback): the handler    */
++/* moves len bytes between the guest buffer and the FIFO (RX: device  */
++/* fills, TX: guest fills), then the device raises DONE; the handler  */
++/* acks via 0x6c/0x70 and complete()s the sync wait. DMA mode walks   */
++/* {next, data, len, more} descriptors in guest memory instead.       */
++/* NAND array: raw page+OOB image (2112 B/page), 64 pages/block,      */
++/* 1024 blocks = 128 MiB data + OOB, mmap'd from nand-r1.bin.         */
++/* ----------------------------------------------------------------- */
++
++#define X1600_SFC_IRQ_LINE  7                    /* DTB /ahb2/sfc <7> */
++#define X1600_SFC_SIZE      0x10000
++#define X1600_NAND_PAGE     2048
++#define X1600_NAND_OOB      64
++#define X1600_NAND_STRIDE   (X1600_NAND_PAGE + X1600_NAND_OOB)
++#define X1600_NAND_PAGES_PER_BLOCK 64
++#define X1600_NAND_BLOCKS   1024
++#define X1600_NAND_BYTES    ((uint64_t)X1600_NAND_STRIDE * \
++                             X1600_NAND_PAGES_PER_BLOCK * X1600_NAND_BLOCKS)
++
++#define SFC_ST_RX    0x04
++#define SFC_ST_TX    0x08
++#define SFC_ST_DONE  0x10
++
++/* target/mips/system/physaddr.c — translate a guest virtual address through
++ * the CPU MMU (kseg0/1/3 + TLB). Declared locally to avoid pulling in
++ * target/mips/internal.h from hw/. */
++extern hwaddr mips_cpu_get_phys_addr_debug(CPUState *cs, vaddr addr);
++
++typedef struct X1600Sfc {
++    MemoryRegion mmio;
++    qemu_irq irq;
++    CPUState *cpu;              /* for DMA descriptor MMU translation */
++    AddressSpace *as;
++    uint8_t *nand;              /* mmap'd backing, X1600_NAND_BYTES */
++    uint32_t regs[0x100 / 4];   /* 0x00..0xff control window */
++    uint32_t cdt[0x200 / 4];    /* 0x800..0x9ff command descriptor table */
++    uint8_t cache[X1600_NAND_STRIDE];
++    uint8_t feature[256];       /* SPI-NAND feature regs (A0/B0/C0) */
++    uint8_t pending;            /* 0x68 status bits */
++    /* fifo/transfer state */
++    uint32_t fifo;              /* one pending fifo word */
++    int fifo_valid;             /* bytes valid in fifo */
++    uint32_t xfer_total;        /* total bytes for this command */
++    uint32_t xfer_done;         /* bytes consumed so far */
++    uint8_t tx_byte;            /* latched TX byte (set_feature value) */
++} X1600Sfc;
++
++static X1600Sfc x1600_sfc_dev;
++
++static void x1600_sfc_irq_raise(X1600Sfc *s, uint8_t bits)
++{
++    s->pending |= bits;
++    qemu_set_irq(s->irq, 1);
++}
++
++static void x1600_sfc_irq_update(X1600Sfc *s)
++{
++    qemu_set_irq(s->irq, s->pending != 0);
++}
++
++static void x1600_sfc_fifo_load(X1600Sfc *s, const uint8_t *data, int len)
++{
++    s->fifo = 0;
++    memcpy(&s->fifo, data, len > 4 ? 4 : len);
++    s->fifo_valid = len;
++    s->xfer_total = len;
++    s->xfer_done = 0;
++    x1600_sfc_irq_raise(s, SFC_ST_RX);
++}
++
++static void x1600_sfc_dma(X1600Sfc *s, uint8_t opcode, bool out);
++
++/* execute one SPI-NAND command; opcode from the CDT entry */
++static void x1600_sfc_exec(X1600Sfc *s, uint8_t opcode)
++{
++    uint32_t addr = s->regs[0x88 / 4];
++    uint64_t off;
++
++    switch (opcode) {
++    case 0xff:                                  /* RESET */
++        x1600_sfc_irq_raise(s, SFC_ST_DONE);
++        break;
++    case 0x9f: {                                /* READ ID: GD5F1GQ4UC */
++        static const uint8_t id[3] = { 0xc8, 0xd1, 0xc8 };
++
++        x1600_sfc_fifo_load(s, id, 3);
++        break;
++    }
++    case 0x1f:                                  /* SET FEATURE (TX, 1B) */
++        s->xfer_total = s->regs[0x2c / 4] ? s->regs[0x2c / 4] : 1;
++        s->xfer_done = 0;
++        x1600_sfc_irq_raise(s, SFC_ST_TX);
++        break;
++    case 0x0f: {                                /* GET FEATURE */
++        uint8_t v = s->feature[addr & 0xff];
++
++        x1600_sfc_fifo_load(s, &v, 1);
++        break;
++    }
++    case 0x13:                                  /* PAGE READ -> cache */
++        /* ROW_ADDR = 0x84, COL_ADDR = 0x80 (vendor dump register names;
++         * v0.27: swapped them and the BBT scan read page 2048's OOB for
++         * every block -> all 1024 blocks marked bad). */
++        off = (uint64_t)s->regs[0x84 / 4] * X1600_NAND_STRIDE;
++        if (off + X1600_NAND_PAGE <= X1600_NAND_BYTES) {
++            memcpy(s->cache, s->nand + off, X1600_NAND_STRIDE);
++        } else {
++            memset(s->cache, 0xff, X1600_NAND_STRIDE);
++        }
++        s->feature[0xc0] &= ~0x01;              /* OIP clear */
++        if (s->regs[0] & 0x40) {                /* DMA mode: page load +
++                                                 * cache read in one op */
++            x1600_sfc_dma(s, opcode, false);
++        } else {
++            x1600_sfc_irq_raise(s, SFC_ST_DONE);
++        }
++        break;
++    case 0xd8:                                  /* BLOCK ERASE */
++        off = (uint64_t)(addr & ~(X1600_NAND_PAGES_PER_BLOCK - 1)) *
++              X1600_NAND_STRIDE;
++        if (off < X1600_NAND_BYTES) {
++            memset(s->nand + off, 0xff,
++                   X1600_NAND_STRIDE * X1600_NAND_PAGES_PER_BLOCK);
++        }
++        s->feature[0xc0] &= ~0x01;
++        x1600_sfc_irq_raise(s, SFC_ST_DONE);
++        break;
++    case 0x10:                                  /* PROGRAM EXECUTE */
++        off = (uint64_t)addr * X1600_NAND_STRIDE;
++        if (off + X1600_NAND_PAGE <= X1600_NAND_BYTES) {
++            uint32_t i;
++
++            for (i = 0; i < X1600_NAND_STRIDE; i++) {
++                s->nand[off + i] &= s->cache[i];   /* NAND: 1 -> 0 only */
++            }
++        }
++        s->feature[0xc0] &= ~0x01;
++        x1600_sfc_irq_raise(s, SFC_ST_DONE);
++        break;
++    default:
++        /* READ CACHE (0x03/0x0b/0x6b/0xeb) and PROGRAM LOAD
++         * (0x02/0x84/0x32/0x34) take the DMA-descriptor path; they are
++         * driven by x1600_sfc_dma() on START, not here. */
++        qemu_log_mask(LOG_UNIMP, "x1600-sfc: unhandled opcode %#x\n", opcode);
++        x1600_sfc_irq_raise(s, SFC_ST_DONE);
++        break;
++    }
++}
++
++/* DMA-descriptor transfer for READ CACHE / PROGRAM LOAD */
++/* The driver stores the DMA descriptor base in 0x90 as a guest VIRTUAL
++ * address (desc_area_va + 0x80000000). Translate through the CPU MMU to the
++ * physical address before reading the descriptor chain. The chain's own
++ * next/mem fields were already virt_to_phys'd by the driver (sfc_get_paddr),
++ * so they are used as physical. */
++static uint32_t x1600_sfc_desc_base(X1600Sfc *s)
++{
++    uint32_t raw = s->regs[0x90 / 4];
++    hwaddr mmu = mips_cpu_get_phys_addr_debug(s->cpu, raw);
++    uint32_t kseg1 = (raw >= 0x20000000 && raw < 0x40000000) ?
++                     raw - 0x20000000 : raw;
++
++    static int dbg = 3;
++    if (dbg-- > 0) {
++        uint32_t a[4] = {0}, b[4] = {0}, c[4] = {0};
++        int ra = dma_memory_read(&address_space_memory, raw, a, 16,
++                                 MEMTXATTRS_UNSPECIFIED);
++        int rb = dma_memory_read(&address_space_memory, kseg1, b, 16,
++                                 MEMTXATTRS_UNSPECIFIED);
++        int rc = (mmu != (hwaddr)-1) ?
++                 dma_memory_read(&address_space_memory, mmu, c, 16,
++                                 MEMTXATTRS_UNSPECIFIED) : 99;
++        qemu_log_mask(LOG_UNIMP,
++                      "x1600-sfc: desc probe raw=%#x(kseg0/1? ret=%d "
++                      "mem=%#x len=%#x) kseg1=%#x(ret=%d mem=%#x len=%#x) "
++                      "mmu=%#llx(ret=%d mem=%#x len=%#x)\n",
++                      raw, ra, a[1], a[2], kseg1, rb, b[1], b[2],
++                      (unsigned long long)mmu, rc, c[1], c[2]);
++    }
++    /* Prefer the kseg1-offset physical base (descriptor area is cached
++     * kseg1); it is what the driver's `desc_va + 0x80000000` reduces to. */
++    return kseg1;
++}
++
++static void x1600_sfc_dma(X1600Sfc *s, uint8_t opcode, bool out)
++{
++    uint32_t desc = x1600_sfc_desc_base(s);
++    uint32_t col = s->regs[0x80 / 4];   /* COL_ADDR; OOB cols (>= 2048)
++                                         * are legal — bad-block markers */
++    int guard = 0;
++    static int dbg = 12;
++
++    if (dbg > 0) {
++        uint32_t d[4] = {0};
++
++        dbg--;
++        if (dma_memory_read(&address_space_memory, desc, d, sizeof(d),
++                            MEMTXATTRS_UNSPECIFIED) == MEMTX_OK) {
++            qemu_log_mask(LOG_UNIMP,
++                          "x1600-sfc dma: op=%#x out=%d col=%#x base=%#x"
++                          " desc={next=%#x,mem=%#x,len=%#x,more=%#x}\n",
++                          opcode, out, col, s->regs[0x90 / 4],
++                          d[0], d[1], d[2], d[3]);
++        } else {
++            qemu_log_mask(LOG_UNIMP,
++                          "x1600-sfc dma: op=%#x base=%#x UNMAPPED\n",
++                          opcode, s->regs[0x90 / 4]);
++        }
++    }
++
++    while (desc && guard++ < 64) {
++        uint32_t d[4], len;
++        uint64_t addr;
++
++        if (dma_memory_read(&address_space_memory, desc, d, sizeof(d),
++                            MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
++            break;
++        }
++        len = d[2];
++        if (len > X1600_NAND_STRIDE) {
++            len = X1600_NAND_STRIDE;
++        }
++        for (addr = 0; addr < len; addr++) {
++            if (out) {
++                uint8_t b;
++
++                if (dma_memory_read(&address_space_memory, d[1] + addr,
++                                    &b, 1, MEMTXATTRS_UNSPECIFIED)
++                    != MEMTX_OK) {
++                    break;
++                }
++                if (col < X1600_NAND_STRIDE) {
++                    s->cache[col++] = b;
++                }
++            } else {
++                uint8_t b = col < X1600_NAND_STRIDE ? s->cache[col++] : 0xff;
++
++                if (dma_memory_write(&address_space_memory, d[1] + addr,
++                                     &b, 1, MEMTXATTRS_UNSPECIFIED)
++                    != MEMTX_OK) {
++                    break;
++                }
++            }
++        }
++        if (!d[0]) {
++            break;
++        }
++        desc = d[0];
++    }
++    x1600_sfc_irq_raise(s, SFC_ST_DONE);
++}
++
++static bool x1600_sfc_opcode_is_dma(uint8_t opcode)
++{
++    switch (opcode) {
++    case 0x03: case 0x0b: case 0x6b: case 0xeb:   /* READ CACHE variants */
++    case 0x02: case 0x84: case 0x32: case 0x34:   /* PROGRAM LOAD variants */
++        return true;
++    }
++    return false;
++}
++
++static bool x1600_sfc_opcode_is_out(uint8_t opcode)
++{
++    switch (opcode) {
++    case 0x02: case 0x84: case 0x32: case 0x34:
++    case 0x1f:
++        return true;
++    }
++    return false;
++}
++
++static void x1600_sfc_start(X1600Sfc *s)
++{
++    uint32_t idx = s->regs[0x7c / 4] & 0x3f;
++    uint8_t opcode = s->cdt[idx * 4 + 1] & 0xff;
++
++    qemu_log_mask(LOG_UNIMP,
++                  "x1600-sfc: START cdt=%u opcode=%#x p80=%#x p84=%#x "
++                  "p88=%#x p8c=%#x len=%#x dma=%d\n",
++                  idx, opcode, s->regs[0x80 / 4], s->regs[0x84 / 4],
++                  s->regs[0x88 / 4], s->regs[0x8c / 4], s->regs[0x2c / 4],
++                  !!(s->regs[0] & 0x40));
++    if (x1600_sfc_opcode_is_dma(opcode)) {
++        x1600_sfc_dma(s, opcode, x1600_sfc_opcode_is_out(opcode));
++    } else {
++        x1600_sfc_exec(s, opcode);
++    }
++}
++
++static uint64_t x1600_sfc_read(void *opaque, hwaddr addr, unsigned size)
++{
++    X1600Sfc *s = opaque;
++    uint64_t ret;
++
++    if (addr == 0x68) {
++        ret = s->pending;
++    } else if (addr == 0x1000) {           /* PIO FIFO pop */
++        ret = s->fifo;
++        s->xfer_done += 4;
++        if (s->xfer_done >= s->xfer_total) {
++            s->pending &= ~SFC_ST_RX;
++            x1600_sfc_irq_raise(s, SFC_ST_DONE);
++        }
++        qemu_log_mask(LOG_UNIMP, "x1600-sfc fifo pop = %#llx\n",
++                      (unsigned long long)ret);
++        return ret;
++    } else if (addr < 0x100) {
++        ret = s->regs[addr / 4];
++    } else if (addr >= 0x800 && addr < 0xa00) {
++        ret = s->cdt[(addr - 0x800) / 4];
++    } else {
++        ret = 0;
++    }
++    qemu_log_mask(LOG_UNIMP, "x1600-sfc read %#llx = %#llx\n",
++                  (unsigned long long)addr, (unsigned long long)ret);
++    return ret;
++}
++
++static void x1600_sfc_write(void *opaque, hwaddr addr,
++                            uint64_t val, unsigned size)
++{
++    X1600Sfc *s = opaque;
++
++    qemu_log_mask(LOG_UNIMP, "x1600-sfc write %#llx = %#llx\n",
++                  (unsigned long long)addr, (unsigned long long)val);
++    if (addr == 0x64) {
++        /* SFC_TRIG: bit0 START self-clears when the transfer completes;
++         * our execution is synchronous so bit0 never reads back set.
++         * (v0.25: edge-detect broke back-to-back transfers — the driver
++         * writes 3 for every transfer without an intervening stop.) */
++        s->regs[addr / 4] = val & ~1u;
++        if (val & 1) {
++            x1600_sfc_start(s);
++        }
++        return;
++    }
++    if (addr == 0x6c || addr == 0x70) {      /* write-1-clear status */
++        s->pending &= ~(uint8_t)val;
++        x1600_sfc_irq_update(s);
++        return;
++    }
++    if (addr == 0x1000) {                    /* PIO FIFO push (TX) */
++        s->tx_byte = val & 0xff;
++        s->xfer_done += 4;
++        if (s->xfer_done >= s->xfer_total) {
++            uint32_t idx = s->regs[0x7c / 4] & 0x3f;
++            uint8_t opcode = s->cdt[idx * 4 + 1] & 0xff;
++
++            s->pending &= ~SFC_ST_TX;
++            if (opcode == 0x1f) {
++                s->feature[s->regs[0x88 / 4] & 0xff] = s->tx_byte;
++            }
++            x1600_sfc_irq_raise(s, SFC_ST_DONE);
++        }
++        return;
++    }
++    if (addr < 0x100) {
++        s->regs[addr / 4] = val;
++    } else if (addr >= 0x800 && addr < 0xa00) {
++        s->cdt[(addr - 0x800) / 4] = val;
++    }
++}
++
++static const MemoryRegionOps x1600_sfc_ops = {
++    .read = x1600_sfc_read,
++    .write = x1600_sfc_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
++static void x1600_sfc_init(X1600Sfc *s, const char *image_path)
++{
++    int fd = open(image_path, O_RDWR | O_CREAT, 0644);
++    struct stat st;
++
++    if (fd < 0) {
++        error_report("x1600: cannot open NAND image %s", image_path);
++        exit(1);
++    }
++    if (fstat(fd, &st) == 0 && st.st_size != (off_t)X1600_NAND_BYTES) {
++        if (ftruncate(fd, X1600_NAND_BYTES) != 0) {
++            error_report("x1600: cannot size NAND image %s", image_path);
++            exit(1);
++        }
++    }
++    s->nand = mmap(NULL, X1600_NAND_BYTES, PROT_READ | PROT_WRITE,
++                   MAP_SHARED, fd, 0);
++    if (s->nand == MAP_FAILED) {
++        error_report("x1600: cannot mmap NAND image %s", image_path);
++        exit(1);
++    }
++    if (st.st_size == 0) {
++        memset(s->nand, 0xff, X1600_NAND_BYTES);   /* erased state */
++    }
++    close(fd);
++    s->feature[0xa0] = 0;      /* block-lock: all unlocked (driver also
++                                 * writes 0 explicitly via SET FEATURE) */
++}
++
+ /* ----------------------------------------------------------------- */
+ /* machine                                                           */
+ /* ----------------------------------------------------------------- */
+@@ -405,10 +1002,12 @@ static void x1600_mach_init(MachineState *ms)
+     cpu_mips_clock_init(cpu);
+     qemu_register_reset(x1600_main_cpu_reset, cpu);
+ 
+-    /* INTC at 0x10001000. IRQ 51 = UART0. IRQ delivery is stubbed for now. */
++    /* INTC at 0x10001000: inputs from SoC IRQ lines, output wired to the
++     * CPU's line 2 (stock DTB core-intc: interrupt-parent cpuintc <2>). */
+     intc = qdev_new(TYPE_X1600_INTC);
+     sysbus_realize_and_unref(SYS_BUS_DEVICE(intc), &error_fatal);
+     sysbus_mmio_map(SYS_BUS_DEVICE(intc), 0, X1600_INTC_BASE);
++    qdev_connect_gpio_out(intc, 0, cpu->env.irq[2]);
+     uart0_irq = qdev_get_gpio_in(intc, X1600_UART0_IRQ);
+ 
+     /* UART0: regshift 2 puts LSR at +0x14 per the stock early-print scan.
+@@ -436,9 +1035,13 @@ static void x1600_mach_init(MachineState *ms)
+     /* SoC blocks the stock kernel probes at boot (stubbed reads-as-zero,
+      * same shape as before, but sizes updated to the stock DTB values
+      * parsed from the embedded FDT: dtb.py, M1-bringup-log v0.5) */
+-    x1600_add_stub(sysmem, "x1600-cgu",      X1600_CGU_BASE,     0x100);
++    memory_region_init_io(&x1600_cgu_dev.mmio, NULL, &x1600_cgu_ops,
++                          &x1600_cgu_dev, "x1600.cgu", 0x100);
++    memory_region_add_subregion(sysmem, X1600_CGU_BASE, &x1600_cgu_dev.mmio);
+     x1600_add_stub(sysmem, "x1600-tcu",      X1600_TCU_BASE,     0x1000);
+-    x1600_add_stub(sysmem, "x1600-rtc",      X1600_RTC_BASE,     0x4c);
++    memory_region_init_io(&x1600_rtc_dev.mmio, NULL, &x1600_rtc_ops,
++                          &x1600_rtc_dev, "x1600.rtc", X1600_RTC_SIZE);
++    memory_region_add_subregion(sysmem, X1600_RTC_BASE, &x1600_rtc_dev.mmio);
+     x1600_add_stub(sysmem, "x1600-pinctrl",  X1600_PINCTRL_BASE, 0x1000);
+     x1600_add_stub(sysmem, "x1600-uart1",    X1600_UART1_BASE,   X1600_UART_SIZE);
+     x1600_add_stub(sysmem, "x1600-uart2",    X1600_UART2_BASE,   X1600_UART_SIZE);
+@@ -446,7 +1049,24 @@ static void x1600_mach_init(MachineState *ms)
+     x1600_add_stub(sysmem, "x1600-pdma",     X1600_PDMA_BASE,    0x10000);
+     x1600_add_stub(sysmem, "x1600-msc0",     X1600_MSC0_BASE,    0x10000);
+     x1600_add_stub(sysmem, "x1600-usbphy",   X1600_USBPHY_BASE,  0x1000);
+-    x1600_add_stub(sysmem, "x1600-sfc",      X1600_SFC_BASE,     0x10000);
++
++    /* SFC + SPI-NAND (M2): command engine backed by the raw page+OOB
++     * image next to the kernel (built by tools/tierc/make_nand_image.py);
++     * IRQ on INTC line 7 (stock DTB). */
++    {
++        X1600Sfc *sfc = &x1600_sfc_dev;
++        char *copy = g_strdup(ms->kernel_filename);
++        char *nand_path = g_build_filename(dirname(copy), "nand-r1.bin", NULL);
++
++        x1600_sfc_init(sfc, nand_path);
++        sfc->cpu = CPU(cpu);
++        sfc->irq = qdev_get_gpio_in(intc, X1600_SFC_IRQ_LINE);
++        memory_region_init_io(&sfc->mmio, NULL, &x1600_sfc_ops, sfc,
++                              "x1600.sfc", X1600_SFC_SIZE);
++        memory_region_add_subregion(sysmem, X1600_SFC_BASE, &sfc->mmio);
++        g_free(nand_path);
++        g_free(copy);
++    }
+ 
+     /* RW-storage MMIO blocks the DT-boot drivers RMW (TCSM0): plain RAM
+      * region so read-back returns the stored value */
+@@ -484,8 +1104,16 @@ static void x1600_mach_init(MachineState *ms)
+      *   envp must point at a NULL-terminated table, not be NULL itself. */
+     {
+         static const char argv_name[] = "linux";
++        /* M2 cmdline: mtdparts (layout from the live device's /proc/mtd,
++         * libra BACKLOG RP3: uboot/kernel/rootfs/kernel2/rootfs2/ota/
++         * userdata; kernel slot 5 MiB + ota 512 KiB confirmed there) and
++         * the stock root device. Stock uses console=ttyS2,3000000n8 —
++         * we keep ttyS0 until the console-port swap (see M1 log). */
+         static const char bootargs[] =
+-            "console=ttyS0,115200 mem=64M initcall_debug ignore_loglevel";
++            "console=ttyS0,115200 mem=64M initcall_debug ignore_loglevel "
++            "mtdparts=sfc_nand:2M(uboot),5M(kernel),40M(rootfs),"
++            "5M(kernel2),40M(rootfs2),512K(ota),-(userdata) "
++            "root=/dev/mtdblock_bbt_ro2 rootfstype=squashfs ro";
+         uint32_t argv_tab[3];
+         uint32_t env_tab[1];
+ 
+-- 
+2.53.0
+

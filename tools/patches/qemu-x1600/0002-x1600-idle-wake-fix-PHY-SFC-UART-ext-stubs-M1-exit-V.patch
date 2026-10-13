@@ -1,0 +1,190 @@
+From 770abacedb3d96c8793f07ae30b526710c87ee48 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Mon, 12 Oct 2026 17:46:03 +0900
+Subject: [PATCH 2/5] x1600: idle-wake fix + PHY/SFC/UART-ext stubs; M1 exit
+ (VFS root panic)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- XBurstR2: set Config7.WII — the vendor idle loop (ingenic_wait_irqoff)
+  WAITs with Status.IE=0 and relies on XBurst waking on any pending
+  interrupt; QEMU's mips_cpu_has_work only woke on takeable interrupts,
+  parking the vCPU mid-boot (v0.20 gdb: IP4 pending, IM4 unmasked, IE=0)
+- stubs become per-instance persistent regfiles (writes stored+logged):
+  the vendor kernel RMWs its PLL/clock/PHY blocks, read-back is the
+  minimum correct semantics (v0.18)
+- new stubs, each pinned by its boot bus error: USB PHY bank
+  0x10078000 (vendor-private, absent from DTB; x1600_phy_init RMWs),
+  SFC 0x13440000 (ingenic_sfc probe; runs to ENODEV — no NAND backend
+  yet, that is M2), UART0 extension range (priority -1 under serial_mm;
+  serial_ingenic_set_termios touches +0x24/+0x28 past the 8<<2 window)
+- v0.23: full initcall table completes, ttyS0 console handoff works,
+  kernel panics on VFS root mount with zero MTD partitions — the named
+  M2 block. M1-bringup-log v0.18-v0.23 has the decodes
+---
+ hw/mips/x1600.c            | 76 ++++++++++++++++++++++++++++++++------
+ target/mips/cpu-defs.c.inc |  6 +++
+ 2 files changed, 71 insertions(+), 11 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 9d7bb05..f10bb73 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -80,6 +80,14 @@
+ #define X1600_PINCTRL_BASE 0x10010000
+ #define X1600_PDMA_BASE    0x13420000
+ #define X1600_MSC0_BASE    0x13450000
++/* USB PHY register bank at 0x10078000: vendor-private (absent from the stock
++ * DTB; nearest nodes sadc@0x10070000 / aic@0x10079000). x1600_phy_init RMWs
++ * +0x30/+0x40/+0x108..+0x110 after the CGU PLL sequence (v0.20 bus error).
++ * Size 0x1000 ends exactly at aic@0x10079000. */
++#define X1600_USBPHY_BASE  0x10078000
++#define X1600_SFC_BASE     0x13440000            /* /ahb2/sfc (ingenic,x1600-sfc):
++                            * SPI flash controller; v0.21 bus error in
++                            * sfc_clk_set_init RMW of +4 (clock divider). */
+ /* OST device: /core-ost@0x12000000 (stock DTB), ingenic,x1600-ost.
+  * The vendor clockevent is DIRECT-wired to CPU IRQ line 4 (DTB: /core-ost
+  * interrupt-parent = cpuintc, interrupts = <4>). The driver RMWs:
+@@ -231,6 +239,19 @@ struct X1600Intc {
+     uint32_t latch;
+ };
+ 
++/* Per-instance stub regfile (v0.18): MMIO registers STORE their writes —
++ * the vendor kernel RMWs its PLL/clock/PHY blocks, so read-back of a
++ * written value is the minimum correct semantics (pure 0-return made the
++ * USB-PHY enable sequence invisible and its lock poll unfinishable).
++ * No invented device behavior beyond persistence: values are not
++ * interpreted until a boot stop pins them down. */
++typedef struct X1600Stub {
++    MemoryRegion mr;
++    const char *name;
++    uint32_t *regs;
++    hwaddr size;
++} X1600Stub;
++
+ static void x1600_stub_set_irq(void *opaque, int irq, int level)
+ {
+     X1600Intc *s = X1600_INTC(opaque);
+@@ -244,17 +265,25 @@ static void x1600_stub_set_irq(void *opaque, int irq, int level)
+ 
+ static uint64_t x1600_stub_read(void *opaque, hwaddr addr, unsigned size)
+ {
+-    /* return 0 for now; log every access so trace-driven modeling can map
+-     * what the stock kernel actually reads (qemu -d unimp filters it). */
+-    qemu_log_mask(LOG_UNIMP, "x1600 stub read %#x %s\n",
+-                  (unsigned)addr, (const char *)opaque);
+-    return 0;
++    X1600Stub *s = opaque;
++    uint64_t ret = (addr < s->size) ? s->regs[addr / 4] : 0;
++
++    qemu_log_mask(LOG_UNIMP, "x1600 stub read %#x = %#x %s\n",
++                  (unsigned)addr, (unsigned)ret, s->name);
++    return ret;
+ }
+ 
+ static void x1600_stub_write(void *opaque, hwaddr addr,
+                              uint64_t val, unsigned size)
+ {
+-    /* latch writes so -d unimp/guest_errors still show real MMIO accs */
++    X1600Stub *s = opaque;
++
++    if (addr >= s->size) {
++        return;
++    }
++    s->regs[addr / 4] = val;
++    qemu_log_mask(LOG_UNIMP, "x1600 stub write %#x = %#x %s\n",
++                  (unsigned)addr, (unsigned)val, s->name);
+ }
+ 
+ static const MemoryRegionOps x1600_stub_ops = {
+@@ -263,12 +292,24 @@ static const MemoryRegionOps x1600_stub_ops = {
+     .endianness = DEVICE_LITTLE_ENDIAN,
+ };
+ 
++static X1600Stub *x1600_stub_new(const char *name, hwaddr size)
++{
++    X1600Stub *s = g_new0(X1600Stub, 1);
++
++    s->name = name;
++    s->size = size;
++    s->regs = g_new0(uint32_t, size / 4);
++    return s;
++}
++
+ static void x1600_intc_realize(DeviceState *dev, Error **errp)
+ {
+     X1600Intc *s = X1600_INTC(dev);
++    X1600Stub *stub = x1600_stub_new("x1600-intc", X1600_INTC_SIZE);
+ 
++    stub->mr = s->mmio;
+     memory_region_init_io(&s->mmio, OBJECT(s), &x1600_stub_ops,
+-                          (gpointer)"x1600-intc", "x1600-intc", X1600_INTC_SIZE);
++                          stub, "x1600-intc", X1600_INTC_SIZE);
+     sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->mmio);
+     qdev_init_gpio_in(dev, x1600_stub_set_irq, 64);
+ }
+@@ -328,11 +369,10 @@ static void x1600_main_cpu_reset(void *opaque)
+ static void x1600_add_stub(MemoryRegion *sysmem, const char *name,
+                            hwaddr base, hwaddr size)
+ {
+-    MemoryRegion *mr = g_new0(MemoryRegion, 1);
++    X1600Stub *s = x1600_stub_new(name, size);
+ 
+-    memory_region_init_io(mr, NULL, &x1600_stub_ops, (gpointer)name, name, size);
+-    (void)base;
+-    memory_region_add_subregion(sysmem, base, mr);
++    memory_region_init_io(&s->mr, NULL, &x1600_stub_ops, s, name, size);
++    memory_region_add_subregion(sysmem, base, &s->mr);
+ }
+ 
+ static void x1600_mach_init(MachineState *ms)
+@@ -378,7 +418,19 @@ static void x1600_mach_init(MachineState *ms)
+         SerialMM *uart0 = serial_mm_init(sysmem, X1600_UART0_BASE, 2,
+                                          uart0_irq, 230400, serial_hd(0),
+                                          DEVICE_LITTLE_ENDIAN);
++        X1600Stub *ext = x1600_stub_new("x1600-uart0-ext", X1600_UART_SIZE);
++
+         qemu_register_reset(x1600_uart_scr_seed, uart0);
++        /* The vendor serial_ingenic driver touches extension registers
++         * beyond the 16550's 8<<2 window (+0x24/+0x28 RMWs in
++         * serial_ingenic_set_termios, v0.22 bus error). Back the rest of
++         * UART0's 0x100 with a persistent stub at LOWER priority than the
++         * real device: serial_mm keeps [0x00,0x20), the stub takes the
++         * remainder. */
++        memory_region_init_io(&ext->mr, NULL, &x1600_stub_ops, ext,
++                              "x1600-uart0-ext", X1600_UART_SIZE);
++        memory_region_add_subregion_overlap(sysmem, X1600_UART0_BASE,
++                                            &ext->mr, -1);
+     }
+ 
+     /* SoC blocks the stock kernel probes at boot (stubbed reads-as-zero,
+@@ -393,6 +445,8 @@ static void x1600_mach_init(MachineState *ms)
+     x1600_add_stub(sysmem, "x1600-uart3",    X1600_UART3_BASE,   X1600_UART_SIZE);
+     x1600_add_stub(sysmem, "x1600-pdma",     X1600_PDMA_BASE,    0x10000);
+     x1600_add_stub(sysmem, "x1600-msc0",     X1600_MSC0_BASE,    0x10000);
++    x1600_add_stub(sysmem, "x1600-usbphy",   X1600_USBPHY_BASE,  0x1000);
++    x1600_add_stub(sysmem, "x1600-sfc",      X1600_SFC_BASE,     0x10000);
+ 
+     /* RW-storage MMIO blocks the DT-boot drivers RMW (TCSM0): plain RAM
+      * region so read-back returns the stored value */
+diff --git a/target/mips/cpu-defs.c.inc b/target/mips/cpu-defs.c.inc
+index b2ddfa1..068d0a1 100644
+--- a/target/mips/cpu-defs.c.inc
++++ b/target/mips/cpu-defs.c.inc
+@@ -355,6 +355,12 @@ const mips_def_t mips_defs[] =
+         .CP0_Config2 = MIPS_CONFIG2,
+         .CP0_Config3 = MIPS_CONFIG3 | (1 << CP0C3_DSP2P) | (1 << CP0C3_DSPP) |
+                        (1 << CP0C3_VInt),
++        /*
++         * XBurst cores wake from WAIT on any pending interrupt even with
++         * CP0 Status.IE clear (the Ingenic vendor idle loop,
++         * ingenic_wait_irqoff, relies on this); advertise it via Config7.WII.
++         */
++        .CP0_Config7 = 1 << CP0C7_WII,
+         .CP0_LLAddr_rw_bitmask = 0,
+         .CP0_LLAddr_shift = 4,
+         .SYNCI_Step = 32,
+-- 
+2.53.0
+

@@ -1,0 +1,142 @@
+From 073c478c9b72ae535b101bf300fe71c28128bf4d Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Tue, 13 Oct 2026 14:44:03 +0900
+Subject: [PATCH 4/5] x1600: I2C/AIC/SADC/msc1 stubs + CGU CE-trigger semantics
+
+Root-causes the v0.60+ soc_msc park: oopsed soc_i2c/soc_aic insmods died
+mid-probe holding dev->mutex (4.4 __driver_attach holds it across probes),
+so soc_msc's driver attach blocked forever on the leaked lock. The MSC
+stub was innocent.
+
+- persistent stubs: I2C0/1/2 (0x10050000/51000/52000), AIC (0x10079000),
+  SADC (0x10070000), MSC1 (0x13460000; msc1 probe bus-errored on MSC1+8)
+- CGU divider/gate enables are self-clearing triggers: cgu_divider_enable
+  (0x803ff640) writes the CE bit then polls the same register for zero;
+  offsets written since reset now read back 0 (+0x2c stays all-locked PLL
+  status). Kills the 'why cannot wait cgu stable' warnings and the
+  mmc_rescan kworker oops
+
+Verified: soc_i2c/soc_aic/soc_adc load clean, both msc hosts register,
+UBIFS forms on erased userdata, userland runs (v0.63, see
+docs/M1-bringup-log.md in the SDK tree)
+---
+ hw/mips/x1600.c | 60 +++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 58 insertions(+), 2 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index e020983..9128c06 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -87,11 +87,30 @@
+ #define X1600_PINCTRL_BASE 0x10010000
+ #define X1600_PDMA_BASE    0x13420000
+ #define X1600_MSC0_BASE    0x13450000
++#define X1600_MSC1_BASE    0x13460000
++#define X1600_MSC_SIZE     0x10000
+ /* USB PHY register bank at 0x10078000: vendor-private (absent from the stock
+  * DTB; nearest nodes sadc@0x10070000 / aic@0x10079000). x1600_phy_init RMWs
+  * +0x30/+0x40/+0x108..+0x110 after the CGU PLL sequence (v0.20 bus error).
+  * Size 0x1000 ends exactly at aic@0x10079000. */
+ #define X1600_USBPHY_BASE  0x10078000
++/* I2C0/1/2 + AIC (v0.63): the soc_i2c (jz_i2c_hal_disable_smb) and soc_aic
++ * (aic_hal_init, base 0x10079000 per its own MMIO log) modules took DATA BUS
++ * ERRORS on these unmapped blocks and their insmod tasks DIED mid-probe --
++ * leaking the device mutex that __driver_attach holds across each probe.
++ * soc_msc's driver_register then blocked forever in device_lock on that
++ * leaked mutex (the v0.60+ "soc_msc park" root cause). Stub both blocks so
++ * the probes run to completion. Sizes per the stock DTB (regmap doc §2). */
++#define X1600_I2C0_BASE    0x10050000
++#define X1600_I2C1_BASE    0x10051000
++#define X1600_I2C2_BASE    0x10052000
++#define X1600_I2C_SIZE     0x1000
++#define X1600_AIC_BASE     0x10079000
++#define X1600_AIC_SIZE     0x1000
++/* SADC (0x10070000): soc_adc dies in adc_hal_disable_controller reading
++ * 0x10070000 (v0.63 boot) -- same leaked-mutex cascade as i2c/aic. */
++#define X1600_SADC_BASE    0x10070000
++#define X1600_SADC_SIZE    0x1000
+ #define X1600_SFC_BASE     0x13440000            /* /ahb2/sfc (ingenic,x1600-sfc):
+                             * SPI flash controller; v0.21 bus error in
+                             * sfc_clk_set_init RMW of +4 (clock divider). */
+@@ -240,16 +259,41 @@ static void x1600_uart_scr_seed(void *opaque)
+  * programming +0x24; the all-zero stub made soc_msc's init retry the
+  * clock enable forever (v0.59 stop: thousands of +0x2c/+0 polls with
+  * no other activity while insmod(soc_msc) hung). Real X1600 locks the
+- * PLL in ~us; advertising lock is faithful for a boot model.          */
++ * PLL in ~us; advertising lock is faithful for a boot model.
++ *
++ * Divider/gate TRIGGER registers (v0.63): cgu_divider_enable
++ * (0x803ff640) writes the CE bit (e.g. +0x20 = 0x8 for div_msc0,
++ * +0x74 = 0x20000000 for the msc1-side divider) and then polls the
++ * SAME register for ZERO — the hardware applies the write and
++ * self-clears it. Persistent read-back kept the poll failing ("why
++ * cannot wait cgu stable ???"), the driver restored 0, and the
++ * vendor framework's error path oopsed the mmc_rescan kworker
++ * (clk_set_rate unlocking a mutex with a corrupt wait list). Reads of
++ * the trigger offsets therefore always return 0.                       */
+ /* ----------------------------------------------------------------- */
+ 
+ typedef struct X1600Cgu {
+     MemoryRegion mmio;
+     uint32_t regs[0x100 / 4];
++    uint32_t written[0x100 / 32];   /* offsets written since reset: the
++                                     * vendor CE-trigger protocol clears
++                                     * them, so reads return 0 */
+ } X1600Cgu;
+ 
+ static X1600Cgu x1600_cgu_dev;
+ 
++/* Divider/gate enable is a trigger write: cgu_divider_enable (0x803ff640)
++ * and ingenic_cgu_enable RMW the CE bit in then poll the same register
++ * for ZERO (HW applies and self-clears; ~1M-iteration bounded poll).
++ * Observed: +0x20 = 0x8 (div_msc0), +0x74 = 0x20000000 (msc1 side),
++ * +0x68 = 0x08000015 RMW (gate, hot-polled). +0x2c stays the all-locked
++ * PLL status word, and unwritten offsets keep returning 0. */
++static bool x1600_cgu_selfcleared(const X1600Cgu *s, hwaddr addr)
++{
++    return (addr >> 2) < 0x100 / 4 &&
++           (s->written[addr >> 7] & (1u << ((addr >> 2) & 31)));
++}
++
+ static uint64_t x1600_cgu_read(void *opaque, hwaddr addr, unsigned size)
+ {
+     X1600Cgu *s = opaque;
+@@ -257,6 +301,9 @@ static uint64_t x1600_cgu_read(void *opaque, hwaddr addr, unsigned size)
+     if (addr == 0x2c) {
+         return 0xffffffff;
+     }
++    if (x1600_cgu_selfcleared(s, addr)) {
++        return 0;                     /* CE trigger self-cleared */
++    }
+     if (addr < sizeof(s->regs)) {
+         qemu_log_mask(LOG_UNIMP, "x1600-cgu read %#llx = %#llx\n",
+                       (unsigned long long)addr,
+@@ -275,6 +322,9 @@ static void x1600_cgu_write(void *opaque, hwaddr addr,
+         return;
+     }
+     s->regs[addr / 4] = val;
++    if ((addr >> 2) < 0x100 / 4) {
++        s->written[addr >> 7] |= 1u << ((addr >> 2) & 31);
++    }
+     qemu_log_mask(LOG_UNIMP, "x1600-cgu write %#llx = %#llx\n",
+                   (unsigned long long)addr, (unsigned long long)val);
+ }
+@@ -1047,8 +1097,14 @@ static void x1600_mach_init(MachineState *ms)
+     x1600_add_stub(sysmem, "x1600-uart2",    X1600_UART2_BASE,   X1600_UART_SIZE);
+     x1600_add_stub(sysmem, "x1600-uart3",    X1600_UART3_BASE,   X1600_UART_SIZE);
+     x1600_add_stub(sysmem, "x1600-pdma",     X1600_PDMA_BASE,    0x10000);
+-    x1600_add_stub(sysmem, "x1600-msc0",     X1600_MSC0_BASE,    0x10000);
++    x1600_add_stub(sysmem, "x1600-msc0",     X1600_MSC0_BASE,    X1600_MSC_SIZE);
++    x1600_add_stub(sysmem, "x1600-msc1",     X1600_MSC1_BASE,    X1600_MSC_SIZE);
++    x1600_add_stub(sysmem, "x1600-sadc",     X1600_SADC_BASE,    X1600_SADC_SIZE);
+     x1600_add_stub(sysmem, "x1600-usbphy",   X1600_USBPHY_BASE,  0x1000);
++    x1600_add_stub(sysmem, "x1600-i2c0",     X1600_I2C0_BASE,    X1600_I2C_SIZE);
++    x1600_add_stub(sysmem, "x1600-i2c1",     X1600_I2C1_BASE,    X1600_I2C_SIZE);
++    x1600_add_stub(sysmem, "x1600-i2c2",     X1600_I2C2_BASE,    X1600_I2C_SIZE);
++    x1600_add_stub(sysmem, "x1600-aic",      X1600_AIC_BASE,     X1600_AIC_SIZE);
+ 
+     /* SFC + SPI-NAND (M2): command engine backed by the raw page+OOB
+      * image next to the kernel (built by tools/tierc/make_nand_image.py);
+-- 
+2.53.0
+

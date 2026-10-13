@@ -1,0 +1,283 @@
+From e282fd96d41709cbac14e7312e45f9cf3c725ed1 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Tue, 13 Oct 2026 15:11:06 +0900
+Subject: [PATCH 5/5] =?UTF-8?q?x1600:=20msc0/msc1=20host=20models=20?=
+ =?UTF-8?q?=E2=80=94=20SDIO=20wifi=20card=20on=20msc0=20(BCM43438:=20CMD5/?=
+ =?UTF-8?q?CMD3/CMD7/13/52),=20empty=20TF=20slot=20on=20msc1?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ hw/mips/x1600.c | 247 +++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 245 insertions(+), 2 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 9128c06..d0bb010 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -337,6 +337,243 @@ static const MemoryRegionOps x1600_cgu_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* ----------------------------------------------------------------- */
++/* MSC (MMC/SD/SDIO host, jzmmc_v12 layout — register defines cross-   */
++/* checked against the Ingenic X1000 SDK's drivers/mmc/host/jzmmc_v12  */
++/* and the driver's own MMIO trace in the v0.63 unimp capture).        */
++/* Two instances: msc0 @0x13450000 (INTC line 37) = THE WIFI: an SDIO  */
++/* card is present (BCM43438/AP6212 per the rootfs firmware            */
++/* fw_bcm43438a1.bin + nvram_ap6212a.txt; vendor 0x02d0 device 0xa9a6).*/
++/* msc0 is rm_method=manual — the DHD's wifi_platform_bus_enumerate    */
++/* triggers jzmmc_manual_detect(0) synchronously, so the card must sit */
++/* here. msc1 @0x13460000 (INTC line 36) = the TF slot, rm_method=     */
++/* removable with CD PB22 — empty: commands complete FAST with         */
++/* STAT_TIME_OUT_RES so scans fail cleanly. (The v0.63 cascade came    */
++/* from the wifi card being absent entirely; with it enumerating,      */
++/* dhd_module_init loads instead of leaving a dangling device.)        */
++/* Completion protocol: synchronous (emulated HW is infinitely fast) — */
++/* on CTRL_START_OP the command executes against the card model, STAT  */
++/* gets END_CMD_RES (+ TIME_OUT_RES when no card), RES holds the       */
++/* response, IFLG latches the sources, and the INTC line asserts while */
++/* (IFLG & ~IMASK) != 0 (IMASK bit set = masked).                      */
++/* ----------------------------------------------------------------- */
++
++#define MSC_CTRL       0x00
++#define MSC_STAT       0x04
++#define MSC_CLKRT      0x08
++#define MSC_CMDAT      0x0c
++#define MSC_RESTO      0x10
++#define MSC_RDTO       0x14
++#define MSC_BLKLEN     0x18
++#define MSC_NOB        0x1c
++#define MSC_SNOB       0x20
++#define MSC_IMASK      0x24
++#define MSC_IFLG       0x28
++#define MSC_CMD        0x2c
++#define MSC_ARG        0x30
++#define MSC_RES        0x34
++#define MSC_LPM        0x40
++#define MSC_DMAC       0x44
++
++#define CTRL_START_OP  (1u << 2)
++#define CTRL_RESET     (1u << 3)
++
++#define STAT_END_CMD_RES    (1u << 11)
++#define STAT_CLK_EN         (1u << 8)
++#define STAT_TIME_OUT_RES   (1u << 1)
++
++#define CMDAT_RESPONSE_MASK 7u
++#define CMDAT_BUS_WIDTH_SHF 9
++
++#define IMASK_END_CMD_RES   (1u << 2)
++#define IMASK_TIME_OUT_RES  (1u << 9)
++
++#define IFLG_END_CMD_RES    (1u << 2)
++#define IFLG_TIME_OUT_RES   (1u << 9)
++
++typedef struct X1600Msc {
++    MemoryRegion mmio;
++    qemu_irq irq;
++    bool sdio_card;             /* SDIO wifi present (msc1) */
++    uint32_t regs[0x100 / 4];
++    uint16_t rca;
++    uint8_t cccr[0x1000];       /* func0 space: CCCR 0x00-0xff, FBRs,
++                                 * common CIS at 0x1000 */
++} X1600Msc;
++
++static X1600Msc x1600_msc_devs[2];
++
++static void x1600_msc_update_irq(X1600Msc *s)
++{
++    uint32_t pending = s->regs[MSC_IFLG / 4] & ~s->regs[MSC_IMASK / 4];
++
++    qemu_set_irq(s->irq, pending != 0);
++}
++
++/* CMD52 IO_RW_DIRECT: arg = {rw(31), func(28:26), raw(27), addr(25:9),
++ * data(7:0)}; R5 response = {data(15:8), flags(7:0)}. */
++static uint32_t x1600_msc_cmd52(X1600Msc *s, uint32_t arg)
++{
++    unsigned func = (arg >> 26) & 7;
++    unsigned addr = (arg >> 9) & 0x1ffff;
++    bool write = (arg >> 31) & 1;
++    uint8_t data = arg & 0xff;
++    uint8_t *space = NULL;
++
++    if (func == 0 && addr < sizeof(s->cccr)) {
++        space = s->cccr + addr;
++    } else if (func == 0) {
++        static const uint8_t cis[] = {
++            0x20, 0x04, 0xd0, 0x02, 0xa6, 0xa9, /* CISTPL_MANFID */
++            0x21, 0x02, 0x00, 0x00,             /* CISTPL_FUNCID */
++            0xff,                               /* CISTPL_END */
++        };
++        if (addr - 0x1000 < sizeof(cis)) {
++            return (uint32_t)cis[addr - 0x1000] << 8;
++        }
++        return 0;
++    } else {
++        return 0;
++    }
++    if (write) {
++        *space = data;
++    }
++    return (uint32_t)*space << 8;
++}
++
++static void x1600_msc_command(X1600Msc *s)
++{
++    uint32_t op = s->regs[MSC_CMD / 4] & 0x3f;
++    uint32_t arg = s->regs[MSC_ARG / 4];
++    uint32_t res = 0;
++    bool timeout = false;
++
++    if (!s->sdio_card) {
++        timeout = true;                 /* nothing inserted: response timeout */
++    } else {
++        switch (op) {
++        case 0:                         /* GO_IDLE */
++            break;
++        case 5:                         /* CMD5 IO_SEND_OP_COND (R4) */
++            /* card's own OCR: ready (bit31), 1 IO function (bits30:28),
++             * and the FULL 1.65-3.6V window (bits 7-23) — the host's
++             * ocr_avail is derived from the mscX_voltage_min/max module
++             * params (1800-3300mV here) and must intersect the card's
++             * window or mmc_select_voltage bails with "no support for
++             * card's volts" (-EINVAL, v0.64 boot13) */
++            res = 0x90000000u | 0x00ffff80u | (arg & 0x00ffff80u);
++            break;
++        case 3:                         /* CMD3 SET_RELATIVE_ADDR (R6) */
++            s->rca = 1;
++            res = (uint32_t)s->rca << 16;
++            break;
++        case 7:                         /* CMD7 SELECT (R1b) */
++        case 13:                        /* CMD13 SEND_STATUS (R1) */
++            res = 0x00003000u;          /* card state = tran */
++            break;
++        case 52:                        /* CMD52 IO_RW_DIRECT (R5) */
++            res = x1600_msc_cmd52(s, arg);
++            break;
++        case 53:                        /* CMD53: data path, later */
++        default:
++            timeout = true;
++            break;
++        }
++    }
++
++    /* per-command status: stale completion bits (esp. TIME_OUT_RES from
++     * an earlier no-card scan) must not leak into the next command — the
++     * driver turns STAT_TIME_OUT_RES into cmd->error = -ETIMEDOUT, which
++     * reset-looped the whole SDIO enumeration */
++    s->regs[MSC_STAT / 4] &= ~(STAT_END_CMD_RES | STAT_TIME_OUT_RES |
++                               (1u << 0) | (1u << 4) | (1u << 5));
++    s->regs[MSC_STAT / 4] |= STAT_END_CMD_RES;
++    s->regs[MSC_RES / 4] = res;
++    s->regs[MSC_IFLG / 4] |= IFLG_END_CMD_RES;
++    if (timeout) {
++        s->regs[MSC_STAT / 4] |= STAT_TIME_OUT_RES;
++        s->regs[MSC_IFLG / 4] |= IFLG_TIME_OUT_RES;
++    }
++    x1600_msc_update_irq(s);
++}
++
++static uint64_t x1600_msc_read(void *opaque, hwaddr addr, unsigned size)
++{
++    X1600Msc *s = opaque;
++    uint64_t ret = (addr < sizeof(s->regs)) ? s->regs[addr / 4] : 0;
++
++    qemu_log_mask(LOG_UNIMP, "x1600-msc read %#llx = %#llx (%s)\n",
++                  (unsigned long long)addr, (unsigned long long)ret,
++                  s->sdio_card ? "wifi" : "tf-slot");
++    return ret;
++}
++
++static void x1600_msc_write(void *opaque, hwaddr addr,
++                            uint64_t val, unsigned size)
++{
++    X1600Msc *s = opaque;
++
++    if (addr >= sizeof(s->regs)) {
++        return;
++    }
++    qemu_log_mask(LOG_UNIMP, "x1600-msc write %#llx = %#llx (%s)\n",
++                  (unsigned long long)addr, (unsigned long long)val,
++                  s->sdio_card ? "wifi" : "tf-slot");
++    if (addr == MSC_IFLG) {
++        s->regs[MSC_IFLG / 4] &= ~val;          /* write-1-clear */
++        x1600_msc_update_irq(s);
++        return;
++    }
++    s->regs[addr / 4] = val;
++    if (addr == MSC_CTRL) {
++        if (val & CTRL_START_OP) {
++            x1600_msc_command(s);
++        } else if (val & CTRL_RESET) {
++            s->regs[MSC_STAT / 4] = 0;
++            s->regs[MSC_IFLG / 4] = 0;
++        }
++        switch (val & 3) {
++        case 2:  s->regs[MSC_STAT / 4] |= STAT_CLK_EN; break;
++        case 1:  s->regs[MSC_STAT / 4] &= ~STAT_CLK_EN; break;
++        }
++        return;
++    }
++    if (addr == MSC_IMASK) {
++        x1600_msc_update_irq(s);
++    }
++}
++
++static const MemoryRegionOps x1600_msc_ops = {
++    .read = x1600_msc_read,
++    .write = x1600_msc_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
++static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
++                           int irq_line, qemu_irq intc_line)
++{
++    memset(s->cccr, 0, sizeof(s->cccr));
++    /* CCCR: rev 1.0/SDIO 1.1; 0x10-0x11 = the COMMON CIS pointer (SDIO
++     * spec — the core parses tuples from here; a wrong pointer made the
++     * tuple scan walk the whole CCCR and fail with -EINVAL, v0.64). The
++     * common CIS and the FBR1 pointer both target 0x1000. */
++    s->cccr[0x00] = 0x11;
++    s->cccr[0x10] = 0x00;               /* common CIS ptr low */
++    s->cccr[0x11] = 0x10;               /* common CIS ptr high: 0x1000 */
++    s->cccr[0x109] = 0x00;              /* FBR1 CIS ptr low */
++    s->cccr[0x10a] = 0x10;              /* mid */
++    s->cccr[0x10b] = 0x00;              /* high */
++    s->sdio_card = sdio_card;
++    s->irq = intc_line;
++    memory_region_init_io(&s->mmio, NULL, &x1600_msc_ops, s,
++                          sdio_card ? "x1600.msc1-wifi" : "x1600.msc0",
++                          0x100);
++    memory_region_add_subregion_overlap(get_system_memory(), base, &s->mmio, 0);
++    (void)irq_line;
++}
++
+ /* ----------------------------------------------------------------- */
+ /* INTC: jz4780-style interrupt controller (ingenic,ingenic-intc).    */
+ /* Two 32-line banks, stride 0x20: ISR+0x00, IMR+0x04, IMSR+0x08,     */
+@@ -1097,9 +1334,15 @@ static void x1600_mach_init(MachineState *ms)
+     x1600_add_stub(sysmem, "x1600-uart2",    X1600_UART2_BASE,   X1600_UART_SIZE);
+     x1600_add_stub(sysmem, "x1600-uart3",    X1600_UART3_BASE,   X1600_UART_SIZE);
+     x1600_add_stub(sysmem, "x1600-pdma",     X1600_PDMA_BASE,    0x10000);
+-    x1600_add_stub(sysmem, "x1600-msc0",     X1600_MSC0_BASE,    X1600_MSC_SIZE);
+-    x1600_add_stub(sysmem, "x1600-msc1",     X1600_MSC1_BASE,    X1600_MSC_SIZE);
+     x1600_add_stub(sysmem, "x1600-sadc",     X1600_SADC_BASE,    X1600_SADC_SIZE);
++    /* MSC hosts (v0.64): msc0 = SDIO wifi (BCM43438, manual detect via
++     * jzmmc_manual_detect(0) from the DHD); msc1 = TF slot, empty (fast
++     * response timeouts). IRQs on INTC lines 37/36 (stock DTB
++     * msc@0x13450000/60000 interrupts). */
++    x1600_msc_init(&x1600_msc_devs[0], true,  X1600_MSC0_BASE, 37,
++                   qdev_get_gpio_in(intc, 37));
++    x1600_msc_init(&x1600_msc_devs[1], false, X1600_MSC1_BASE, 36,
++                   qdev_get_gpio_in(intc, 36));
+     x1600_add_stub(sysmem, "x1600-usbphy",   X1600_USBPHY_BASE,  0x1000);
+     x1600_add_stub(sysmem, "x1600-i2c0",     X1600_I2C0_BASE,    X1600_I2C_SIZE);
+     x1600_add_stub(sysmem, "x1600-i2c1",     X1600_I2C1_BASE,    X1600_I2C_SIZE);
+-- 
+2.53.0
+

@@ -1,0 +1,531 @@
+From d13e78d57054dd380e40913c23d2b291ef8ab61a Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Mon, 12 Oct 2026 16:16:55 +0900
+Subject: [PATCH 1/5] hw/mips: add X1600E machine for HiBy R1 bring-up (Tier C)
+
+Local device model for booting the stock HiBy R1 v1.6 kernel
+(unmodified xImage, decompressed to vmlinux.bin) inside QEMU as the
+project's regression gate. Trace-driven: every block present is pinned
+to a stock-kernel boot stop (docs/M1-bringup-log.md in the host repo).
+
+- XBurstR2 CPU, 64 MiB DDR at 0, kernel loaded at phys 0x10000 with
+  boot PC = the real kernel_entry (0x80585c60, head.S), SPL-style fw
+  args table (argc=2, argv[1]=cmdline incl. mem=64M) at 0xA00000.
+- UART0 at 0x10030000 (regshift 2; SCR seeded 0xa9 for the early-uart
+  probe), INTC/TCU/RTC/pinctrl/UART1-3/PDMA/MSC0 zero-return stubs at
+  the stock-DTB sizes, TCSM0 as plain RAM (0x134F0000).
+- OST clockevent at 0x12000000: CPU IRQ line 4, +0x14 compare arm with
+  vendor periodic auto-reload, +0x0C ack, and a free-running 1.5 MHz
+  counter at 0x20/0x24 driven by the virtual clock (udelay/sched_clock
+  depend on it advancing).
+---
+ hw/mips/Kconfig     |   5 +
+ hw/mips/meson.build |   1 +
+ hw/mips/x1600.c     | 470 ++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 476 insertions(+)
+ create mode 100644 hw/mips/x1600.c
+
+diff --git a/hw/mips/Kconfig b/hw/mips/Kconfig
+index b59cb2f..2a7f18f 100644
+--- a/hw/mips/Kconfig
++++ b/hw/mips/Kconfig
+@@ -1,3 +1,8 @@
++config X1600
++    bool
++    default y
++    depends on MIPS
++
+ config MALTA
+     bool
+     default y
+diff --git a/hw/mips/meson.build b/hw/mips/meson.build
+index 390f0fd..1e18ca5 100644
+--- a/hw/mips/meson.build
++++ b/hw/mips/meson.build
+@@ -4,6 +4,7 @@ common_ss.add(when: 'CONFIG_FW_CFG_MIPS', if_true: files('fw_cfg.c'))
+ common_ss.add(when: 'CONFIG_LOONGSON3V', if_true: files('loongson3_bootp.c'))
+ mips_ss.add(when: 'CONFIG_LOONGSON3V', if_true: files('loongson3_virt.c'))
+ mips_ss.add(when: 'CONFIG_MALTA', if_true: files('malta.c'))
++mips_ss.add(when: 'CONFIG_X1600', if_true: files('x1600.c'))
+ mips_ss.add(when: 'CONFIG_MIPS_CPS', if_true: files('cps.c'))
+ 
+ if 'CONFIG_TCG' in config_all_accel
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+new file mode 100644
+index 0000000..9d7bb05
+--- /dev/null
++++ b/hw/mips/x1600.c
+@@ -0,0 +1,470 @@
++/* Ingenic X1600E machine model (HiBy R1) — QEMU machine skeleton.
++ *
++ * Tier C machine per docs/PLAN-TierC.md M1. Trace-driven: devices added
++ * strictly in boot-stop order. Everything present here is verified by the
++ * stock kernel binary (docs/x1600-regmap.md) and/or mainline x1000.dtsi.
++ *
++ * Verified stock-kernel facts this model implements:
++ *   - vmlinux.bin is LOADED at physical 0x00010000 (kseg0 0x80010000), the
++ *     uImage 0x80F00000 load address is where the stock uboot-style stub
++ *     decompresses FROM the ROM; the machine loads the decompressed image
++ *     directly. Boot PC = 0x80010400: code starts at vmlinux.bin file
++ *     offset 0x400 (verified disassembly, x1600-regmap.md §0).
++ *   - Early uart scan walks [0xB0030000, 0xB0034000) in 0x1000 steps and
++ *     the early print polls LSR at +0x14 with mask 0x60: regshift 2 lands
++ *     LSR at exactly 0x14 (8250 reg 5 << 2).
++ *   - Early scan probe reads +0x1c expecting 0xa9. On a stock 8250 that
++ *     offset is MSR-ish reg 7; QEMU's serial-mm returns 0 there, so the
++ *     first boot attempt will report whether the probe hits reg 7 (SCR):
++ *     if the early scan stalls with no serial output, this is the followup.
++ *
++ * Peripherals mapped: CGU 0x10000000, INTC 0x10001000 (0x50), TCU
++ * 0x10002000 (0x1000), RTC 0x10003000, pinctrl 0x10010000 (0x800), UARTs
++ * 0x1003xxxx (0x100 each; uart3 0x10033000 per stock DTB), PDMA
++ * 0x13420000, MSC0 0x13450000. Sizes follow the stock-kernel DTB (earlier
++ * verified in x1600-regmap.md §2 delta table), not the mainline dtsi.
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/units.h"
++#include "qemu/timer.h"
++#include "qapi/error.h"
++#include "hw/core/boards.h"
++#include "hw/char/serial-mm.h"
++#include "hw/char/serial.h"
++#include "hw/core/loader.h"
++#include "hw/core/qdev-clock.h"
++#include "hw/core/qdev-properties.h"
++#include "hw/core/sysbus.h"
++#include "hw/core/irq.h"
++#include "system/system.h"
++#include "system/memory.h"
++#include "system/reset.h"
++#include "target/mips/cpu.h"
++#include "qom/object.h"
++#include "qemu/error-report.h"
++#include "qemu/log.h"
++
++#define X1600_DDR_BASE     0x00000000
++#define X1600_RAM_SIZE     (64 * MiB)
++
++/* kernel layout (verified: docs/x1600-regmap.md §0 + M1 kallsyms decode) */
++#define X1600_KERNEL_PHYS  0x00010000            /* vma 0x80010000 */
++#define X1600_STUB_PHYS    0x000F0000            /* 0x80F00000: stock uImage load */
++#define X1600_STUB_PC      0x80F00000
++#define X1600_STUB_SP      0x83000000            /* inside DDR, above payload */
++/* Real kernel_entry (head.S) == 0x80585c60 == the address the stock stub's
++ * jump reg k0 held (M1-bringup-log v0.4, misread as "decompressor").
++ * The decode error behind v0.1..v0.4 boot stops: 0x80010400 is the symbol
++ * run_init_process (the end-of-boot init exec stage; its getname_kernel->
++ * kmem_cache_alloc path BUGs in cache_alloc_refill because SLAB was never
++ * initialized). Image spans [0x80010000, 0x807d414c) == __appended_dtb. */
++#define X1600_KERNEL_ENTRY 0x80585C60            /* kernel_entry (head.S) */
++
++#define X1600_CGU_BASE     0x10000000
++#define X1600_PROM_PHYS    0x00A00000            /* SPL-style fw args table;
++                            ABOVE the 8.1MB kernel image [0x10000..0x7D414C)
++                            and the bootmem bitmap [0x8FA000..0x8FA800) --
++                            0x000D0000 was inside the image: load_image
++                            overwrote the argv table (v0.10 finding) */
++#define X1600_PROM_KSEG    (X1600_PROM_PHYS|0x80000000)
++#define X1600_INTC_BASE    0x10001000
++#define X1600_INTC_SIZE    0x100
++#define X1600_TCU_BASE     0x10002000
++#define X1600_UART0_BASE   0x10030000
++#define X1600_UART1_BASE   0x10031000
++#define X1600_UART2_BASE   0x10032000
++#define X1600_UART3_BASE   0x10033000
++#define X1600_UART_SIZE    0x100
++#define X1600_RTC_BASE     0x10003000
++#define X1600_PINCTRL_BASE 0x10010000
++#define X1600_PDMA_BASE    0x13420000
++#define X1600_MSC0_BASE    0x13450000
++/* OST device: /core-ost@0x12000000 (stock DTB), ingenic,x1600-ost.
++ * The vendor clockevent is DIRECT-wired to CPU IRQ line 4 (DTB: /core-ost
++ * interrupt-parent = cpuintc, interrupts = <4>). The driver RMWs:
++ *   +0x0C write (0xfffffffe) = acknowledge (lower the IRQ line)
++ *   +0x14 write             = compare value = event delta in ticks
++ * Everything else in the 0x100 block is stored (RMW read-back works).
++ * Tick rate 1.5 MHz is what the driver itself derived (sched_clock print:
++ * "64 bits at 1500kHz"). M1-bringup-log v0.12 stop: jiffies frozen because
++ * the line-4 event never fired from an inert RAM region. */
++#define X1600_OST_BASE     0x12000000
++#define X1600_OST_SIZE     0x100
++#define X1600_OST_RATE_HZ  1500000ULL
++
++typedef struct X1600Ost {
++    MemoryRegion mmio;
++    qemu_irq irq;
++    QEMUTimer *t;
++    uint32_t regs[X1600_OST_SIZE / 4];
++    uint32_t period;    /* last +0x14 armed delta; OST compare auto-reloads
++                         * it on each match (vendor periodic semantics).
++                         * Kernel facts: clockevent registered PERIODIC
++                         * (mode=2 in ingenic_clockevent@0x808f4e80), so
++                         * tick_handle_periodic does NOT reprogram; the HW
++                         * must re-fire every period or jiffies ticks once
++                         * and calibration spins forever (v0.13 stop). */
++} X1600Ost;
++
++static X1600Ost x1600_ost_dev;
++
++static void x1600_ost_arm(X1600Ost *s, uint32_t delta);
++
++static void x1600_ost_tick(void *opaque)
++{
++    X1600Ost *s = opaque;
++
++    qemu_set_irq(s->irq, 1);
++    if (s->period) {
++        /* periodic compare auto-reload (vendor HW semantics) */
++        x1600_ost_arm(s, s->period);
++    }
++}
++
++static void x1600_ost_arm(X1600Ost *s, uint32_t delta)
++{
++    int64_t ns;
++
++    s->period = delta;              /* remember the compare reload value */
++    if (delta < 1) {
++        delta = 1;
++    }
++    ns = (int64_t)(delta * 1000000000ULL / X1600_OST_RATE_HZ);
++    timer_mod_ns(s->t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + ns);
++}
++
++/* Free-running OST counter at +0x20 (low) / +0x24 (high), 1.5 MHz per the
++ * kernel's own "sched_clock: 64 bits at 1500kHz" print. Must advance with
++ * guest virtual time: the vendor udelay/local_delay spin on it
++ * (while (counter - start < delay)), so a frozen counter parks any driver
++ * wait loop inside udelay forever (v0.16 stop: dwc2 PHY PLL poll). */
++static uint64_t x1600_ost_counter(void)
++{
++    int64_t ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++
++    return (uint64_t)ns * X1600_OST_RATE_HZ / 1000000000ULL;
++}
++
++static uint64_t x1600_ost_read(void *opaque, hwaddr addr, unsigned size)
++{
++    X1600Ost *s = opaque;
++    uint64_t ret;
++
++    if (addr == 0x20) {
++        ret = x1600_ost_counter() & 0xffffffff;
++    } else if (addr == 0x24) {
++        ret = x1600_ost_counter() >> 32;
++    } else if (addr < sizeof(s->regs)) {
++        ret = s->regs[addr / 4];
++    } else {
++        ret = 0;
++    }
++    if (addr != 0x20 && addr != 0x24) {
++        qemu_log_mask(LOG_UNIMP, "x1600-ost read %#llx = %#llx\n",
++                      (unsigned long long)addr, (unsigned long long)ret);
++    }
++    return ret;
++}
++
++static void x1600_ost_write(void *opaque, hwaddr addr,
++                            uint64_t val, unsigned size)
++{
++    X1600Ost *s = opaque;
++
++    if (addr >= sizeof(s->regs)) {
++        return;
++    }
++    s->regs[addr / 4] = val;
++    qemu_log_mask(LOG_UNIMP, "x1600-ost write %#llx = %#llx\n",
++                  (unsigned long long)addr, (unsigned long long)val);
++    if (addr == 0x0C) {
++        /* acknowledge: the driver always writes 0xfffffffe */
++        qemu_set_irq(s->irq, 0);
++    } else if (addr == 0x14) {
++        x1600_ost_arm(s, (uint32_t)val);
++    }
++}
++
++static const MemoryRegionOps x1600_ost_ops = {
++    .read = x1600_ost_read,
++    .write = x1600_ost_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
++/* TCSM0 vendor block (unsized in the stock DTB; used by plat_mem_setup +
++ * PM: tcpu_resume/tcpu_sleep/tload_func_to_tcsm park resume code and the
++ * fw-DTB pointer at +0x244 here). On silicon it is on-chip SRAM, never a
++ * bus error: modeled as plain RAM. M1-bringup-log v0.5 stop evidence. */
++#define X1600_TCSM0_BASE   0x134F0000
++#define X1600_TCSM0_SIZE   0x40000
++
++/* uart0 irq line inside the intc (x1000.dtsi: uart0 irq 51, uart1 50, uart2 49) */
++#define X1600_UART0_IRQ    51
++/* early uart scan probe reads +0x1c expecting 0xa9 (SCR; see regmap §3).
++ * QEMU serial resets SCR to 0 — the stock SPL leaves 0xa9 there before the
++ * kernel runs, and the scan falls back to putchar_dummy (silent boot) if it
++ * misses. Seed UART0's SCR after the serial device reset. v0.6 finding. */
++#define X1600_UART_PROBE_VAL 0xa9
++
++static void x1600_uart_scr_seed(void *opaque)
++{
++    SerialMM *sm = opaque;
++    SerialState *ss = SERIAL(&sm->serial);
++
++    ss->scr = X1600_UART_PROBE_VAL;
++}
++
++/* ----------------------------------------------------------------- */
++/* INTC stub: regfile that reads zero; IRQ inputs are latched only    */
++/* (real delivery comes when the boot trace demands it).             */
++/* ----------------------------------------------------------------- */
++
++#define TYPE_X1600_INTC "x1600-intc"
++OBJECT_DECLARE_SIMPLE_TYPE(X1600Intc, X1600_INTC)
++
++struct X1600Intc {
++    SysBusDevice parent_obj;
++    MemoryRegion mmio;
++    uint32_t latch;
++};
++
++static void x1600_stub_set_irq(void *opaque, int irq, int level)
++{
++    X1600Intc *s = X1600_INTC(opaque);
++
++    if (level) {
++        s->latch |= (1u << irq);
++    } else {
++        s->latch &= ~(1u << irq);
++    }
++}
++
++static uint64_t x1600_stub_read(void *opaque, hwaddr addr, unsigned size)
++{
++    /* return 0 for now; log every access so trace-driven modeling can map
++     * what the stock kernel actually reads (qemu -d unimp filters it). */
++    qemu_log_mask(LOG_UNIMP, "x1600 stub read %#x %s\n",
++                  (unsigned)addr, (const char *)opaque);
++    return 0;
++}
++
++static void x1600_stub_write(void *opaque, hwaddr addr,
++                             uint64_t val, unsigned size)
++{
++    /* latch writes so -d unimp/guest_errors still show real MMIO accs */
++}
++
++static const MemoryRegionOps x1600_stub_ops = {
++    .read = x1600_stub_read,
++    .write = x1600_stub_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++};
++
++static void x1600_intc_realize(DeviceState *dev, Error **errp)
++{
++    X1600Intc *s = X1600_INTC(dev);
++
++    memory_region_init_io(&s->mmio, OBJECT(s), &x1600_stub_ops,
++                          (gpointer)"x1600-intc", "x1600-intc", X1600_INTC_SIZE);
++    sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->mmio);
++    qdev_init_gpio_in(dev, x1600_stub_set_irq, 64);
++}
++
++static void x1600_intc_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++
++    dc->realize = x1600_intc_realize;
++}
++
++static const TypeInfo x1600_intc_info = {
++    .name = TYPE_X1600_INTC,
++    .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(X1600Intc),
++    .class_init = x1600_intc_class_init,
++};
++
++static void x1600_intc_register_types(void)
++{
++    type_register_static(&x1600_intc_info);
++}
++
++type_init(x1600_intc_register_types)
++
++/* ----------------------------------------------------------------- */
++/* machine                                                           */
++/* ----------------------------------------------------------------- */
++
++static void x1600_main_cpu_reset(void *opaque)
++{
++    MIPSCPU *cpu = opaque;
++    CPUMIPSState *env = &cpu->env;
++
++    cpu_reset(CPU(cpu));
++
++    /* REAL BOOT (v0.5+): PC = kernel_entry (head.S), 0x80585c60 — the
++     * stock stub's own jump target. head.S does CP0 status setup, checks
++     * the UHI DTB slot (__appended_dtb; zero in our image -> builtin
++     * __dtb_start path), clears .bss [0x808e0000..0x808f9b10), stashes
++     * a0..a3 into fw_arg0..3 globals (0x808e2360..0x808e2354) and sets
++     * its own stack (kernelsp 0x8075ff28) before start_kernel. We only
++     * seed PC + the SPL-style fw args.
++     * See docs/M1-bringup-log.md v0.5 for the kallsyms decode evidence. */
++    env->active_tc.PC = X1600_KERNEL_ENTRY;
++    env->active_tc.gpr[29] = 0x80F00000;
++    /* SPL-style fw args: argc=1, argv=table, envp=NULL, reserve=NULL */
++    /* PROM layout (phys 0x000D0000): +0 argv table {str,0}, +8 envp table
++     * {0}, +0x10 cmdline string. a1 = argv TABLE, a2 = envp TABLE. */
++    env->active_tc.gpr[4] = 2;
++    env->active_tc.gpr[5] = X1600_PROM_KSEG;         /* argv table base */
++    env->active_tc.gpr[6] = X1600_PROM_KSEG + 0xC;   /* envp table base */
++    env->active_tc.gpr[7] = 0;
++    env->CP0_Status &= ~(1 << CP0St_ERL);
++}
++
++static void x1600_add_stub(MemoryRegion *sysmem, const char *name,
++                           hwaddr base, hwaddr size)
++{
++    MemoryRegion *mr = g_new0(MemoryRegion, 1);
++
++    memory_region_init_io(mr, NULL, &x1600_stub_ops, (gpointer)name, name, size);
++    (void)base;
++    memory_region_add_subregion(sysmem, base, mr);
++}
++
++static void x1600_mach_init(MachineState *ms)
++{
++    MemoryRegion *sysmem = get_system_memory();
++    MIPSCPU *cpu;
++    CPUMIPSState *env;
++    Clock *cpuclk;
++    DeviceState *intc;
++    qemu_irq uart0_irq;
++
++    if (!ms->kernel_filename) {
++        error_report("x1600 machine needs -kernel (unpacked/1.6/vmlinux.bin)");
++        exit(1);
++    }
++    if (!serial_hd(0)) {
++        error_report("x1600 machine needs -serial stdio (or similar)");
++        exit(1);
++    }
++
++    /* DDR. 64 MiB at physical 0; kseg0 aliases it (no further alias work) */
++    memory_region_add_subregion(sysmem, X1600_DDR_BASE, ms->ram);
++
++    cpuclk = clock_new(OBJECT(ms), "cpu-clock");
++    clock_set_hz(cpuclk, 1000000000);
++
++    cpu = mips_cpu_create_with_clock(ms->cpu_type, cpuclk,
++                                     TARGET_BIG_ENDIAN);
++    cpu_mips_irq_init_cpu(cpu);
++    cpu_mips_clock_init(cpu);
++    qemu_register_reset(x1600_main_cpu_reset, cpu);
++
++    /* INTC at 0x10001000. IRQ 51 = UART0. IRQ delivery is stubbed for now. */
++    intc = qdev_new(TYPE_X1600_INTC);
++    sysbus_realize_and_unref(SYS_BUS_DEVICE(intc), &error_fatal);
++    sysbus_mmio_map(SYS_BUS_DEVICE(intc), 0, X1600_INTC_BASE);
++    uart0_irq = qdev_get_gpio_in(intc, X1600_UART0_IRQ);
++
++    /* UART0: regshift 2 puts LSR at +0x14 per the stock early-print scan.
++     * SCR seed handler registered AFTER the serial device so it wins the
++     * reset ordering (serial reset zeroes scr; we re-plant 0xa9). */
++    {
++        SerialMM *uart0 = serial_mm_init(sysmem, X1600_UART0_BASE, 2,
++                                         uart0_irq, 230400, serial_hd(0),
++                                         DEVICE_LITTLE_ENDIAN);
++        qemu_register_reset(x1600_uart_scr_seed, uart0);
++    }
++
++    /* SoC blocks the stock kernel probes at boot (stubbed reads-as-zero,
++     * same shape as before, but sizes updated to the stock DTB values
++     * parsed from the embedded FDT: dtb.py, M1-bringup-log v0.5) */
++    x1600_add_stub(sysmem, "x1600-cgu",      X1600_CGU_BASE,     0x100);
++    x1600_add_stub(sysmem, "x1600-tcu",      X1600_TCU_BASE,     0x1000);
++    x1600_add_stub(sysmem, "x1600-rtc",      X1600_RTC_BASE,     0x4c);
++    x1600_add_stub(sysmem, "x1600-pinctrl",  X1600_PINCTRL_BASE, 0x1000);
++    x1600_add_stub(sysmem, "x1600-uart1",    X1600_UART1_BASE,   X1600_UART_SIZE);
++    x1600_add_stub(sysmem, "x1600-uart2",    X1600_UART2_BASE,   X1600_UART_SIZE);
++    x1600_add_stub(sysmem, "x1600-uart3",    X1600_UART3_BASE,   X1600_UART_SIZE);
++    x1600_add_stub(sysmem, "x1600-pdma",     X1600_PDMA_BASE,    0x10000);
++    x1600_add_stub(sysmem, "x1600-msc0",     X1600_MSC0_BASE,    0x10000);
++
++    /* RW-storage MMIO blocks the DT-boot drivers RMW (TCSM0): plain RAM
++     * region so read-back returns the stored value */
++    {
++        MemoryRegion *tcsm = g_new0(MemoryRegion, 1);
++
++        memory_region_init_ram(tcsm, NULL, "x1600.tcsm0",
++                               X1600_TCSM0_SIZE, &error_fatal);
++        memory_region_add_subregion(sysmem, X1600_TCSM0_BASE, tcsm);
++    }
++
++    /* OST clockevent: IRQ straight into the CPU's line 4 (cpuintc <4>) */
++    {
++        X1600Ost *ost = &x1600_ost_dev;
++
++        ost->irq = cpu->env.irq[4];
++        ost->t = timer_new_ns(QEMU_CLOCK_VIRTUAL, x1600_ost_tick, ost);
++        memory_region_init_io(&ost->mmio, NULL, &x1600_ost_ops, ost,
++                              "x1600.ost", X1600_OST_SIZE);
++        memory_region_add_subregion(sysmem, X1600_OST_BASE, &ost->mmio);
++    }
++
++    /* kernel image at the stock SPL's decompressed location */
++    env = &cpu->env;
++    (void)env;
++    /* SPL/prom firmware arguments (M1-bringup-log v0.9 + decoded
++     * fw_init_cmdline): the kernel skips argv[0] as the bootloader name,
++     * so a0 = argc must be 2 with argv[1] = the command line string.
++     * argv pointers must be KSEG0 (negative as signed integers) or the
++     * fw_init_cmdline validity check zeroes them (bit31 set = "valid").
++     *   PROM+0x00 argv table {name, cmdline, 0}
++     *   PROM+0x0C envp table {0}
++     *   PROM+0x10 name "linux"
++     *   PROM+0x18 cmdline
++     *   envp must point at a NULL-terminated table, not be NULL itself. */
++    {
++        static const char argv_name[] = "linux";
++        static const char bootargs[] =
++            "console=ttyS0,115200 mem=64M initcall_debug ignore_loglevel";
++        uint32_t argv_tab[3];
++        uint32_t env_tab[1];
++
++        uint8_t *ram = memory_region_get_ram_ptr(ms->ram);
++        memcpy(ram + (X1600_PROM_PHYS - X1600_DDR_BASE) + 0x10,
++               argv_name, sizeof(argv_name));
++        memcpy(ram + (X1600_PROM_PHYS - X1600_DDR_BASE) + 0x18,
++               bootargs, sizeof(bootargs));
++        argv_tab[0] = cpu_to_le32(X1600_PROM_KSEG + 0x10);
++        argv_tab[1] = cpu_to_le32(X1600_PROM_KSEG + 0x18);
++        argv_tab[2] = 0;
++        memcpy(ram + (X1600_PROM_PHYS - X1600_DDR_BASE),
++               argv_tab, sizeof(argv_tab));
++        env_tab[0] = 0;
++        memcpy(ram + (X1600_PROM_PHYS - X1600_DDR_BASE) + 0xC,
++               env_tab, sizeof(env_tab));
++    }
++
++    if (load_image_targphys(ms->kernel_filename, X1600_KERNEL_PHYS,
++                            ms->ram_size - X1600_KERNEL_PHYS, &error_fatal) < 0) {
++        error_report("x1600: failed to load %s", ms->kernel_filename);
++        exit(1);
++    }
++}
++
++static void x1600_mach_class_init(MachineClass *mc)
++{
++    mc->desc = "Ingenic X1600E (HiBy R1)";
++    mc->init = x1600_mach_init;
++    mc->default_ram_size = X1600_RAM_SIZE;
++    mc->default_ram_id = "x1600.ddr0";
++    mc->default_cpu_type = MIPS_CPU_TYPE_NAME("XBurstR2");
++    mc->max_cpus = 1;
++}
++
++DEFINE_MACHINE("x1600", x1600_mach_class_init)
+-- 
+2.53.0
+
