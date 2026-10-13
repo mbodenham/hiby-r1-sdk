@@ -1,6 +1,6 @@
 # Tier C Plan — QEMU X1600 full-system emulation (v1.1)
 
-STATUS (2026-10-12, after the third bring-up session):
+STATUS (2026-10-13, after the M2 bring-up session):
 
 - **M0: DONE.** QEMU builds in-repo (mipsel-softmmu), `X1600` machine type
   registered, `XBurstR2` from upstream, regmap verified disassembly-wise
@@ -22,16 +22,27 @@ STATUS (2026-10-12, after the third bring-up session):
   on any pending interrupt; QEMU only woke on takeable interrupts.
   v0.21–v0.23: USB-PHY-bank (0x10078000), SFC (0x13440000), and
   UART0-extension stubs — each pinned by its bus error.
-- **Boot state now (v0.23):** end of kernel init, VFS root-mount
-  panic. Device model surface: DDR, TCSM0 RAM, OST clockevent (IRQ
-  line 4, periodic), 16550 UART0 + ext stub, persistent stubs: CGU,
-  TCU, RTC, pinctrl, UART1-3, PDMA, MSC0, USB-PHY bank, SFC, INTC
-  (latching, undelivered). M2 starts here: mtd + SFC/NAND backend
-  (ingenic_sfc_v2 SPI-NAND protocol: READ ID / GET-SET FEATURE / page
-  reads), QEMU nand image from the stock flash layout, `root=` on the
-  SPL cmdline. M2 entry evidence in M1-bringup-log v0.22/v0.23.
+- **M2: CORE DONE — rootfs mounts from emulated SPI-NAND (v0.34).**
+  Built the `ingenic_sfc_v2` SFC + SPI-NAND model (CDT command engine,
+  FIFO + DMA-descriptor transfers, GD5F1GQ4UC chip, in-flash partition
+  table at NAND 0x5800), a real INTC (IRQ delivery to CPU line 2), an RTC
+  write-protocol model, and a CGU PLL-lock model — each pinned by a boot
+  symptom. `VFS: Mounted root (squashfs) readonly on device 50:2`, then
+  devtmpfs and the rcS module-load chain (~14 `soc_*` modules).
+- **Boot state now (v0.62):** rcS module loading, **parked in the
+  `soc_msc` (SD card) probe** — it sleeps after clock + GPIO/pinctrl
+  setup, before any MSC MMIO, waiting on a card-detect/MSC event the
+  inert MSC stub never raises (guest frozen ~3.5 s). Non-fatal module
+  oopses on unmapped I2C (0x10050000) + AIC (0x10079000) stubs.
+  Device model surface now: DDR, TCSM0, OST clockevent (line 4), 16550
+  UART0 + ext, SFC+SPI-NAND (line 7), real INTC (→CPU line 2), RTC
+  (write-protocol), CGU (PLL-lock), persistent stubs: TCU, pinctrl,
+  UART1-3, PDMA, MSC0/1, USB-PHY bank.
+- **Next (M2 exit):** model the MSC controller's no-card path so the
+  probe completes (rcS → `mount_ubifs` → theme → `S92_03_start_music_
+  player`); add I2C + AIC stubs to clear the module oopses.
 - Boot evidence, register dumps, and every boot-stop decode live in
-  docs/M1-bringup-log.md (v0.1 through v0.23).
+  docs/M1-bringup-log.md (v0.1 through v0.62, incl. the M2 section).
 
 Goal: **boot the byte-identical stock firmware (v1.6 **unmodified** xImage +
 rootfs.squashfs) inside QEMU to the player's first UI frame, using it as the
@@ -162,18 +173,21 @@ Exit MET (v0.23): kernel boots to the end of init and panics on the
 named M2 block (`VFS: Cannot open root device "(null)"`, zero MTD
 partitions) — exactly the queued M2 task.
 
-### M2 — rootfs reachable at the stock layout *(~1–3 days after M1)*
+### M2 — rootfs reachable at the stock layout *(core DONE v0.34)*
 Tasks:
-- [ ] mtd + SFC/NAND backend: a QEMU nand image built from
-      `unpacked/1.6/rootfs.squashfs` + a stub data partition, layout
-      mapped to the stock `/proc/mtd` shape (kernel-computed).
-- [ ] Verify: `cat /proc/mtd` matches the device's; rcS reaches
-      `S92_03_start_music_player` without a different boot shape.
-- [ ] Add the boot-selection mtd-5 model (theme id + `ota:kernel` state)
-      so theme/boot changes are testable in-guest.
+- [x] mtd + SFC/NAND backend: SFC controller + SPI-NAND model (CDT
+      engine, FIFO/DMA, GD5F1GQ4UC) + `nand-r1.bin` image (stock
+      `/proc/mtd` shape, in-flash partition table at 0x5800) + INTC/RTC/
+      CGU models. **Rootfs mounts (squashfs, device 50:2).**
+- [ ] Verify: rcS reaches `S92_03_start_music_player` without a
+      different boot shape. *(BLOCKED: soc_msc probe parks before any
+      MSC MMIO — needs the MSC no-card path modelled.)*
+- [x] Boot-selection mtd-5 "ota" partition modelled in the image
+      (`ota:kernel` flag + theme id at +0x20000), so theme/boot state is
+      present in-guest.
 
-Exit: rootfs mounts; `/etc/init.d/rcS` chain runs to the player's
-attempt; the boot process is identical to flashing stock (the goal).
+Exit: rootfs mounts (DONE); `/etc/init.d/rcS` chain runs to the player's
+attempt (PENDING — soc_msc blocker); boot identical to flashing stock.
 
 ### M3 — player UI runs *(~1–2 weeks)*
 Tasks — driven by the device-contract list, not speculation:

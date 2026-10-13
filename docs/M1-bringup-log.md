@@ -517,3 +517,102 @@ backend + root= bootarg. M2 entry facts from v0.22/v0.23 evidence:
 Session notes: a `-d unimp` run at this stage produces ~100M log lines
 in 300 s (3.4 GB — mostly UART-ext/RTC/OST noise); unimp logging is
 now for SHORT captures only.
+
+---
+
+# M2 — rootfs at the stock layout (QEMU X1600E)
+
+M2 opens where M1 ended: the VFS root-mount panic with zero MTD
+partitions. The work below takes the kernel from that panic to a
+**mounted squashfs rootfs read from an emulated SPI-NAND**, then through
+`devtmpfs` and the rcS module-load chain, where it parks in the
+`soc_msc` (SD card) driver.
+
+## The SFC controller + SPI-NAND model (v0.24–v0.34)
+
+The stock `ingenic_sfc_v2` driver (`ingenic_sfc_nand.c`) talks to the
+SFC at 0x13440000 via a **Command Descriptor Table (CDT)**: 16-byte
+command entries at reg 0x800+, a transfer configured through reg 0x7c
+(CDT index + mode bits), params at 0x80–0x8c, length at 0x2c, started by
+`0x64 |= 1`. Completion is an IRQ (INTC line 7) whose handler
+(`ingenic_sfc_pio_irq_callback`) moves bytes between a guest buffer and
+the PIO FIFO at reg 0x1000, then the DONE bit (0x68 bit4) →
+`complete()`. Page reads/writes additionally use a **DMA descriptor
+chain** (reg 0x90) of `{next, data_phys, len, more}`.
+
+Register names came from the driver's own `dump_sfc_debug` (the vendor
+prints SFC_GLB0/DEV_CONF/…/ROW_ADDR/COL_ADDR/… on timeout) — a reliable
+map: **ROW_ADDR = 0x84, COL_ADDR = 0x80** (initially swapped; v0.28).
+
+Key model facts, each pinned by a boot symptom:
+- **Chip ID** READ ID (0x9F) → `GD5F1GQ4UC` (mfg 0xC8, dev 0xD1). The
+  driver's table match printed `Found Supported device, id_manufactory =
+  0xc8, id_device = 0xd1` on first try.
+- **Descriptor base (0x90) is a guest VIRTUAL address** (`desc_va +
+  0x80000000`). For a kseg1-aliased buffer it reduces to
+  `phys = 0x90 − 0x20000000`. Reading 0x90 directly as bus address failed
+  (DECODE_ERROR, ~545 MB out of 64 MB RAM); the kseg1 offset made the
+  BBT scan read real OOB (all 0xFF → zero bad blocks).
+- **In-flash partition table**, not cmdline: the vendor driver reads a
+  table at NAND byte **0x5800** (driver default when DTB has no
+  partition-offset) — header `{u32 magic 'nand' (LE), u32 count}` then
+  48-byte entries `{char name[32], u32 size @0x20, u32 offset @0x24,
+  u32 flags @0x28}`. Without it the probe prints
+  `NOTICE: this flash haven't param` and `read partition from flash
+  failed!` and registers NO mtd (cmdline `mtdparts=` is ignored by this
+  driver). The table is now written by the image builder.
+- Backing store: a raw **page+OOB image** (`nand-r1.bin`, 2112 B/page,
+  64 pages/block, 1024 blocks = 128 MiB data + OOB), mmap'd next to the
+  kernel. OOB synthesized 0xFF (no bad blocks).
+
+**v0.34 — M2 CORE ACHIEVED:** `VFS: Mounted root (squashfs filesystem)
+readonly on device 50:2.` (mtdblock_bbt_ro, rootfs partition). Boot then
+mounts devtmpfs and enters the rcS module-load chain.
+
+## The rcS module chain + the three model gaps it exposed (v0.53–v0.62)
+
+rcS loads ~14 `soc_*` modules via `/module_driver/*.sh` (plain-text
+`insmod <mod.ko> <params>` — per libra, "the DTS in plain text").
+Three model gaps surfaced, each fixed:
+
+1. **RTC write-protocol storm (v0.53).** The vendor `ingenic_rtc_writel`
+   polls `+0x00` bit7 (write-ready) and, after writing the 0xa55a key to
+   `+0x3c`, polls `+0x3c` bit31 (write-accepted). The plain stub returned
+   0 for both → every poll timed out → the RTC set-time retry loop spun
+   the CPU in a `+0x3c` read storm, starving the `soc_msc` insmod thread
+   (boot appeared frozen at msc_init with ~100k RTC reads). Fix: RTC
+   model returns write-ready/accepted so writes complete.
+2. **CGU PLL-lock poll (v0.59).** The clock framework's `clk_set_rate`
+   (for the MSC clock) programs the PLL (CGU 0x7c/0x60) then polls
+   `+0x2c` for lock. The all-zero stub never locked → unbounded retry.
+   Fix: CGU model returns all-locked at `+0x2c`.
+3. **soc_msc probe park (v0.60+, OPEN).** After the clock + GPIO/pinctrl
+   setup, the MSC probe **sleeps** (CPU idle, guest frozen at ~3.5 s)
+   BEFORE any MSC (0x13450000/0x13460000) MMIO. It is not a register
+   poll (no MMIO storm) — it waits on an MSC event (card-detect IRQ /
+   completion) that the inert MSC stub never raises. This is the current
+   blocker to rcS reaching the player.
+
+Non-fatal module oopses (insmod continues past each): `soc_i2c`
+(`jz_i2c_hal_disable_smb`, I2C 0x10050000 unmapped) and `soc_aic`
+(`aic_hal_init`, AIC 0x10079000 unmapped). Both are simply missing stubs.
+
+## NAND image + partition layout (tools/tierc/make_nand_image.py)
+
+Layout mirrors the live device's `/proc/mtd` (libra BACKLOG, live read):
+`uboot(2M) kernel(5M) rootfs(40M) kernel2(5M) rootfs2(40M) ota(512K)
+userdata(rest)` over 128 MiB. The image places `xImage` in both kernel
+slots, `rootfs.squashfs` in both rootfs slots, the `ota:kernel` flag +
+theme at the ota partition, and the in-flash partition table at 0x5800.
+Everything else erased (0xFF).
+
+## Next (to reach the M2 exit)
+
+1. **Model the MSC controller** (0x13450000 msc0, 0x13460000 msc1)
+   enough for the probe's no-card path to complete: the card-detect /
+   state-machine event the probe waits on. `soc_msc.sh` configures msc1
+   with `cd=PB22 cd-inverted, pwr=PC25, bus_width=4`.
+2. Add I2C (0x10050000) + AIC (0x10079000) stubs to clear the module
+   oopses (cosmetic; boot already continues past them).
+3. Then rcS should run `mount_ubifs.sh` (userdata), the theme, and
+   `S92_03_start_music_player` — the M2 exit.
