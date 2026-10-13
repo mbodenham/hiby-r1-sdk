@@ -270,9 +270,10 @@ loading clean suggests it works). The original 1–2 week estimate
 predates velocity data; SFC (hardest model so far) took ~1 day.
 
 ### M4 — continuous regression gate *(ongoing)*
-- [ ] `tools/x1600-boot-test.sh` — boot VM with timeout, capture the
+- [x] `tools/x1600-boot-test.sh` — boot VM with timeout, capture the
       dmesg window, diff against the recorded per-version baseline;
       fail on earlycon mismatch. Runs on every firmware repackage.
+      (Baseline for the v0.65 machine state: docs/traces/boot-baseline-v0.65.txt)
 - [ ] Later: DVFS/CPM adjustments, battery/USB-mode testing, timing
       profiling — unlockable now that the VM reproduces the boot
       exactly.
