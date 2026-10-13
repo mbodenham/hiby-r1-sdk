@@ -15,7 +15,7 @@ stock kernel and rootfs.
 Working firmware: **stock v1.6** (`1.6/r1.upt`). See
 [`docs/RESEARCH_NOTES.md`](docs/RESEARCH_NOTES.md) for verified facts about
 the image format and OS internals, and
-[`docs/PLAN-TierC.md`](docs/PLAN-TierC.md) for the emulation bring-up.
+[`docs/PLAN.md`](docs/PLAN.md) for the emulation bring-up.
 
 The output firmware will live in a separate repo.
 
@@ -27,7 +27,7 @@ specs.md                          device + chip specs (from hiby.com)
 X1600_E+Data+Sheet.pdf            Ingenic X1600E datasheet
 docs/
   RESEARCH_NOTES.md               RE notes on the firmware format and OS
-  PLAN-TierC.md                   QEMU X1600 bring-up plan and status
+  PLAN.md                         QEMU X1600 bring-up plan and status
   M1-bringup-log.md               M1+M2 boot bring-up log (trace-driven)
   x1600-regmap.md                 verified register map
   regmap/                         DTB sources
@@ -40,7 +40,7 @@ tools/
   qrun.sh                         qemu-user runner for a single binary
   fb-viewer.py                    watch /dev/fb0 from the sandbox
   shim/                           MIPS32r2 LD_PRELOAD shim source
-  tierc/                          cross-compile smoke test (hello.mipsel) +
+  x1600/                          cross-compile smoke test (hello.mipsel) +
                                   make_nand_image.py (emulated flash image)
   vendors/                        cross toolchains (gitignored)
 ```
@@ -64,13 +64,13 @@ tools/
 
 A static `mipsel-linux-musl-` toolchain is expected under
 `tools/vendors/mipsel-linux-musl-cross/`. The smoke test in
-[`tools/tierc/`](tools/tierc/) confirms the toolchain produces
+[`tools/x1600/`](tools/x1600/) confirms the toolchain produces
 `mips32r2` ELF binaries compatible with the runtime in `tools/shim/`.
 
 ## Emulation
 
 QEMU support for the X1600 is being built **in-tree** here, not as an
-upstream QEMU patch. See [`docs/PLAN-TierC.md`](docs/PLAN-TierC.md) for the
+upstream QEMU patch. See [`docs/PLAN.md`](docs/PLAN.md) for the
 milestone breakdown and current status. Goal: boot the unmodified stock
 firmware to the first player UI frame as the regression gate for firmware
 changes.

@@ -137,7 +137,7 @@ unicorn code. Tier plan:
   session: M0/M1 done; M2 core done — the stock kernel boots, rootfs
   mounts from the emulated SPI-NAND (stock partition layout), rcS loads
   ~14 modules and parks in the soc_msc (SD card) probe. Authoritative
-  state: `docs/PLAN-TierC.md` + `docs/M1-bringup-log.md`.
+  state: `docs/PLAN.md` + `docs/M1-bringup-log.md`.
 
 qemu-user observations: player loads all libs through the -L prefix, probes
 fb0 → input → sa-config → efuse → mtd5, then exits by SIGBUS under qemu

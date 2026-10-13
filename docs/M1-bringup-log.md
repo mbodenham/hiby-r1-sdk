@@ -9,7 +9,7 @@ Status: **M2 — the stock kernel boots, rootfs (squashfs) mounts from
 the emulated SPI-NAND, and the rcS module chain runs ~14 modules before
 parking in the `soc_msc` (SD card) probe, which sleeps waiting on a
 card-detect event the stub MSC never raises (see the M2 section below +
-`docs/PLAN-TierC.md`).** All M1 milestones — real head, UART earlycon,
+`docs/PLAN.md`).** All M1 milestones — real head, UART earlycon,
 OST tick, XBurstR2 idle-wake (Config7.WII), full initcall sequence —
 are done; this file is the running bring-up log (v0.1 → v0.62).
 Sections v0.1–v0.4 used the WRONG entry point (0x80010400 =
@@ -597,7 +597,7 @@ Non-fatal module oopses (insmod continues past each): `soc_i2c`
 (`jz_i2c_hal_disable_smb`, I2C 0x10050000 unmapped) and `soc_aic`
 (`aic_hal_init`, AIC 0x10079000 unmapped). Both are simply missing stubs.
 
-## NAND image + partition layout (tools/tierc/make_nand_image.py)
+## NAND image + partition layout (tools/x1600/make_nand_image.py)
 
 Layout mirrors the live device's `/proc/mtd` (libra BACKLOG, live read):
 `uboot(2M) kernel(5M) rootfs(40M) kernel2(5M) rootfs2(40M) ota(512K)

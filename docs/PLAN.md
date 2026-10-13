@@ -1,4 +1,4 @@
-# Tier C Plan — QEMU X1600 full-system emulation (v1.1)
+# Plan — QEMU X1600 full-system emulation (v1.1)
 
 STATUS (2026-10-13, after the M2 bring-up session):
 
@@ -70,7 +70,7 @@ against the stock kernel's disassembly in M0.3 and the regmap doc is done.
 "ingenic qemu" return zero device-model repos; the ecosystem has U-Boot trees
 (gtxaspec/ingenic-u-boot-xburst1+2, Ingenic-community/uboot-xburst), kernel
 trees (XBurst/Linux-XBurst, mainline jz4780/x1000 DTS), even official sources
-(IngenicSemiconductor/XBOMX), but no QEMU machine. Tier C is greenfield for
+(IngenicSemiconductor/XBOMX), but no QEMU machine. The plan is greenfield for
 the device models — nothing to fork, nothing to duplicate. Reference shape for
 the machine skeleton: any SoC machine model with a small MMIO region +
 ram-intc (e.g. hw/mips/malta.c structure, trimmed).
@@ -95,7 +95,7 @@ ram-intc (e.g. hw/mips/malta.c structure, trimmed).
   codeberg mirror) — custom-firmware builds; a possible kernel-rebuild recipe
   to mine if the vendor kernel won't boot in QEMU unmodified.
 
-None of these touch QEMU/Tier C: no duplicated work to avoid; the delta our
+None of these touch QEMU or this plan: no duplicated work to avoid; the delta our
 plan adds (emulation as a regression gate) is unique in the ecosystem.
 
 ## 0. Breakthrough that reshapes the plan (verified)
@@ -246,7 +246,7 @@ loading clean suggests it works). The original 1–2 week estimate
 predates velocity data; SFC (hardest model so far) took ~1 day.
 
 ### M4 — continuous regression gate *(ongoing)*
-- [ ] `tools/tierc-boot-test.sh` — boot VM with timeout, capture the
+- [ ] `tools/x1600-boot-test.sh` — boot VM with timeout, capture the
       dmesg window, diff against the recorded per-version baseline;
       fail on earlycon mismatch. Runs on every firmware repackage.
 - [ ] Later: DVFS/CPM adjustments, battery/USB-mode testing, timing
@@ -280,7 +280,7 @@ predates velocity data; SFC (hardest model so far) took ~1 day.
 
 ## 5. Decisions locked in this document
 
-- Tier C is the project's regression approach; Tier B remains the
+- The plan is the project's regression approach; Tier B remains the
   config-only sandbox (not for kernel work; hazmat for the kernel = off).
 - The mk of "stock binary" is the same as Tier B's: unmodified
   firmware bytes only (the whole premise of the firmware being under

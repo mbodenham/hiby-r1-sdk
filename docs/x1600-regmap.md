@@ -147,7 +147,7 @@ Machine-level caution for M1 (CPU side): early boot uses KSEG1 access
 (`0xB0xxxxxx`) for its pre-MMU code (pinctrl/uart blocks); single core
 (no SMP strings found: `cpu@0` only, boot_cpuid=0).
 
-## 4. M0 build / M1 hand-off notes (session-specific, per PLAN-TierC M0)
+## 4. M0 build / M1 hand-off notes (session-specific, per the plan's M0)
 
 - QEMU built in-tree: see session report (mipsel-softmmu + mipsel-linux-user,
   rev 615ece3 at `tools/vendors/qemu`); `qemu-system-mipsel` `-machine help`

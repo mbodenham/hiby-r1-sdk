@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Build nand-r1.bin — the HiBy R1 SPI-NAND backing image for the QEMU
-x1600 SFC model (Tier C, M2).
+x1600 SFC model (M2).
 
 Layout: raw page+OOB stream, 2112 B/page (2048 data + 64 OOB), 64
 pages/block, 1024 blocks = 128 MiB data. Everything erased (0xFF) except
