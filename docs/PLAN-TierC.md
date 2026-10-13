@@ -174,39 +174,76 @@ named M2 block (`VFS: Cannot open root device "(null)"`, zero MTD
 partitions) — exactly the queued M2 task.
 
 ### M2 — rootfs reachable at the stock layout *(core DONE v0.34)*
-Tasks:
+Done:
 - [x] mtd + SFC/NAND backend: SFC controller + SPI-NAND model (CDT
       engine, FIFO/DMA, GD5F1GQ4UC) + `nand-r1.bin` image (stock
       `/proc/mtd` shape, in-flash partition table at 0x5800) + INTC/RTC/
       CGU models. **Rootfs mounts (squashfs, device 50:2).**
-- [ ] Verify: rcS reaches `S92_03_start_music_player` without a
-      different boot shape. *(BLOCKED: soc_msc probe parks before any
-      MSC MMIO — needs the MSC no-card path modelled.)*
 - [x] Boot-selection mtd-5 "ota" partition modelled in the image
       (`ota:kernel` flag + theme id at +0x20000), so theme/boot state is
       present in-guest.
 
-Exit: rootfs mounts (DONE); `/etc/init.d/rcS` chain runs to the player's
-attempt (PENDING — soc_msc blocker); boot identical to flashing stock.
+Remaining — Phase 1: get rcS past the modules to the player launch
+*(~1–2 days at current pace; each step verify-then-next, trace-driven)*:
+- [ ] **1. MSC no-card path** (blocks everything — rcS runs
+      `insmod soc_msc` synchronously):
+  - first one gdb session to pin the exact parked frame in
+    `mmc_ingenic_probe` (sleeps after clock+GPIO setup, pre-MMIO —
+    likely a card-detect completion/timer)
+  - model: MSC regs 0x13450000/0x13460000 report "no card" (CD status
+    per `msc1_cd=PB22 cd-inverted`), CD IRQ lines 36/37 quiescent
+  - *verify: `msc_init returned`, next module loads*
+- [ ] **2. I2C controller** (0x10050000) — the keystone; one model
+      unblocks five modules (soc_i2c oops, axp2101, cw2015, codec,
+      LCD, touch):
+  - register map from the soc_i2c disasm (its oops already half-decodes
+    it)
+  - first slave: **axp2101 PMIC @0x34** — battery voltage/status/charge
+    with plausible values
+  - *verify: soc_i2c + axp2101 load clean, battery nodes serve values*
+- [ ] **3. AIC stub** (0x10079000, persistent regfile) — clears the
+      second oops; sa-config registers, audio degrades gracefully later
+- [ ] **4. EFUSE stub** — `/proc/jz/efuse/efuse_chip_id` is on the
+      player's probe list; block address from DTB, serve chip ID
+- [ ] **5. UBI on erased userdata** — SFC erase/program already exist;
+      verify `ubiattach -m 6` forms an empty UBI, `/usr/data` mounts
+      (script does flash_erase + retry)
+- [ ] **6. Theme + splash** (mtd5 ota/theme already in the image)
+  - 🏁 *Milestone: `S92_03_start_music_player` execs `hiby_player`*
 
-### M3 — player UI runs *(~1–2 weeks)*
-Tasks — driven by the device-contract list, not speculation:
-- [ ] LCD: QEMU-level 480x800 RGB565 surface (mapped into the guest at
-      the fbdev base the kernel provides; the existing
-      `tools/fb-viewer.py` then shows the guest's screen unchanged).
-- [ ] Input: evdev via host keyboard (already validated at Tier B).
-- [ ] Stub set: DAC/codec (null sink), pmu (AXP2101 ack for the
-      player's probe), touch (host evdev), wifi (absent = ids show
-      missing; the player's slow path tolerates that from strace),
-      usb gadget (kernel side), `S50sys_server` file/socket stubs.
-- [ ] Boot-obsessed player path: the stock player renders a full UI
-      inside the model. This is Tier C's *actual* goal: the exact
-      artifact we need for optimisation regression testing.
+Exit (M2): rootfs mounts (DONE); rcS runs to the player's attempt;
+boot identical to flashing stock.
 
-Exit: UI renders (same window viewer as Tier B, or a device-windowed
-variant chosen for the least CI friction). No firmware bytes are
-modified. The regression gate is then: any OS change → repack → boot
-in VM → screen renders.
+### M3 — player UI runs *(~2–4 days total at current pace)*
+Phase 2 — player runs, UI visible:
+- [ ] Walk the player's known probe sequence (fb0 → input → sa-config
+      → efuse → mtd5) fixing each fault as it appears (guest oops =
+      task list, same method as M1/M2)
+- [ ] **/dev/fb0**: confirm soc_fb (already loads clean) serves a
+      framebuffer without panel init; if it needs the panel, model
+      LG35583 as an I2C write-sink (fixed init sequence)
+- [ ] **See the UI**: framebuffer is guest RAM — dump to PNG (gdb/
+      memory); optionally route LCD I2C writes as live framebuffer
+      updates for real-time view
+- [ ] Input: keyboard via GPIO (loaded); touch cst8xx I2C slave only
+      if interaction is wanted
+
+Phase 3 — sound (the one real model left):
+- [ ] **AIC + PDMA audio engine**: ALSA PCM → AIC regs → DMA →
+      CS43131 codec (I2C sink). Biggest remaining model; player is
+      expected to run without it first (strace: degrades gracefully)
+
+Exit: UI renders (viewer: QEMU fb dump → PNG, or a live windowed
+variant chosen for least CI friction). No firmware bytes are modified.
+The regression gate is then: any OS change → repack → boot in VM →
+screen renders.
+
+Ranked risks (updated with M2 velocity data): (a) MSC park being
+weirder than card-detect — killed cheaply by step 1's gdb session;
+(b) UBI-on-erased-mtd edge cases; (c) player hard-needing audio at
+startup (evidence says graceful); (d) fb0 without panel init (soc_fb
+loading clean suggests it works). The original 1–2 week estimate
+predates velocity data; SFC (hardest model so far) took ~1 day.
 
 ### M4 — continuous regression gate *(ongoing)*
 - [ ] `tools/tierc-boot-test.sh` — boot VM with timeout, capture the
