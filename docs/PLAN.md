@@ -222,15 +222,14 @@ Remaining — Phase 1: get rcS past the modules to the player launch
       CMD52/CCCR stage — decode soc_msc.ko's resp[0] handling + the
       vendor core's R5_* masks, fix the RES layout in x1600.c.
       *verify: cywdhd returns 0, no page-fault cascade, rcS proceeds*
-- [x] **3. I2C + AIC + SADC stubs** — DONE (v0.63); SADC still needs
-      minimal conversion semantics (220 ms timeout spam from a poller).
-- [ ] **4. EFUSE stub** — `/proc/jz/efuse/efuse_chip_id` is on the
-      player's probe list; soc_efuse currently returns -1. Block address
-      from DTB, serve chip ID.
+- [x] **3. I2C + AIC + SADC stubs** — DONE (v0.63); SADC minimal conversion semantics DONE (v0.67 stubs session: CFG-bit-triggered conversions + INTC 11; the 220 ms spam is gone).
+- [x] **4. EFUSE stub** — DONE (v0.67 stubs session: CGU div_ahb2=200 MHz seed
+      + 0x13540000 read-protocol stub; soc_efuse initcall 0, serves chip id).
 - [x] **5. UBI on erased userdata** — DONE (v0.63): ubi1 attaches mtd6,
       empty-device path forms the volume, UBIFS created.
-- [ ] **6. JPEG block stub 0x13050000** — the splash (cmd_jpeg_display)
-      dies on it; cheap.
+- [x] **6. JPEG block stub 0x13050000** — DONE (v0.67 stubs session: it is
+      the LCD controller; regfile + kick→EOF + INTC 31; splash oops gone;
+      AHB2 PWM 0x134c0000 stubbed too, pinned by the same session).
 - [ ] **7. Theme + splash** (mtd5 ota/theme already in the image)
   - 🏁 *Milestone: `S92_03_start_music_player` execs `hiby_player`*
 
