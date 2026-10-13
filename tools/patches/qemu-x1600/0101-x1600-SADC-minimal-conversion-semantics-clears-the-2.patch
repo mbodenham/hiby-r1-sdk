@@ -1,0 +1,185 @@
+From 9b77590c075dd6ca5e459c61e76b091f2bdae736 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Tue, 13 Oct 2026 17:13:31 +0900
+Subject: [PATCH 101/104] =?UTF-8?q?x1600:=20SADC=20minimal=20conversion=20?=
+ =?UTF-8?q?semantics=20=E2=80=94=20clears=20the=20220=20ms=20poller=20spam?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The v0.63 SADC stub (plain regfile) loaded soc_adc clean but never
+completed conversions. The boot-log spam 'adc_read_channel_value:adc
+get value timeout!' every ~220 ms is sa_sound_switch's 200 ms
+delayed_work poll (sass_debounce_time=200) plus the 2-jiffy wait
+budget inside adc_read_channel_value (soc_adc.ko 0x160) expiring
+because no SADC IRQ ever fires — the poller itself does ZERO MMIO
+(unimp trace: 28 SADC accesses per boot, all from probe/init + one
+ch3 read attempt), the wait is interrupt-only.
+
+Driver facts (soc_adc.ko, hard-coded 0xb0070000; DTB /apb/sadc
+interrupts <11> -> INTC line 11, module virq 19):
+- adc_read_channel_value: pending = 1<<ch, adc_hal_enable_channel
+  sets CFG (+0x00) bit ch and polls it until set, then waits on the
+  IRQ; adc_irq_handler reads IFLAG (+0x0c), W1Cs the flags, clears
+  pending and wakes; the waiter reads the 12-bit sample from +0x10
+  (ch0 [11:0], ch1 [27:16]) or +0x14 (ch2 [11:0], ch3 [27:16]).
+- IMASK +0x08 bits[3:0], 1 = masked (adc_hal_enable_interrupt clears
+  bits; the module init writes 0xf = mask-all, adc_enable's
+  enable_all_interrupt writes 0).
+
+Model: completion is synchronous — every write that SETS a CFG bit n
+in [3:0] runs channel n's conversion (latch 0xfff, set IFLAG bit n,
+assert INTC 11 while (IFLAG & ~IMASK) != 0). The trigger keys on the
+written bit, NOT a 0->1 edge: repeat polls rewrite the bit 1->1
+(nothing clears it) and the handler W1Cs IFLAG every pass, so an
+edge-triggered model would re-spam after the first successful read.
+Sample 0xfff: raw 4095 is outside sa_sound_switch's [2800,3300]
+headset range (state 0 = correct emulated idle), outside the
+keyboard/earpods windows (no phantom keys), passes cst8xx's <1000
+check. CFG bit15 (PEN) toggles in enable/disable_controller with
+polls for the target state — plain RMW persistence satisfies both.
+
+Verified by boot: zero 'adc get value timeout' lines in the dmesg
+window (3595 in the v0.65 baseline).
+---
+ hw/mips/x1600.c | 110 +++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 109 insertions(+), 1 deletion(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 47316e9..8e75493 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -111,6 +111,7 @@
+  * 0x10070000 (v0.63 boot) -- same leaked-mutex cascade as i2c/aic. */
+ #define X1600_SADC_BASE    0x10070000
+ #define X1600_SADC_SIZE    0x1000
++#define X1600_SADC_IRQ_LINE 11
+ /* LCD controller (0x13050000): the v0.63-v0.65 "JPEG block" -- a misnomer.
+  * cmd_jpeg_display is pure userland (libhardware2 fb ioctls on /dev/fb0,
+  * zero MMIO); the splash oops was soc_fb.ko (jzfb) bus-erroring inside
+@@ -892,6 +893,107 @@ static const MemoryRegionOps x1600_rtc_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* ----------------------------------------------------------------- */
++/* SADC (0x10070000) — minimal conversion model (v0.66). The plain     */
++/* stub loaded soc_adc clean but never completed conversions: the      */
++/* 220 ms boot spam ("adc_read_channel_value:adc get value timeout!")  */
++/* is sa_sound_switch's 200 ms delayed_work poll (sass_debounce_time)  */
++/* plus the 2-jiffy read wait expiring because no SADC IRQ ever fires  */
++/* — the poller itself does ZERO MMIO (unimp trace: 28 SADC accesses   */
++/* total per boot), the wait is interrupt-only. Driver facts           */
++/* (soc_adc.ko, hard-coded 0xb0070000): adc_read_channel_value sets    */
++/* pending = 1<<ch, calls adc_hal_enable_channel (sets CFG bit ch,     */
++/* polls it until set) and waits on the IRQ; adc_irq_handler reads     */
++/* IFLAG (+0x0c), W1Cs the flags, clears pending and wakes; the        */
++/* waiter then reads the 12-bit sample from +0x10 (ch0 [11:0],         */
++/* ch1 [27:16]) or +0x14 (ch2 [11:0], ch3 [27:16]) via                 */
++/* adc_hal_read_channel_data.                                          */
++/* Completion is synchronous (emulated HW is infinitely fast): every   */
++/* write that SETS a CFG bit n in [3:0] runs channel n's conversion.   */
++/* The trigger must key on the written bit, NOT a 0->1 edge: repeat    */
++/* polls rewrite the bit 1->1 (nothing clears it) and the handler      */
++/* W1Cs IFLAG every pass, so an edge-triggered model re-spams after    */
++/* the first successful read. Sample = 0xfff for every channel: raw    */
++/* 4095 is outside sa_sound_switch's [2800,3300] headset range (state  */
++/* 0 = correct emulated idle), outside the keyboard/earpods windows    */
++/* (no phantom keys) and passes cst8xx's <1000 check. CFG bit15 (PEN)  */
++/* is toggled by enable/disable_controller with polls for the target   */
++/* state — plain RMW persistence satisfies both. IRQ asserts while     */
++/* (IFLAG & ~IMASK) != 0 (IMASK +0x08, 1 = masked).                    */
++/* ----------------------------------------------------------------- */
++
++typedef struct X1600Sadc {
++    MemoryRegion mmio;
++    qemu_irq irq;
++    uint32_t regs[X1600_SADC_SIZE / 4];
++} X1600Sadc;
++
++static X1600Sadc x1600_sadc_dev;
++
++static void x1600_sadc_update_irq(X1600Sadc *s)
++{
++    qemu_set_irq(s->irq, ((s->regs[0x0c / 4] & ~s->regs[0x08 / 4]) & 0xf) != 0);
++}
++
++/* channel n conversion: latch the 12-bit sample into the data window
++ * and set the completion flag */
++static void x1600_sadc_convert(X1600Sadc *s, unsigned n)
++{
++    unsigned shift = (n & 1) ? 16 : 0;
++    uint32_t mask = 0xfffu << shift;
++    unsigned data = ((n & 2) ? 0x14 : 0x10) / 4;
++
++    s->regs[data] = (s->regs[data] & ~mask) | mask;   /* sample 0xfff */
++    s->regs[0x0c / 4] |= 1u << n;
++    x1600_sadc_update_irq(s);
++}
++
++static uint64_t x1600_sadc_read(void *opaque, hwaddr addr, unsigned size)
++{
++    X1600Sadc *s = opaque;
++    uint64_t ret = (addr < X1600_SADC_SIZE) ? s->regs[addr / 4] : 0;
++
++    qemu_log_mask(LOG_UNIMP, "x1600-sadc read %#llx = %#llx\n",
++                  (unsigned long long)addr, (unsigned long long)ret);
++    return ret;
++}
++
++static void x1600_sadc_write(void *opaque, hwaddr addr,
++                             uint64_t val, unsigned size)
++{
++    X1600Sadc *s = opaque;
++    unsigned n;
++
++    if (addr >= X1600_SADC_SIZE) {
++        return;
++    }
++    qemu_log_mask(LOG_UNIMP, "x1600-sadc write %#llx = %#llx\n",
++                  (unsigned long long)addr, (unsigned long long)val);
++    if (addr == 0x0c) {
++        s->regs[addr / 4] &= ~val;          /* IFLAG: write-1-to-clear */
++        x1600_sadc_update_irq(s);
++        return;
++    }
++    s->regs[addr / 4] = val;
++    if (addr == 0x00) {
++        for (n = 0; n < 4; n++) {
++            if (val & (1u << n)) {
++                x1600_sadc_convert(s, n);   /* CFG channel bit = start */
++            }
++        }
++    } else if (addr == 0x08) {
++        x1600_sadc_update_irq(s);           /* IMASK changed */
++    }
++}
++
++static const MemoryRegionOps x1600_sadc_ops = {
++    .read = x1600_sadc_read,
++    .write = x1600_sadc_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
+ /* ----------------------------------------------------------------- */
+ /* LCD controller (0x13050000, size 0x10000) — minimal model (v0.66).  */
+ /* Persistent regfile (the jzfb RMW surface: dense 0x00-0xfc cfg/      */
+@@ -1494,7 +1596,13 @@ static void x1600_mach_init(MachineState *ms)
+     x1600_add_stub(sysmem, "x1600-uart2",    X1600_UART2_BASE,   X1600_UART_SIZE);
+     x1600_add_stub(sysmem, "x1600-uart3",    X1600_UART3_BASE,   X1600_UART_SIZE);
+     x1600_add_stub(sysmem, "x1600-pdma",     X1600_PDMA_BASE,    0x10000);
+-    x1600_add_stub(sysmem, "x1600-sadc",     X1600_SADC_BASE,    X1600_SADC_SIZE);
++    /* SADC (v0.66): minimal conversion model — completes conversions and
++     * raises INTC line 11 so the adc pollers' IRQ waits finish (the 220 ms
++     * "adc get value timeout!" spam). */
++    x1600_sadc_dev.irq = qdev_get_gpio_in(intc, X1600_SADC_IRQ_LINE);
++    memory_region_init_io(&x1600_sadc_dev.mmio, NULL, &x1600_sadc_ops,
++                          &x1600_sadc_dev, "x1600.sadc", X1600_SADC_SIZE);
++    memory_region_add_subregion(sysmem, X1600_SADC_BASE, &x1600_sadc_dev.mmio);
+     /* MSC hosts (v0.64): msc0 = SDIO wifi (BCM43438, manual detect via
+      * jzmmc_manual_detect(0) from the DHD); msc1 = TF slot, empty (fast
+      * response timeouts). IRQs on INTC lines 37/36 (stock DTB
+-- 
+2.53.0
+
