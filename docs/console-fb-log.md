@@ -1,11 +1,12 @@
-# Console hygiene + fb readback session log (v0.68–v0.69)
+# Console hygiene + fb readback + live display session log (v0.68–v0.70)
 
-Scope: the ttyS2/console region, the machine's kernel cmdline, and the
-LCD +0x1000 tap — nothing else (the MSC/SDIO wifi model and the DHD
-cascade are the parallel wifi session's fault). Method follows the M1/M2
-logs: every change pinned by stock-DTB decode, module disassembly, or a
-boot symptom. Worktree `qemu-console-fb-dump`; vendored QEMU commits
-`1f062d6` (patch 0110) + `ad699d0` (patch 0111).
+Scope: the ttyS2/console region, the machine's kernel cmdline, the
+LCD +0x1000 tap, and the live display surface — nothing else (the
+MSC/SDIO wifi model and the DHD cascade are the parallel wifi session's
+fault). Method follows the M1/M2 logs: every change pinned by
+stock-DTB decode, module disassembly, or a boot symptom. Worktrees
+`qemu-console-fb-dump` (vendored commits `1f062d6` + `ad699d0`) and
+`qemu-live-display` (vendored commit `e4865d1`).
 
 ## v0.68 — ttyS2 console swap (patch 0110)
 
@@ -166,13 +167,121 @@ tools/fb-dump.py /tmp/kilo/console-fb/cap/ram.bin \
 `socat` shown for brevity. HMP echoes the typed command, hence the
 filename must be quoted.)
 
+## v0.70 — live display surface (patch 0112, vendored `e4865d1`)
+
+The v0.69 tap + pmemsave + fb-dump.py loop proved the frame is real but
+needed a manual dump per look. Patch 0112 gives the machine a real QEMU
+display console bound to the guest framebuffer: with `-vnc` or
+`-display gtk/sdl` the emulated 480×800 screen is live; with
+`-display none` (the boot gate) the model does nothing at all.
+
+### Machine changes
+
+- **Graphic console**: `qemu_graphic_console_create(NULL, 0, ops, lcd)`
+  registered once at machine init, `GraphicHwOps` = invalidate (no-op) +
+  `gfx_update`. No `DeviceState` link (the LCD is a hand-rolled MMIO
+  region, not a qdev), so HMP `screendump` works through the default
+  graphic console (no device arg — `qemu_console_lookup_default()`
+  picks the machine's only graphic console).
+- **Frame upload** (`x1600_lcd_fb_draw`, shared by kick, timer and
+  gfx_update): read `desc+4` from guest RAM via `dma_memory_read` (the
+  LAST descriptor stored at +0x1000 wins — frame_num=2, the same rule
+  fb-dump.py applies), strip the 0x80000000 flag bit →
+  `yoff*stride + fb_phys`, bounds-check against the 64 MiB RAM, copy
+  the 768000 B frame into a host buffer, and push a full 480×800
+  `qemu_console_update_full`. The surface is
+  `qemu_create_displaysurface_from(480, 800, PIXMAN_r5g6b5, 960, copy)`
+  created once and kept: guest and host are both little-endian, so the
+  upload is a plain row copy; VNC/GTK/SDL all accept r5g6b5
+  (`qemu_pixman_check_format`), screendump converts via pixman.
+- **25 Hz progressive-refresh timer**: `timer_new_ns(QEMU_CLOCK_VIRTUAL)`
+  re-resolving desc+4 every 40 ms, so guest writes between kicks appear
+  live. It arms at the FIRST `gfx_update` (backend poll or screendump)
+  and the kick path draws+re-arms only when a backend exists — with
+  `-display none` no timer, no copy and no wakeups ever run.
+- **Lazy 768000 B frame copy**: `qemu_memalign(64, …)` at the first
+  backend poll, not a static struct member (see the gate section below
+  for why this is load-bearing).
+- Unchanged: the +0x1000 stderr tap (fb-dump.py), the kick→EOF→INTC 31
+  semantics, the W1C at +0x2008, SLCD BUSY=0, the two required
+  `-serial` backends, `-display none` default.
+
+### Verification
+
+All runs stock firmware, `unpacked/1.6/vmlinux.bin`, monitor via unix
+HMP socket (filename QUOTED), splash taps at ~70–75 s wall
+(`x1600_lcd: fb descriptor @ 024e0000/0250c000-style`, fb base
+0x02600000, addresses vary per boot).
+
+- **VNC end-to-end**: `-display none -vnc 127.0.0.1:0` serves the
+  console (`server init: 480x800`). A raw RFB 3.8 client (None auth,
+  server pixel format echoed back, raw encoding, non-incremental
+  full-frame FUReq) receives ONE 480×800 rect, 1536000 B; decoded PNG
+  equals the HMP screendump pixel-for-pixel (ImageMagick AE = 0, fuzz
+  2%). Dominant colour #bddfef at 47% — the stock splash (the v0.69
+  palette, 44.8% at 7-px sampling there).
+- **Screendump == guest RAM**: `screendump "…" -f png` is rejected by
+  this build (no libpng); `screendump "…"` PPM + ImageMagick → PNG24.
+  Compared against `tools/fb-dump.py` on a same-moment
+  `pmemsave 0 0x4000000`: **AE = 0** on three separate boots.
+- **Timer proof (no-kick update)**: gdbstub `tcp::1234`; the visible
+  fb's bottom 24 rows (y=776–799) overwritten with red/green RGB565
+  rows via RSP `M` packets (≤1024 B each, the stub's packet limit) —
+  descriptor tap count unchanged, so no kick occurred; `pmemsave` taken
+  while the VM was paused confirms the pattern sits in guest RAM at
+  `0x026b5c00`; `cont` → screendump shows the red strip (#ff0000)
+  within a second — the 25 Hz tick re-resolved desc+4 and re-uploaded
+  without any kick. (gdb attach pauses the VM and the virtual-clock
+  timer freezes with it — by design; resume re-syncs immediately.)
+- **Boot gate PASS against the untouched v0.68 baseline** (332 distinct
+  messages, 154 structural lines). This one bit back: with the frame
+  copy as a `uint8_t[768000]` static struct member the gate failed
+  three runs in a row, always the same seam — `Finish display... `
+  deterministically glued onto `create proc entry lcd_reg success` in
+  the ttyS2 window (the documented async-flush fragility). Control
+  experiment: stashing the diff and re-running the gate on the
+  unmodified v0.69 build → PASS, so the guest-visible model was never
+  the problem; the 768 KB .bss growth had shifted the binary layout
+  enough to move that flush boundary. The lazy allocation restores
+  v0.69 timing exactly and the gate passes with patch 0112 applied.
+
+### Artifacts (RAM-backed scratch, not committed)
+
+```
+/tmp/kilo/livedisp/livedisp-screen.ppm   HMP screendump (the deliverable)
+/tmp/kilo/livedisp/livedisp-screen.png   PNG24 conversion
+/tmp/kilo/livedisp/livedisp-fbdump.png   fb-dump.py extraction (AE=0 vs above)
+/tmp/kilo/livedisp/livedisp-vnc.png      RFB client fetch (AE=0 vs above)
+/tmp/kilo/livedisp/v-screen.png /v-vnc.png /v-fbdump.png
+                                         shipping-binary re-verification
+```
+
+### Reproduction
+
+```
+mkdir -p /tmp/kilo/livedisp
+qemu-system-mipsel -M x1600 -kernel unpacked/1.6/vmlinux.bin \
+    -serial file:/tmp/kilo/livedisp/console.log \
+    -serial file:/tmp/kilo/livedisp/ttyS0.log \
+    -display none -vnc 127.0.0.1:0 -no-reboot \
+    -monitor unix:/tmp/kilo/livedisp/mon.sock,server,nowait \
+    2> /tmp/kilo/livedisp/qemu-stderr.log &
+# wait for 2+ "x1600_lcd: fb descriptor @" lines, then via the monitor:
+#   screendump "/tmp/kilo/livedisp/screen.ppm"
+#   pmemsave 0 0x4000000 "/tmp/kilo/livedisp/ram.bin"
+#   tools/fb-dump.py ram.bin --log qemu-stderr.log --out fbdump.png
+# cross-check: magick compare -metric AE screen.png fbdump.png null:
+```
+
 ## State after this session
 
-- Vendored QEMU: `1f062d6` (UART2 backend + stock console, patch 0110),
-  `ad699d0` (LCD fb tap, patch 0111) on top of the v0.67 mirror.
-- Gate: PASS against `docs/traces/boot-baseline-v0.68.txt`.
-- rcS tail unchanged (S50 wifi userland stage, wifi session's scope);
-  S80 becomes reachable only after the DHD fix — at that point the
-  BT-uart binary stream lands on serial1 and the capture stays clean.
-- M3 next: the same tap + fb-dump.py give the player's first UI frame
-  (open /dev/fb0 → pan → pmemsave → PNG).
+- Vendored QEMU: `e4865d1` (live display surface, patch 0112) on top of
+  `ad699d0` (LCD fb tap, 0111) and `1f062d6` (UART2 backend + stock
+  console, 0110).
+- Gate: PASS against `docs/traces/boot-baseline-v0.68.txt` (unchanged
+  baseline; lazy fb_copy keeps the gate path at v0.69 timing).
+- Live display: `-vnc`/`-display gtk` show the emulated screen live;
+  HMP `screendump` (no device arg) captures the guest fb; with
+  `-display none` the display model is inert (gate-verified).
+- M3 next: the player's first UI frame arrives live on the console (or
+  via screendump / fb-dump.py) — no pmemsave needed.
