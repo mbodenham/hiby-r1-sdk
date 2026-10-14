@@ -1,0 +1,190 @@
+From af9569a72a1d835fb68e72317a20d5c25c75b106 Mon Sep 17 00:00:00 2001
+From: fw-dl-round <fw-dl@local>
+Date: Thu, 15 Oct 2026 05:57:38 +0900
+Subject: [PATCH] =?UTF-8?q?x1600-msc:=20wifi=20firmware-download=20chain?=
+ =?UTF-8?q?=20=E2=80=94=20ChipClkCSR=20HT+ALP=20avail,=20CCCR=20SMB=20cap,?=
+ =?UTF-8?q?=20fn2=20data=20function=20with=20FUNCE,=20IFLG=20bit10=20data-?=
+ =?UTF-8?q?done=20IRQ?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+v0.83 (the wifi fw-download round). The DHD never downloads
+fw_bcm43438a1.bin on this build: dhdsdio_download_firmware.isra.13
+(cywdhd.ko 0x9d5b4) skips the download while the module-global alive
+== 0x15151515 — armed by bcmsdh_sdmmc_probe at ready==6, the same
+workaround the warm-table ai_scan requires (the cold EROM walk is
+structurally broken: get_asd's port loop is called with qual=1, which
+(ent & 0xc0) can never match, so numcores drops to 0). The DHD then
+treats the card as already running and goes straight to dhd_bus_init.
+
+- ChipClkCSR (fn1 0x1000e): HT_AVAIL_REQ (0x10) must read back with
+  ALP_AVAIL (0x40) set too — SBSDIO_CLKAV wants 0x40|0x80; the HT poll
+  after the skip read 0x90 and timed out into 'clock state is wrong.
+  state = 1' (dhd_bus_init 0x9e224). Both the CMD52 and fn-read paths.
+- CCCR 0x08 = 0x02 (SDIO_CCCR_CAP_SMB): the kernel's
+  sdio_io_rw_ext_helper gates the block path on the card's cached SMB
+  bit (mmc_sdio_init_card sb's card+0x2c8 from CCCR 0x08 & 2); without
+  it the byte path runs and computes blksz from func->max_blksize.
+- fn2 CIS gains the 42-byte CISTPL_FUNCE (max block size 0x80 at
+  buf[12], matching sd_f2_blocksize): without it fn2 max_blksize reads
+  0, the byte path passes blksz=0 into mmc_io_rw_extended (WARN at
+  sdio_ops.c:134), the sg count goes garbage and the DHD's first
+  control-packet TX dies with 'TX FAILED ..., ERR=-12'.
+- fn2 backing enlarged to the full 17-bit SDIO address space (0x20000):
+  the 384-byte control frame goes out as a block-mode CMD53
+  (count=3 x BLKLEN=128) at fn2 0x0000 and the 64-byte frame as a
+  byte-mode CMD53 (count=64) at fn2 0x8000; the original 0x8000 space
+  wrapped the 0x8000 accesses to 0.
+- The MSC data-phase completion (the internal-DMA kick and the PIO
+  TXFIFO path) raises IFLG bit15 | bit10: the driver's hard IRQ
+  handler dispatches on pending = IFLG & ~IMASK, the data-phase IMASK
+  is 0xff7ff9fb (only bit10 unmasked), and the threaded handler
+  dispatches the data-done on the raw IFLG bit15. Bit15 alone is
+  masked, so the request previously timed out with the zero-descriptor
+  dump (ERR=-159).
+
+With this the DHD's ifup flow runs: probe attach (F1 signature, ram
+size) -> the download skip -> dhd_bus_init (clock state OK, IOE 0x06
+ready 0x06 waited 0us) -> the OOB irq registration (virq 101, PA08
+host-wake) -> the first control-packet TX whose data lands on the wire
+through the descriptor DMA. Parks at the kernel's bare -1 return from
+sdio_memcpy_toio (see docs/M1-bringup-log.md v0.83).
+---
+ hw/mips/x1600.c | 63 ++++++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 60 insertions(+), 3 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 3435b27..c214590 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -453,6 +453,14 @@ typedef struct X1600Msc {
+     uint8_t cis[0x400];         /* CIS chains, mapped at fn0 0x1000 */
+     uint8_t fn1[0x11010];       /* fn1 space: F1 regs (SBADDR window regs
+                                  * 0x1000a-c, ChipClkCSR 0x1000e) */
++    uint8_t fn2[0x20000];       /* fn2 space: the dongle data function
++                                 * (the DHD's control/data packet port;
++                                 * the full 17-bit SDIO address space:
++                                 * the 384-byte control frame goes out as
++                                 * a block-mode CMD53 count=3 x BLKLEN=128
++                                 * at fn2 0x0000, the 64-byte frame as a
++                                 * byte-mode CMD53 count=64 at fn2 0x8000,
++                                 * v0.83 run7) */
+     uint8_t fifo[512];          /* CMD53 data phase (PIO: soc_msc pops
+                                  * words from MSC_RXFIFO) */
+     unsigned fifo_len, fifo_pos;
+@@ -565,8 +573,13 @@ static uint32_t x1600_msc_cmd52(X1600Msc *s, uint32_t arg)
+             data |= (data & 0x10) ? 0x80 : 0;   /* HT_AVAIL */
+             /* The real request bits (sbsdio.h): ALP_AVAIL_REQ = 0x08,
+              * HT_AVAIL_REQ = 0x10 — dhdsdio_htclk writes 0x08 and polls
+-             * for 0x40 (v0.72 run3: "HT Avail timeout: clkctl 0x08"). */
++             * for 0x40 (v0.72 run3: "HT Avail timeout: clkctl 0x08").
++             * HT supply keeps ALP available (SBSDIO_CLKAV wants BOTH
++             * 0x40|0x80; v0.83: the HT poll after "skip download FW and
++             * nv" read back 0x90 and timed out -> "clock state is
++             * wrong. state = 1"). */
+             data |= (data & 0x08) ? 0x40 : 0;   /* ALP_AVAIL_REQ */
++            data |= (data & 0x10) ? 0x40 : 0;   /* ALP under HT */
+             return data;
+         }
+         if (!write && addr >= 0x8000) {
+@@ -670,6 +683,7 @@ static uint8_t x1600_msc_fn_read(X1600Msc *s, unsigned fn, uint32_t addr,
+             d |= (d & 0x20) ? 0x40 : 0;     /* ALP_AVAIL */
+             d |= (d & 0x10) ? 0x80 : 0;     /* HT_AVAIL */
+             d |= (d & 0x08) ? 0x40 : 0;     /* ALP_AVAIL_REQ */
++            d |= (d & 0x10) ? 0x40 : 0;     /* ALP under HT (v0.83) */
+             *ok = true;
+             return d;
+         }
+@@ -684,6 +698,16 @@ static uint8_t x1600_msc_fn_read(X1600Msc *s, unsigned fn, uint32_t addr,
+         *ok = true;
+         return s->fn1[addr];
+     }
++    if (fn == 2 && addr < sizeof(s->fn2)) {
++        /* fn2: the dongle data function. The DHD's control TX targets
++         * fn2 0x0000 (the 384-byte frame, block-mode count=3 x BLKLEN)
++         * and fn2 0x8000 (the 64-byte frame, byte-mode count=64); the
++         * data phase runs through the MSC internal DMA and lands here
++         * (v0.83 run7). Reads return the model's staged bytes (the
++         * chip-side protocol serves them later). */
++        *ok = true;
++        return s->fn2[addr];
++    }
+     *ok = false;
+     return 0;
+ }
+@@ -725,6 +749,10 @@ static bool x1600_msc_fn_write(X1600Msc *s, unsigned fn, uint32_t addr,
+         s->fn1[addr] = val;
+         return true;
+     }
++    if (fn == 2 && addr < sizeof(s->fn2)) {
++        s->fn2[addr] = val;
++        return true;
++    }
+     return false;
+ }
+ 
+@@ -975,7 +1003,13 @@ static void x1600_msc_write(void *opaque, hwaddr addr,
+                 s->dma_pending = false;
+                 if (ok) {
+                     s->regs[MSC_STAT / 4] |= STAT_XFER_DONE_WR;
+-                    s->regs[MSC_IFLG / 4] |= 1u << 15;
++                    /* IFLG bit15 = the data-done source the thread
++                     * dispatches on; bit10 = the source the hard IRQ
++                     * handler actually sees (the driver's IMASK around
++                     * the data phase is 0xff7ff9fb: only bit10 unmasked,
++                     * v0.83 run5) — without it the threaded irq never
++                     * wakes and the request times out. */
++                    s->regs[MSC_IFLG / 4] |= (1u << 15) | (1u << 10);
+                     x1600_msc_update_irq(s);
+                 }
+             }
+@@ -1050,7 +1084,10 @@ static void x1600_msc_write(void *opaque, hwaddr addr,
+         if (ok) {
+             s->regs[MSC_STAT / 4] |= s->dma_wr ? STAT_XFER_DONE_WR
+                                                : STAT_XFER_DONE_RD;
+-            s->regs[MSC_IFLG / 4] |= 0x8000u;   /* data done */
++            /* bit15 = the data-done source the thread dispatches on;
++             * bit10 = the unmasked source that actually fires the hard
++             * IRQ (the driver's data-phase IMASK = 0xff7ff9fb, v0.83). */
++            s->regs[MSC_IFLG / 4] |= 0x8000u | (1u << 10);
+             x1600_msc_update_irq(s);
+         }
+     }
+@@ -1110,6 +1147,20 @@ static const uint8_t x1600_msc_cis_f2[] = {
+     0x20, 0x04, 0xd0, 0x02, 0x00, 0x00, /* CISTPL_MANFID: vendor 0x02d0,
+                                          * device 0x0000 */
+     0x21, 0x02, 0x00, 0x00,             /* CISTPL_FUNCID */
++    /* CISTPL_FUNCE, 42 bytes, same shape as fn1's (v0.83): without it
++     * fn2's max_blksize stays 0 and the kernel's sdio_io_rw_ext_helper
++     * byte path computes blksz = 0 — mmc_io_rw_extended WARNs
++     * (sdio_ops.c:134) and the DHD's control-packet TX (sdio_memcpy_toio
++     * fn2 @0x8000, 64 bytes < cur_blksize) fails with garbage sg counts
++     * ("TX FAILED ..., pkt_len=64, ERR=-12"). 0x80 matches
++     * sd_f2_blocksize so cur_blksize(fn2) = 128 is accepted. */
++    0x22, 42,
++    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* 0..7: type */
++    0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, /* 8..15: 12=0x80 (max blk 128) */
++    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* 16..23 */
++    0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, /* 24..31: 28=5 (timeout*10) */
++    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* 32..39 */
++    0x00, 0x00,                                     /* 40..41 */
+     0x81, 0x01, 0x01,                   /* Azurewave module marker tuple */
+     0xff,                               /* CISTPL_END */
+ };
+@@ -1195,6 +1246,12 @@ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+         }
+     }
+     s->cccr[0x00] = 0x11;               /* CCCR rev 1.0, SDIO spec rev 1.1 */
++    /* CCCR capability (0x08): SMB (multi-block support) must be set —
++     * the kernel's sdio_io_rw_ext_helper keys the byte-mode chunk on
++     * card->cccr & SDIO_CCCR_CAP_SMB; with it clear the byte path uses
++     * blksz = 0 and mmc_io_rw_extended WARNs (sdio_ops.c:134) and the
++     * DHD's control TX fails with garbage sg counts (v0.83 run2). */
++    s->cccr[0x08] = 0x02;
+     /* CIS pointers: the kernel's sdio_read_cis reads the 3-byte pointer
+      * from SDIO_FBR_BASE(fn)+0x09..0x0b — for fn=0 that's CCCR 0x09-0x0b
+      * (the common CIS), for fn=1 the FBR1 bytes. fn0 CIS chains live at
+-- 
+2.53.0
+

@@ -2437,3 +2437,177 @@ FIFO port → the model's drain → the sample stream.
   panicked -no-reboot VM may hang instead of exiting — stop it
   explicitly; port 4448 conflicts fail the next boot with "could not
   connect serial device").
+
+## v0.83 (2026-10-15, fw-download round, worktree qemu-wifi-fw) — the
+wifi firmware-download flow traced to its first live step: the DHD does
+NOT download (this build skips it by design when the card "looks alive")
+and stops at the ChipClkCSR HT-avail handshake
+
+- **How the flow is reached (run1, /tmp/kilo/fw/run1):** the stock boot
+  never opens the interface (only `lo` is in /etc/network/interfaces;
+  S43wifi_bcm_init_config only sets the MAC), so the 300 s gate window
+  shows the DHD parked OFF (v0.74 state). The console respawn shell
+  (telnet 127.0.0.1:4448 + tee.py, cmd.txt) drives it:
+  `ifconfig wlan0 up` → dhd_open → wl_android_wifi_on → wlan power on →
+  sdio_reset_comm → dhd_bus_devreset(0) →
+  [63.656] "firmware path not found" (dhd_update_fw_nv_path: the
+  firmware_path module param is empty — cywdhd.sh passes none) →
+  "== WLAN ON ==" → dhdsdio_probe_attach (F1 signature OK, ram size
+  524288) → dhdsdio_download_firmware → **[63.661] "skip download FW
+  and nv"** → dhdsdio_clkctl(CLK_AVAIL) → **[64.659] "dhdsdio_htclk:
+  HT Avail timeout (1000000): clkctl 0x90"** → "dhd_bus_init: clock
+  state is wrong. state = 1" → return -1 → wl_android_wifi_on failed →
+  devreset OFF (the -35 is the already-off guard, harmless).
+- **WHY the download is skipped — decoded from cywdhd.ko
+  (dhdsdio_download_firmware.isra.13 0x9d5b4):** at 0x9d640 the flow
+  reads the module-global `alive` (.bss 0x7308); if `alive ==
+  0x15151515` it prints "skip download FW and nv" ($LC333, .rodata.str1.4
+  +0x1bb80), sets *(bus->dhd+24) = 1 and returns 0 WITHOUT touching the
+  chip. `alive` is written exactly once, in bcmsdh_sdmmc_probe
+  (0x88cb8): if CCCR 0x03 (IO Ready) reads **6** at probe time →
+  alive = 0x15151515 and card_dev = the fn2 device id. That is the same
+  ready == 6 arm that patch 0113 makes fire (the fn2-IOR-sticky mirror)
+  and that the warm-table ai_scan REQUIRES (ai_scan 0x212b8: warm path
+  needs alive == 0x15151515 AND card_dev == 0xa9a6/0xa804).
+- **The cold EROM walk is fatally broken in this build (re-verified,
+  closes the v0.72 open question):** ai_scan's per-core port loop calls
+  get_asd.isra.1(sih, &eromptr, req=a2=1, qual=a3=1) (0x216d8-0x216dc),
+  and get_asd.isra.1 (0x21154) matches only when (ent & 0xc0) == qual —
+  bits[7:6] can never equal 1 — so every port probe returns 0, the
+  caller then fails `(0 & 0xe) == t1(=2)` at 0x216f8 and jumps to
+  0x21a90 (numcores = 0). No EROM image can attach this DHD cold; the
+  warm-table path (alive armed) is the only working one. The master-
+  wrapper scan (get_asd(0,0x40) loop, 0x21750-0x21790) sets s6 = 1 in
+  its own DELAY SLOT (0x21794) on every match, and 0x21a78 (bnez s6)
+  skips the numcores++ for every wrapper-matched core — even a
+  qualifier-correct walk would count zero cores; the core-id ∈
+  {0x367,0x50b,0x827,0x840} exemption (0x21640-0x216a8) never covers
+  the six 43430 cores, and the SDIO core (cib 0x080201: nmasters +
+  naddr == 0) is skipped outright at 0x21638/0x216a8.
+- **Consequence (the real semantics of `alive`):** "the card is alive =
+  firmware already running" — this driver build NEVER downloads
+  fw_bcm43438a1.bin through dhdsdio_download_firmware on this product;
+  the chip-side work is to play the RUNNING-firmware role the DHD
+  expects (the download code path exists but is unreachable here).
+  dhd_update_fw_nv_path would otherwise fall back to
+  /lib/firmware/wifi_bcm/cyw43438-7.46.58.35.bin + nvram_azw372.txt
+  ($LC48/$LC50, gated on the cis_device/cis_chipvendor globals — never
+  set on this boot), but that path is equally unreachable (the alive
+  check at 0x9d650 precedes the path handling at 0x9d690).
+- **The first live failure is the ChipClkCSR HT handshake:**
+  dhd_bus_init (0x9e160) calls dhdsdio_clkctl(bus, CLK_AVAIL, FALSE)
+  (0x9e210) → dhdsdio_htclk writes SBSDIO_FUNC1_CHIPCLKCSR = 0x10
+  (HT_AVAIL_REQ) and polls for SBSDIO_CLKAV = ALP_AVAIL (0x40) AND
+  HT_AVAIL (0x80) both set; the model mirrors only HT_AVAIL (0x80) for
+  the 0x10 request (the ALP rules key on 0x08/0x20), so the read-back
+  is 0x90 and the 1 s poll times out → bus->clkstate stays 1
+  (CLK_SDIO) → "clock state is wrong. state = 1" → dhd_bus_init
+  returns -1. The real chip keeps ALP available while supplying HT, so
+  the read-back must be 0x10 | 0x40 | 0x80 = 0xd0.
+- **What follows once the handshake passes (dhd_bus_init decode,
+  0x9e300-0x9e9c8):** 3× retry of bcmsdh_reg_write(0x18000048, 4,
+  0x40000) while regfail; **bcmsdh_cfg_write(fn0, CCCR 0x02, 0x06)**
+  (IO Enable both functions, 0x9e3dc) then a 3 s dhd_timeout poll
+  (0x2dc6c0 µs) of CCCR 0x03 until it reads **6** (0x9e420-0x9e448 —
+  the model's 0x02→0x03 mirror already satisfies it: 0x06|0x04 ==
+  0x06); si_setcore + reg writes (0x9e49c/0x9e530/0x9e540);
+  **bcmsdh_intr_enable** (0x9e68c); dhdsdio_sr_cap (0x9e6dc);
+  bcmsdh_gpio_init (0x9e730); dhdsdio_devcap_set (0x9e7d0); the
+  dhd_slpauto reg write (0x9e858). dhd_bus_devreset then continues:
+  dhd_enable_oob_intr(bus, TRUE) (0x9f628) +
+  **bcmsdh_oob_intr_register(bcmsdh, wlan_oob_irq, bcmsdh)**
+  (0x9f644) + bcmsdh_oob_intr_set(bcmsdh, 1) (0x9f65c) → busstate UP →
+  dhd_os_wd_timer(dhd_watchdog_ms).
+- **The chip→host interrupt is the OOB host-wake GPIO, NOT the SDIO
+  DAT1 path (decode, 0x855d8-0x85830):** bcmsdh_oob_intr_register does
+  request_threaded_irq(oob_irq, wlan_oob_irq, NULL, 0x414, name,
+  bcmsdh) where oob_irq = the boot print's virq 101 ("dhd_init_gpio_
+  wlan_hostwake: WL_HOST_WAKE=8, oob_irq=101, oob_irq_flags=0x414" —
+  gpio 8 = PA08 from cywdhd.sh gpio_wlan_wake_host=PA08; 0x414 =
+  IRQF_NO_BALANCING | IRQF_TRIGGER_HIGH). wlan_oob_irq (0x856b4)
+  disables the irq (bcmsdh_oob_intr_set(0) — one-shot) and calls the
+  registered handler dhdsdio_isr(bus); bcmsdh_oob_intr_set(on) is just
+  enable_irq/disable_irq_nosync. The model therefore drives PA08 high
+  when the "firmware" wants the host; the v0.76 gpio model's bank
+  cascade (gpa → INTC 17) + the guest gpio driver's per-pin demux
+  (PA16 → virq 100 for hyn_ts already works) deliver virq 101.
+- **The next blocker after the ChipClkCSR fix (run2): the DHD's first
+  control-packet TX dies inside the kernel's SDIO helper.** With the
+  handshake fixed the run2 flow passed clkctl ("dhd_bus_init: enable
+  0x06, ready 0x06 (waited 0us)"), registered the OOB irq
+  ("bcmsdh_oob_intr_register OOB irq=101 flags=4") and reached
+  dhd_preinit_ioctls_alive's first ioctl, whose control packet TX
+  (dhd_bus_txctl → dhd_bcmsdh_send_buf → sdioh_buffer_tofrom_bus →
+  sdio_memcpy_toio) died with "WARNING ... sdio_ops.c:134
+  mmc_io_rw_extended+0xb0" + "WARNING ... __sg_alloc_table+0x78 (nents
+  too large)" → "sdioh_buffer_tofrom_bus: TX FAILED ..., addr=0x08000,
+  pkt_len=64/384, ERR=-12" → "can't get MAC address , error=-5" →
+  wl_android_wifi_on failed (-14). No wire CMD53 was ever issued for the
+  TX (the kernel rejected it before the controller).
+- **Decode (vmlinux 4.4.94):** sdio_io_rw_ext_helper (0x80391b6c) takes
+  the block path only when (a) card+0x2c8 bit0 — the SDIO caps cache
+  bit set from CCCR 0x08 & SDIO_CCCR_CAP_SMB (0x02) during enumeration
+  (mmc_sdio_init_card 0x8038f1d0-0x8038f1ec, sb into card+0x2c8) — and
+  (b) size >= func->cur_blksize (func+0x174, set by sdio_set_block_size
+  0x803915bc from the module params sd_f1_blocksize=0x40 /
+  sd_f2_blocksize=0x80 via the FBR blocksize CCCR writes, which the
+  trace shows at fn0 0x110/0x111 and 0x210/0x211). Otherwise the byte
+  path runs and computes blksz = (card->quirks & 0x2 —
+  MMC_QUIRK_BLKSZ_FOR_BYTE_MODE, card+0x170, set only through
+  mmc_fixup_device, whose default table at 0x805f7770 is EMPTY) ?
+  func->cur_blksize : **func->max_blksize** (func+0x170, parsed from the
+  CIS FUNCE at cistpl_funce_func 0x803912e4: *(func+0x170) =
+  buf[12]|buf[13]<<8). The model's fn2 CIS had NO FUNCE → fn2
+  max_blksize = 0 → blksz = 0 → the WARN and the div-by-zero garbage sg
+  count. The control TX goes out on **fn2** (bcmsdh_send_buf 0x84d80:
+  stack arg = 2) at address 0x8000 after bcmsdhsdio_set_sbaddr_window,
+  with pkt_len 64 (the wifi_off SET ioctl frame) and 384 (the
+  preinit QUERY frame).
+- **Fixes (v0.83 patches):** CCCR 0x08 = 0x02 (SMB) in the model's
+  enumeration state, and a 42-byte CISTPL_FUNCE added to the fn2 CIS
+  (max block size 0x80 at buf[12], timeout 5 at buf[28] — the same
+  shape as fn1's FUNCE from patch 0001) so fn2 max_blksize = 0x80 =
+  sd_f2_blocksize. fn2 itself is now modeled (fn2[0x8000] backing;
+  the DHD's fn2 CMD53s read/write it), with TEMP-FW-DIAG prints on the
+  fn2/backplane data phases (to be stripped).
+- **The DMA data-phase chain, decoded and fixed (run4-run8):** with the
+  fn2 FUNCE in place the control TX reaches the wire: the DHD's
+  sdio_memcpy_toio(fn2, 0x8000, buf, len) becomes a block-mode CMD53
+  (count=3 x BLKLEN=128 for the 384-byte frame, arg 0xad000003) or a
+  byte-mode CMD53 (count=64, arg 0xa5000040), the host stages BLKLEN/
+  NOB/RDTO, sends the command, then drives the data phase through the
+  MSC internal DMA: it writes MSC_DMADA = the first descriptor's
+  physical address (0x250d000/0x15d4020 — the DHD's kmalloc'd frame at
+  KSEG0 0x815d4020) and MSC_DMAC = 0x9. The model's kick walks the
+  descriptor {dcmd, dat, dln, flags=0x2} and moves the bytes through
+  x1600_msc_fn_write — with the fn2 space enlarged to the full 17-bit
+  SDIO address space (0x20000; the body lives at fn2 0x8000, the
+  original 0x8000 space wrapped it to 0) the transfers complete
+  ("TEMP-FW-DIAG msc0 dma kick DONE wr=1 n=384/64").
+- **Completion signaling (run5-run7):** the driver's hard IRQ handler
+  computes pending = IFLG & ~IMASK and returns IRQ_NONE when empty; the
+  driver's data-phase IMASK is 0xff7ff9fb (only IFLG bit10 unmasked),
+  and the threaded handler dispatches the data-done on the RAW IFLG
+  bit15 (it unmasks bit15 around the wait and re-masks after, state
+  machine 0x0e78-0x0e90). The model's kick originally raised only
+  bit15 — masked, so the hard IRQ never fired and every request timed
+  out ("md_ingenic,mmc ... request_timeout" + the zero-descriptor
+  dump, ERR=-159). Fix: the data-phase completion (the DMA kick and
+  the PIO TXFIFO path) now raises IFLG bit15 | bit10; the thread then
+  runs, completes the request, and the DHD's TX gets as far as the
+  kernel's return value.
+- **Where it parks (run8, sd_msglevel=0xffff):** the wire transfer
+  completes and the thread completes the request, but the kernel's
+  sdio_memcpy_toio still returns -1 ("sdioh_buffer_tofrom_bus: TX
+  FAILED ..., ERR=-1" — a bare -1, not a standard errno; the DHD maps
+  it to "sdio error -1, abort command and terminate frame" with the
+  CCCR 0x06 = 0x02 abort write, then the watermark/frame-block re-init
+  and the next attempt). The -1 originates inside the kernel's
+  mmc/sdio completion path (mmc_io_rw_extended returns cmd.error or
+  data.error as set by soc_msc.ko; no data->error = -1 store exists in
+  the module, so the remaining suspects are the cmd->error assignment
+  in ingenic_mmc_command_done's R5/status checks or an additional
+  state-machine condition). The DHD's control-protocol emulation (the
+  chip-side response packet + the host-wake GPIO PA08 assert) is the
+  next model-side surface once the TX returns 0 — parked here with the
+  TX data verified on the wire and the -1 precisely scoped.

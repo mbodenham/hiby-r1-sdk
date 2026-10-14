@@ -161,6 +161,37 @@ qemu-wifi-srom; supersedes the earlier headers for the wifi item —
   (MAC 00:90:4c:11:22:33) and parks OFF at init like the driver wants;
   the ifup/firmware-download flow (devreset ON) is future work if the
   trace demands it.
+- **Wifi firmware-download round (M1 log v0.83, worktree qemu-wifi-fw,
+  patch 0118): the download is skipped by design; the "running
+  firmware" chip-side surface is the actual target — traced to the
+  first control-packet TX with its data on the wire, parked at the
+  kernel's bare -1 from sdio_memcpy_toio.** `ifconfig wlan0 up` (the
+  console respawn shell) drives dhd_open -> wl_android_wifi_on ->
+  dhd_bus_devreset(0) -> probe attach -> dhdsdio_download_firmware,
+  which skips when the module-global alive == 0x15151515 ("skip
+  download FW and nv") — armed by sdioh_probe at ready==6, the same
+  workaround the warm-table attach requires (the cold EROM walk is
+  fatally broken in this build: get_asd's port loop is called with
+  qual=1, which (ent & 0xc0) can never match, so numcores drops to 0).
+  The flow then needs the model to play the RUNNING chip: v0.83 fixes
+  the ChipClkCSR HT handshake (HT_AVAIL_REQ must read back with
+  ALP_AVAIL too — SBSDIO_CLKAV wants 0x40|0x80), advertises CCCR 0x08
+  SMB (the kernel's sdio_io_rw_ext_helper gates the block path on it),
+  adds fn2's CISTPL_FUNCE (max blksize 0x80 = sd_f2_blocksize; without
+  it the byte path passes blksz=0 and the TX dies with garbage sg
+  counts), enlarges fn2 to the full 17-bit SDIO space (the 384-byte
+  control frame = block-mode CMD53 count=3 x 128 at fn2 0x0000, the
+  64-byte = byte-mode count=64 at fn2 0x8000) and raises IFLG
+  bit15|bit10 on the data-phase completion (the driver's data-phase
+  IMASK unmasks only bit10; the threaded handler dispatches on the raw
+  bit15). Result: bus_init passes ("enable 0x06, ready 0x06 waited
+  0us"), the OOB irq registers (virq 101 = PA08 host-wake), and both
+  control-packet TXs land their bytes on the wire through the
+  descriptor DMA. Park: the kernel still returns bare -1 from
+  sdio_memcpy_toio (a soc_msc.ko cmd/data error code, precisely scoped
+  in v0.83); after that the chip side must serve the DHD's control
+  protocol (the response packet + the PA08 host-wake assert) for
+  "Firmware up". Gate PASS against boot-baseline-v0.75 unchanged.
 - **Status (M3 opening round, v0.75, worktree qemu-player-ui):**
   **the player's first UI frame renders** — the player's first-boot
   Language selection page (简体中文/繁體中文/English/日本語/한국어/
