@@ -1,0 +1,347 @@
+From 95edefe529b820e426850a40f5c0877b81c1bedd Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Wed, 14 Oct 2026 20:17:33 +0900
+Subject: [PATCH] x1600: PDMA memory-to-memory chain execution + LCD stop-done
+ IRQ - the player's first UI frame renders
+
+The hiby_player hgl graphics layer draws every frame through
+/dev/sa_hgl_dma: the module builds an ingenic_dma descriptor chain,
+submits it via the dmaengine API and blocks in wait_for_completion
+until the PDMA IRQ (INTC line 3) completes it. The v0.71 model only
+armed channels waiting for MSC data phases, so the player's first
+draw() blocked forever - the GUI never drew, the screen stayed on the
+splash and the idle path blanked the panel ~30 s in.
+
+Decode (vmlinux ingenic_dma 0x80400600-0x80402550 + live chain dumps
+via the guest console + HMP xp):
+- 32-byte dma_pool records {cmd, sadr, dadr, dln, icg, 8}; cmd bit0 =
+  per-desc IRQ enable, bit1 = last; class in bits[23:16]: 0xc0 memcpy
+  (dln[23:0] = burst count, code in bits[10:8]), 0xc9 interleaved 2D
+  (dln[23:16] = rows <= 255, dln[15:0] = row bytes, +0x10 =
+  (dst_icg << 16) | src_icg), 0x80|burst = MSC FIFO slave (skipped,
+  those stay armed for the MSC model exactly as before).
+- chain linkage: dln[31:24] = the next descriptor's page slot -
+  next phys = (cur & ~0xfff) | (slot << 4); the driver packs
+  (next_phys >> 4) & 0xff into the previous descriptor's dln.
+- the IRQ pending register is indexed by the client's REQUEST LINE
+  (chan->+0x68), written as 1<<req into +0x100c right before the CTL
+  start - the model snapshots the single enabled bit at arm time
+  (hgl = req 2 while the CTL sat on hw ch1).
+- +0x1004 is a raw source register: the handler acks by writing the
+  COMPLEMENT of the read value (nor v1,zero,s6) - plain store, not
+  W1C (a W1C ack left the bit set and IRQ-stormed 353k lines).
+
+disable_fb (soc_fb.ko 0xeb0) writes 0x10 to LCD +0x2000 then waits
+for the engine stop-done IRQ: the model now latches STATE bit7 and
+asserts the line (update_irq gates on STATE & 0x20080), so the blank
+path completes in one IRQ instead of stalling 1 s per
+'is_wait_stop_cnt >= 100'.
+
+Verified (fresh nand image, VNC 127.0.0.1:5910): the player's
+first-boot UI renders on the emulated screen - the Language selection
+page (simplified/traditional Chinese, English, Japanese, Korean,
+French), stable across minutes; the main thread leaves sahd_write;
+/proc/interrupts pdma = 2, jzfb = 3; 0 bus errors, 0 stop stalls.
+Boot gate re-recorded as boot-baseline-v0.75 (message set identical
+to v0.74; only a console line-glue race).
+---
+ hw/mips/x1600.c | 228 +++++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 215 insertions(+), 13 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index c4a71f5..24e226d 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -1232,10 +1232,12 @@ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+ /*     progress count; the driver reads it via ingenic_dma_read_dtc),  */
+ /*     +0x10 CTL (write bit0 = start; the IRQ handler writes 0 on      */
+ /*     completion), +0x18 DDA (descriptor-chain base, physical RAM).   */
+-/*   - global/IRQ block at 0x13421000: +0x04 IRQ pending (1 bit per    */
+-/*     channel, read = raw & enable, write-1-clear acks), +0x0c IRQ    */
+-/*     enable. The probe's +0x00=1 / +0x30=1 writes are stored with    */
+-/*     no pinned semantics (persistent regfile elsewhere).             */
++/*   - global/IRQ block at 0x13421000: +0x04 IRQ pending (raw source   */
++/*     register, 1 bit per REQUEST LINE, read = raw & enable; the ack  */
++/*     is a plain store of the complement — the ingenic_dma handler    */
++/*     writes ~pending), +0x0c IRQ enable (1<<req per start).   */
++/*     The probe's +0x00=1 / +0x30=1 writes are stored with no pinned  */
++/*     semantics (persistent regfile elsewhere).                       */
+ /*   - IRQ: INTC line 3 (DTB interrupts <3> "pdma"); line 4 ("pdmad")  */
+ /*     is the dedicated-line variant reading +0x1010, line 5 the MCU   */
+ /*     node's pdmam (a no-op stub handler in the kernel).              */
+@@ -1270,6 +1272,14 @@ typedef struct X1600Pdma {
+                                      * for everything not interpreted */
+     bool armed[X1600_PDMA_NCH];     /* started, waiting for the MSC cmd */
+     uint32_t desc[X1600_PDMA_NCH];  /* armed chain base (the DDA value) */
++    uint32_t irqbit[X1600_PDMA_NCH];/* pending bit for the armed transfer:
++                                     * the IRQ pending register is indexed
++                                     * by the client's REQUEST LINE (the
++                                     * driver's chan->+0x68, written as
++                                     * 1<<req into +0x100c right before
++                                     * the CTL start), not by the hw
++                                     * channel number (hgl uses req 2 on
++                                     * hw ch1 — observed v0.75). */
+ } X1600Pdma;
+ 
+ static X1600Pdma x1600_pdma_dev;
+@@ -1282,9 +1292,10 @@ static void x1600_pdma_update_irq(X1600Pdma *p)
+     qemu_set_irq(p->irq, pend != 0);
+ }
+ 
+-/* Channel completion path (reserved: the wifi data path turned out to
+- * run on the MSC's internal DMA; the SoC PDMA channels seen in the boot
+- * so far belong to the audio PCM engine and are left armed). */
++/* Channel completion: memory-to-memory chains execute synchronously on
++ * the CTL start write (the wifi data path turned out to run on the MSC's
++ * internal DMA, and MSC FIFO slave descriptors stay armed); audio PCM
++ * and hgl blit chains complete and raise INTC line 3. */
+ 
+ static uint64_t x1600_pdma_read(void *opaque, hwaddr addr, unsigned size)
+ {
+@@ -1309,6 +1320,170 @@ static uint64_t x1600_pdma_read(void *opaque, hwaddr addr, unsigned size)
+     return ret;
+ }
+ 
++/* MSC FIFO addresses (soc_msc slave_config): a descriptor whose SADR or
++ * DADR is one of these is an MSC data-phase transfer — those stay armed
++ * for the MSC model exactly as before (the wifi CMD53 path, patch 0010).
++ * Every other chain is a memory-to-memory transfer (the hgl blits, the
++ * audio PCM engine): execute it synchronously and complete the channel. */
++#define X1600_PDMA_MSC0_RX 0x13450038u
++#define X1600_PDMA_MSC0_TX 0x1345003cu
++#define X1600_PDMA_MSC1_RX 0x13460038u
++#define X1600_PDMA_MSC1_TX 0x1346003cu
++#define X1600_PDMA_MAX_DESC 128
++
++/* Execute one descriptor chain (ingenic_dma descriptor semantics,
++ * decoded from vmlinux.bin 0x80400df8 (memcpy append), 0x80400f08
++ * (slave append), 0x80401f24 (interleaved prep), 0x804023e4 (slave sg
++ * prep), 0x804017ac (IRQ handler) and confirmed against the live
++ * hblit chains (v0.75 runs)):
++ *   32-byte dma_pool records: {cmd, sadr, dadr, dln, icg, 8, pad, pad};
++ *   cmd bit0 = per-descriptor IRQ enable, bit1 = last descriptor of the
++ *   chain, class in cmd bits[23:16]:
++ *     0x80|burst: MSC FIFO slave (fifo addr in sadr/dadr) — NOT executed
++ *                 here, those stay armed for the MSC model.
++ *     0xc0: memcpy — dln[23:0] = burst count, burst code in cmd
++ *           bits[10:8] (inverse table {1:0,2:1,0:2,3:3,4:4,5:5,6:6,7:7}),
++ *           bytes = count << burst_log2, contiguous sadr -> dadr.
++ *     0xc9: interleaved 2D (the hgl blits) — dln[23:16] = rows (<= 255),
++ *           dln[15:0] = row bytes; desc+0x10 = (dst_icg << 16) |
++ *           src_icg; row r copies w bytes from sadr + r*(w + src_icg)
++ *           to dadr + r*(w + dst_icg).
++ *   Chain linkage: dln[31:24] = the NEXT descriptor's page slot — the
++ *   next phys = (this phys & ~0xfff) | (slot << 4); the driver packs
++ *   (desc_phys >> 4) & 0xff of the following pool object there (the
++ *   128-object cap = one 4 KiB pool page). dln[31:24] == 0 with bit1
++ *   clear would loop on itself; the driver never emits that (single-descriptor
++ *   chains carry bit1), so treat slot 0 + no bit1 as chain end.
++ * Completion: the transfer's pending bit (the IRQ-enable bit snapshot
++ * taken from +0x100c at arm time), INTC line 3; the driver's handler
++ * acks (plain-store complement), writes CTL=0 and completes the
++ * waiters (sahd_write blocks in wait_for_completion until then). */
++static void x1600_pdma_exec_chain(X1600Pdma *p, unsigned ch)
++{
++    hwaddr dda = p->desc[ch];
++    hwaddr cur = dda;
++    unsigned i;
++
++    for (i = 0; i < X1600_PDMA_MAX_DESC && cur != 0; i++) {
++        uint32_t d[6];
++        uint32_t cmd, sadr, dadr, dln, icg;
++        bool last;
++
++        if (cur % 4 != 0 || cur > X1600_RAM_SIZE - sizeof(d)) {
++            break;
++        }
++        if (dma_memory_read(&address_space_memory, cur, d, sizeof(d),
++                            MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
++            break;
++        }
++        cmd = d[0]; sadr = d[1]; dadr = d[2]; dln = d[3]; icg = d[4];
++        last = (cmd & 0x2) != 0;
++
++        if (sadr == X1600_PDMA_MSC0_RX || sadr == X1600_PDMA_MSC0_TX ||
++            sadr == X1600_PDMA_MSC1_RX || sadr == X1600_PDMA_MSC1_TX ||
++            dadr == X1600_PDMA_MSC0_RX || dadr == X1600_PDMA_MSC0_TX ||
++            dadr == X1600_PDMA_MSC1_RX || dadr == X1600_PDMA_MSC1_TX) {
++            /* MSC data phase: leave armed, the MSC model moves the data */
++            return;
++        }
++        switch ((cmd >> 16) & 0xff) {
++        case 0xc9: {                            /* interleaved 2D blit */
++            uint32_t rows = (dln >> 16) & 0xff;
++            uint32_t w = dln & 0xffff;
++            uint32_t src_icg = icg & 0xffff;    /* +0x10 = (dst<<16)|src */
++            uint32_t dst_icg = icg >> 16;       /* (prep tail 0x80402060) */
++            uint32_t r;
++
++            qemu_log_mask(LOG_UNIMP,
++                          "x1600-pdma desc cmd=%08x s=%08x d=%08x"
++                          " dln=%08x icg=%08x\n",
++                          cmd, sadr, dadr, dln, icg);
++            if (w == 0) {
++                break;
++            }
++            for (r = 0; r < rows; r++) {
++                uint64_t s = (uint64_t)sadr + r * (w + src_icg);
++                uint64_t dd = (uint64_t)dadr + r * (w + dst_icg);
++                uint32_t left = w;
++
++                while (left > 0) {
++                    uint8_t buf[256];
++                    uint32_t n = left < sizeof(buf) ? left : sizeof(buf);
++
++                    if (s > X1600_RAM_SIZE - n || dd > X1600_RAM_SIZE - n) {
++                        goto next_desc;
++                    }
++                    if (dma_memory_read(&address_space_memory, s, buf, n,
++                                        MEMTXATTRS_UNSPECIFIED) != MEMTX_OK ||
++                        dma_memory_write(&address_space_memory, dd, buf, n,
++                                         MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
++                        goto next_desc;
++                    }
++                    s += n;
++                    dd += n;
++                    left -= n;
++                }
++            }
++            break;
++        }
++        case 0xc0: {                            /* memcpy */
++            static const uint8_t inv_burst[8] = { 2, 0, 1, 3, 4, 5, 6, 7 };
++            uint32_t burst_log2 = inv_burst[(cmd >> 8) & 7];
++            uint64_t bytes = (uint64_t)(dln & 0xffffff) << burst_log2;
++            uint64_t s = sadr, dd = dadr;
++
++            qemu_log_mask(LOG_UNIMP,
++                          "x1600-pdma desc cmd=%08x s=%08x d=%08x"
++                          " dln=%08x (%llu bytes)\n",
++                          cmd, sadr, dadr, dln,
++                          (unsigned long long)bytes);
++            while (bytes > 0) {
++                uint8_t buf[256];
++                uint32_t n = bytes < sizeof(buf) ? bytes : sizeof(buf);
++
++                if (s > X1600_RAM_SIZE - n || dd > X1600_RAM_SIZE - n) {
++                    break;
++                }
++                if (dma_memory_read(&address_space_memory, s, buf, n,
++                                    MEMTXATTRS_UNSPECIFIED) != MEMTX_OK ||
++                    dma_memory_write(&address_space_memory, dd, buf, n,
++                                     MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
++                    break;
++                }
++                s += n;
++                dd += n;
++                bytes -= n;
++            }
++            break;
++        }
++        default:
++            qemu_log_mask(LOG_UNIMP,
++                          "x1600-pdma desc cmd=%08x s=%08x d=%08x"
++                          " dln=%08x (class %02x not executed)\n",
++                          cmd, sadr, dadr, dln, (cmd >> 16) & 0xff);
++            break;
++        }
++next_desc:
++        if (last) {
++            break;
++        }
++        {
++            /* dln[31:24] = the next descriptor's slot within the 4 KiB
++             * pool page (the driver packs (next_phys >> 4) & 0xff) */
++            uint32_t slot = dln >> 24;
++
++            if (slot == 0) {
++                break;                          /* no encoded successor */
++            }
++            cur = (cur & ~(hwaddr)0xfff) | ((hwaddr)slot << 4);
++        }
++    }
++    qemu_log_mask(LOG_UNIMP,
++                  "x1600-pdma ch%u chain executed (%u descs)\n", ch, i);
++    p->regs[X1600_PDMA_PENDING / 4] |= p->irqbit[ch];
++    x1600_pdma_update_irq(p);
++}
++
+ static void x1600_pdma_write(void *opaque, hwaddr addr,
+                              uint64_t val, unsigned size)
+ {
+@@ -1318,7 +1493,11 @@ static void x1600_pdma_write(void *opaque, hwaddr addr,
+         return;
+     }
+     if (addr == X1600_PDMA_PENDING) {
+-        p->regs[X1600_PDMA_PENDING / 4] &= ~val;    /* write-1-clear */
++        /* plain store (raw source register): the ingenic_dma IRQ
++         * handler acks by writing the COMPLEMENT of the read value
++         * (nor v1,zero,s6; sw v1,0x1004) — the completed bits go 0, the
++         * masked raw bits go 1 (harmless, read is enable-gated). */
++        p->regs[X1600_PDMA_PENDING / 4] = val;
+         x1600_pdma_update_irq(p);
+         return;
+     }
+@@ -1328,16 +1507,28 @@ static void x1600_pdma_write(void *opaque, hwaddr addr,
+         unsigned off = addr % X1600_PDMA_CH_SIZE;
+ 
+         if (off == 0x10 && (val & 1)) {
+-            /* start: the driver's order is issue_pending (this write)
+-             * before the peripheral command, so only arm; the data
+-             * moves when the peripheral model runs the matching
+-             * transfer. */
++            /* start (issue_pending): arm, then execute the chain. MSC
++             * FIFO slave descriptors stay armed for the MSC model; a
++             * memory-to-memory chain (hgl blits, audio PCM) moves its
++             * data synchronously and completes the channel now — the
++             * driver's handler acks, writes CTL=0 and wakes the
++             * wait_for_completion() writers (sahd_write blocks here). */
+             p->armed[ch] = true;
+             p->desc[ch] = p->regs[(ch * X1600_PDMA_CH_SIZE + 0x18) / 4];
++            {
++                /* the driver programs +0x100c = 1<<request_line in the
++                 * same start_trans call, immediately before this CTL
++                 * start — snapshot the single enabled bit as this
++                 * transfer's pending bit */
++                uint32_t en = p->regs[X1600_PDMA_ENABLE / 4];
++
++                p->irqbit[ch] = (en && !(en & (en - 1))) ? en : (1u << ch);
++            }
+             qemu_log_mask(LOG_UNIMP,
+                           "x1600-pdma ch%u start ctl=%#llx dda=%#llx\n",
+                           ch, (unsigned long long)val,
+                           (unsigned long long)p->desc[ch]);
++            x1600_pdma_exec_chain(p, ch);
+         }
+         return;
+     }
+@@ -1817,7 +2008,9 @@ static X1600Lcd x1600_lcd_dev;
+ 
+ static void x1600_lcd_update_irq(X1600Lcd *s)
+ {
+-    qemu_set_irq(s->irq, (s->regs[0x2010 / 4] & 0x20000u) != 0);
++    /* STATE bit17 = frame EOF, bit7 = engine stop done — both wake the
++     * threaded handler (jzfb_irq_handler processes either). */
++    qemu_set_irq(s->irq, (s->regs[0x2010 / 4] & 0x20080u) != 0);
+ }
+ 
+ /* Live display (v0.70): upload the frame the LAST descriptor stored at
+@@ -1946,6 +2139,15 @@ static void x1600_lcd_write(void *opaque, hwaddr addr,
+          * (frame_num=2: either descriptor shows the visible frame). */
+         fprintf(stderr, "x1600_lcd: fb descriptor @ %08x\n", (uint32_t)val);
+     }
++    if (addr == 0x2000 && val == 0x10) {
++        /* disable_fb (soc_fb.ko 0xeb0): writes 0x10 to +0x2000 (the IRQ
++         * enable word, SLCD stop-done bit) then spins on jzfb+0x44 until
++         * jzfb_irq_handler sees STATE bit7 and clears it — the engine
++         * stop-done IRQ. Without it the blank path stalls 1 s per frame
++         * ("is_wait_stop_cnt >= 100"). Latch bit7 + assert the line. */
++        s->regs[0x2010 / 4] |= 0x80u;
++        x1600_lcd_update_irq(s);
++    }
+     if (addr == 0x1004 && (val & 1)) {
+         /* frame kick: descriptor stored at +0x1000, EOF latches */
+         s->regs[0x2010 / 4] |= 0x20000u;
+-- 
+2.53.0
+

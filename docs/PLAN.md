@@ -161,18 +161,38 @@ qemu-wifi-srom; supersedes the earlier headers for the wifi item —
   (MAC 00:90:4c:11:22:33) and parks OFF at init like the driver wants;
   the ifup/firmware-download flow (devreset ON) is future work if the
   trace demands it.
-- **Next (M2 exit):** 1. wifi done through insmod (v0.74). 2. next step
-  toward `S92_03_start_music_player` **= M2 EXIT**: the player/theme
-  chain already starts (rcS reaches the product app; the music player
-  logs "(SYS:D) Libsystem Build ..." and the audio manager imports
-  devices); remaining theme/first-frame work per the research brief:
-  BT console pollution (move the console to ttyS2 0x10032000 — the
-  sibling session owns UART2/cmdline/LCD-tap), fb readback hook, NO
-  panel model needed. Optional wifi followups (only if the trace
-  demands): the ifup/firmware-download flow (dhd_bus_devreset ON →
-  dhdsdio_download_firmware, fw_bcm43438a1.bin ~350 KB through the
-  MSC internal DMA) and the AIC/audio PDMA completion.
-- Boot evidence lives in docs/M1-bringup-log.md (v0.1–v0.68),
+- **Status (M3 opening round, v0.75, worktree qemu-player-ui):**
+  **the player's first UI frame renders** — the player's first-boot
+  Language selection page (简体中文/繁體中文/English/日本語/한국어/
+  Français) is on the emulated screen, stable across minutes of
+  polling (HMP screendumps on VNC 127.0.0.1:5910). The blocker was
+  the SoC PDMA: the hgl graphics layer draws every frame through
+  /dev/sa_hgl_dma → an ingenic_dma descriptor chain →
+  wait_for_completion on the PDMA IRQ, and the v0.71 model only armed
+  channels. v0.75 executes memory-to-memory chains (slot-linked
+  32-byte pool descriptors; dln[31:24] = the next descriptor's page
+  slot; 0xc9 interleaved row blits, 0xc0 memcpys; MSC-FIFO descriptors
+  stay armed) with the IRQ pending register indexed by the client's
+  REQUEST LINE (not the hw channel) and a plain-store complement ack,
+  plus the LCD engine stop-done IRQ for the blank path. Patch 0114;
+  gate baseline re-recorded as boot-baseline-v0.75 (message set
+  identical to v0.74), gate PASS. Operational: the SFC model mmaps
+  nand-r1.bin read-write — never run two qemu instances from the same
+  worktree directory (concurrent runs shred the UBIFS volume);
+  rebuild the image with tools/x1600/make_nand_image.py before gate
+  runs (the "default file-system created" marker only exists on a
+  fresh volume).
+- **Next (M3 continuation):** 1. input events into the running GUI
+  (the adc_key/hyn_ts devices load; the GPIO/cst8xx event delivery is
+  the next model gap if interaction is wanted — the power-saving
+  blank path now completes cleanly, watch whether the idle timer
+  blanks the screen and whether a synthetic event wakes it). 2. the
+  audio path (AIC + PDMA PCM channels now COMPLETE — the AIC
+  register model itself is still the stub "open codec dev error!"
+  path). 3. optionally exercise a language choice to confirm the
+  first-boot flow advances to the main UI. The ifup/firmware-download
+  wifi flow stays optional (the player does not block on it).
+- Boot evidence lives in docs/M1-bringup-log.md (v0.1–v0.75),
   docs/M2-stubs-log.md (v0.66–v0.67), and
   docs/research-brief-stubs-player-launch.md.
 
@@ -346,29 +366,35 @@ Remaining — Phase 1: get rcS past the modules to the player launch
 Exit (M2): rootfs mounts (DONE); rcS runs to the player's attempt;
 boot identical to flashing stock.
 
-### M3 — player UI runs *(~2–4 days total at current pace)*
+### M3 — player UI runs *(core DONE v0.75 — the first UI frame renders)*
 Phase 2 — player runs, UI visible:
-- [ ] Walk the player's known probe sequence (fb0 → input → sa-config
-      → efuse → mtd5) fixing each fault as it appears (guest oops =
-      task list, same method as M1/M2)
-- [ ] **/dev/fb0**: confirm soc_fb (already loads clean) serves a
-      framebuffer without panel init; if it needs the panel, model
-      LG35583 as an I2C write-sink (fixed init sequence)
-- [ ] **See the UI**: framebuffer is guest RAM — dump to PNG (gdb/
-      memory); optionally route LCD I2C writes as live framebuffer
-      updates for real-time view
+- [x] Walk the player's known probe sequence (fb0 → input → sa-config
+      → efuse → mtd5) fixing each fault as it appears — all of those
+      load/open clean; the REAL blocker was elsewhere: the hgl blit
+      path (write() to /dev/sa_hgl_dma → dmaengine → SoC PDMA
+      completion) blocked forever (v0.75, patch 0114)
+- [x] **/dev/fb0**: soc_fb serves the framebuffer without panel init
+      (fb_bpp=16, fb_buffers=2, rmem-backed; the live display surface
+      reads the panned descriptor — patch 0112, v0.70)
+- [x] **See the UI**: the player's first-boot Language selection page
+      renders on the live display (HMP screendumps; VNC feed for the
+      manager to eyeball)
 - [ ] Input: keyboard via GPIO (loaded); touch cst8xx I2C slave only
-      if interaction is wanted
+      if interaction is wanted — the GUI is alive (wchan poll) and the
+      power-saving blank path completes; synthetic input events are
+      the next step for interacting with the first-boot flow
 
 Phase 3 — sound (the one real model left):
 - [ ] **AIC + PDMA audio engine**: ALSA PCM → AIC regs → DMA →
-      CS43131 codec (I2C sink). Biggest remaining model; player is
-      expected to run without it first (strace: degrades gracefully)
+      CS43131 codec (I2C sink). The PDMA side now COMPLETES chains
+      (v0.75) — the PCM channel arms will deliver IRQs; the AIC
+      register model itself ("open codec dev error!" at player start)
+      is still a stub and is the remaining work. Player runs without
+      it first (strace: degrades gracefully)
 
-Exit: UI renders (viewer: QEMU fb dump → PNG, or a live windowed
-variant chosen for least CI friction). No firmware bytes are modified.
-The regression gate is then: any OS change → repack → boot in VM →
-screen renders.
+Exit: UI renders (**DONE for the first frame**; the regression gate
+any OS change → repack → boot in VM → screen renders still needs a
+scripted fb readback, tools/fb-dump.py works off the +0x1000 tap).
 
 Ranked risks (updated with M2 velocity data): (a) the R5/-ERANGE
 CMD52/CCCR decode being weirder than a RES byte-layout fix (fallback:

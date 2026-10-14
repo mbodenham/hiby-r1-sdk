@@ -1503,3 +1503,127 @@ path + clean attach; the round is gated
 - **Gate:** baseline re-recorded as docs/traces/boot-baseline-v0.74.txt
   (the dmesg window changed materially: the wifi attach messages replaced
   the six oopses); tools/x1600-boot-test.sh PASSes against it.
+
+## v0.75 (2026-10-14, M3 opening round, worktree qemu-player-ui) - the
+player's first UI frame reaches the screen: the SoC PDMA executes
+memory-to-memory descriptor chains (the hgl blit path)
+
+- **Symptom:** rcS completes, hiby_player's GUI stack runs to
+  "lg_activity_mng: running activity lg_activity_main" +
+  "event_input: event_x1000_detect" — and the screen stays on the
+  theme:1 splash forever. Whole-boot console count of fb pan_display
+  kicks: 2 (both the jpeg splash); zero afterwards. ~30 s later the
+  GUI idle path blanks the panel: soc_fb.ko disable_fb spins 100×10 ms
+  and prints "is_wait_stop_cnt >= 100" (v0.74 runs 55-85 s), then the
+  touch suspends ("hyn_ts_suspend ... ret=-145").
+- **Smoking gun (live guest inspection via the respawning console
+  shell, run2):** /proc/<pid hiby_player>/task/*/wchan — the main
+  thread blocks in **sahd_write** (sa_hgl_dma.ko), /proc/<pid>/stack =
+  sahd_write+0x200/0x260 (the wait_for_completion call);
+  /proc/interrupts shows `11: 0 INTC 3 pdma` — the PDMA IRQ had NEVER
+  fired. The HiBy graphics layer (hgl_fb, statically linked into
+  hiby_player) opens /dev/sa_hgl_dma and every GUI draw is a write()
+  of a 16-byte blit command; the kernel module builds an
+  ingenic_dma descriptor chain, submits it through the dmaengine API
+  (device_prep at dma_device+132 = tingenic_dma_prep_interleaved_dma,
+  0x80401f24) and blocks in wait_for_completion until the PDMA IRQ
+  (INTC line 3) completes it. The v0.71 PDMA model only ARMED
+  channels ("waiting for the MSC data phase") — a pure memory-to-
+  memory blit chain never executed, never completed: the player's
+  first draw() call blocked forever, the GUI never drew, the screen
+  never left the splash.
+- **Descriptor format, decoded from the vmlinux ingenic_dma driver
+  (symbols via /tmp/kilo/dhd2/ksall.txt: tingenic_dma_prep_dma_memcpy
+  0x804012a8, prep_interleaved 0x80401f24, prep_slave_sg 0x804023e4,
+  pdma_int_handler 0x804017ac, append helper 0x80400df8) and
+  CONFIRMED against the live armed chain (devmem 0x12ab000 via the
+  guest shell, then monitor xp dumps):**
+  - 32-byte dma_pool records {cmd, sadr, dadr, dln, icg, 8, pad, pad}
+    (alloc_chan_resources: dma_pool_create size=32; swdesc+0x38 =
+    virtual ptr array, +0x3c = physical addr array; start_trans writes
+    phys_array[cur] to the channel DDA reg +0x18).
+  - cmd bit0 = per-descriptor IRQ enable, bit1 = last descriptor of
+    the chain; class in cmd bits[23:16]: 0xc0 = memcpy (dln[23:0] =
+    burst count, burst code in cmd bits[10:8], inverse table
+    {1:0,2:1,0:2,3:3,4:4,5:5,6:6,7:7}), 0xc9 = interleaved 2D (the hgl
+    blits: dln[23:16] = rows <= 255, dln[15:0] = row bytes; +0x10 =
+    (dst_icg << 16) | src_icg), 0x80|burst = MSC FIFO slave (fifo
+    address in sadr/dadr — those stay armed for the MSC model).
+  - **Chain linkage: dln[31:24] = the NEXT descriptor's page slot** —
+    the driver packs (next_desc_phys >> 4) & 0xff of the following
+    pool object into the previous descriptor's dln (prep_slave_sg
+    0x804024a4 ext v0,v0,0x4,0x8 / sll 0x18 / or into prev dln);
+    next phys = (cur & ~0xfff) | (slot << 4). The 128-desc cap =
+    one 4 KiB pool page.
+- **First live blit (run2/3 evidence):** ch1, DDA 0x12a8000,
+  desc {cmd=0x00C90706, sadr=0x03000020, dadr=0x026BB800,
+  dln=0x005003C0} = 80 rows × 960 B — the hgl buffer (0x03000020,
+  filled 0xE7BF by the player) into the fb buffer (0x026BB800; one
+  full frame = 0xBB800 = 768000 = 480×800×2). The second write()
+  chains 3 descriptors: 255 + 255 + 210 = 720 more rows = the full
+  800-row frame.
+- **Fix 1 — PDMA chain execution (x1600_pdma_exec_chain):** on the
+  CTL start write the model now walks the chain (slot-linked, 128
+  cap), executes 0xc9 interleaved row copies and 0xc0 memcpys with
+  RAM bounds checks, skips MSC-FIFO descriptors (those keep the old
+  armed behavior byte-for-byte), then completes the channel. IRQ
+  semantics decoded the hard way in three steps:
+  (a) the pending bit is NOT 1<<hw_channel — the driver writes
+      +0x100c = 1<<*(chan+0x68) (the client's REQUEST LINE — hgl =
+      req 2) in the same start_trans before the CTL start, so the
+      model snapshots the single enabled bit at arm time (irqbit[]);
+      with hw ch1 armed, the enable came out 0x4 (run3: IRQ 0 with
+      bit1, then "dma0chan2" channel handling once bit2 delivered).
+  (b) +0x1004 is a RAW SOURCE register, not W1C: the handler acks by
+      writing the COMPLEMENT of the read value (nor v1,zero,s6; sw
+      v1,0x1004). The first implementation's write-1-clear left the
+      bit set → a 353k-line "channel irq with no active transfer"
+      IRQ storm (run4). Plain store of the written value (read is
+      still enable-gated) is the semantics that matches the driver.
+- **Fix 2 — LCD engine stop-done IRQ:** disable_fb writes 0x10 to
+  LCD +0x2000 (IRQ enable word, SLCD stop bit) then waits for
+  jzfb+0x44 to clear; the model now latches STATE bit7 and asserts
+  IRQ 31 on that write (x1600_lcd_update_irq gates on
+  STATE & 0x20080 now), so the blank path completes in one IRQ
+  instead of stalling 1 s ("is_wait_stop_cnt >= 100" gone).
+- **A wrong first draft of the walk (24-byte stride + a raw-copy
+  fallback for undecoded classes) read pool padding as descriptors
+  and the fallback copied garbage — guest data bus errors
+  ("Data bus error, epc == 40000010", then do_be/do_ade faulting
+  recursively, run5/run7). The 32-byte slot-linked walk with no
+  fallback (unknown classes log and skip) is clean: run8 = 4
+  descriptors executed, 0 "Data bus error" lines.
+- **RESULT (run8/run9, /tmp/kilo/ui/):** the player's first-boot UI
+  renders on the emulated screen — the Language selection page
+  ("Language": 简体中文 / 繁體中文 / English / 日本語 / 한국어 /
+  Français, antialiased text, correct theme colors), stable across
+  45+ s of polling (no blank, no corruption); the player's main
+  thread leaves sahd_write (wchan poll_schedule_timeout);
+  /proc/interrupts `11: 2 INTC 3 pdma`; /proc/interrupts jzfb = 3
+  (2 splash pans + 1 stop-done). Evidence: /tmp/kilo/ui/run8/u1-*.png,
+  u2-*.png (HMP screendumps on VNC 127.0.0.1:5910).
+- **Boot-gate impact:** none expected — the blit path starts ~50 s
+  (player stage), the gate window ends at the UBIFS marker (~19 s);
+  the only pre-gate model change is the LCD +0x2000 latch, which no
+  pre-gate flow writes (0 prior is_wait_stop in any boot log).
+- **Gate:** re-recorded as docs/traces/boot-baseline-v0.75.txt (fresh
+  image via tools/x1600/make_nand_image.py — the UBIFS formats
+  in-guest on a fresh volume, so the terminal marker
+  "default file-system created" only exists on a fresh image; rebuild
+  before every gate run); tools/x1600-boot-test.sh PASSes
+  (297 distinct messages, 158 structural lines). The v0.75 baseline's
+  message set is byte-identical to v0.74's (the first comparison
+  failed only on a console line-glue race: the
+  `ubi1: background thread "ubi_bgt1d"` line printed glued onto the
+  "UBI device number" line — a uart write-batching race, not a model
+  change; the v0.74 capture had them split).
+- **Operational lesson (cost: one shredded userdata volume):** the
+  SFC model mmaps nand-r1.bin NEXT TO THE KERNEL read-write — two
+  qemu instances booted from the same worktree directory (a gate run
+  + a verification run) tear each other's UBIFS writes
+  (2017 "ubifs_scan: bad node" lines in the concurrent gate run).
+  The demo VM hiby-live-demo boots from the main repo's copy, so it
+  is safe from worktree runs; worktree-local runs must stay
+  serialized one VM at a time. Recovery = re-run
+  tools/x1600/make_nand_image.py (deterministic: md5 ae41e974…,
+  matching the baseline header).
