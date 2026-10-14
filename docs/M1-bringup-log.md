@@ -2225,3 +2225,31 @@ idle-blank wake (entries appended as decode/verify progresses).
   take the display down). Recovery = full guest reboot. Player swaps
   are safe only when the GUI is idle (no pending blits), and even then
   prefer letting the guest reboot.
+- **Round verification (v0.79 close-out)**:
+  - (a) freeze signature: the listview print is stock-firmware behavior
+    (present in every boot incl. all verified-working ones) — it cannot
+    and should not disappear without firmware modification; documented
+    as benign with the decode + the working-boot proof above.
+  - (b) tap->advance: VERIFIED on this build (the corrected QMP recipe,
+    pre-blank window): /tmp/kilo/ui2/i_before.png (the 6-row picker) ->
+    i_after.png (the bottom third dark, rows re-laid — the next page
+    rendering) -> i_settled.png, plus the language-applied GUI re-init
+    prints in the console.
+  - (c) gate: tools/x1600-boot-test.sh PASS (297 distinct messages, 158
+    structural lines vs docs/traces/boot-baseline-v0.75.txt; fresh
+    image ae41e974...; NO re-record needed — the model diff is empty,
+    dmesg unchanged).
+  - (d) feed: the demo VM restarted on this build as hiby-live-demo
+    (persistent): -M x1600, VNC 127.0.0.1:0 (=5900, ss-verified), HMP
+    unix:/tmp/kilo/livedisp/mon.sock, QMP
+    unix:/tmp/kilo/livedisp/qmp.sock, console file
+    /tmp/kilo/livedisp/console.log. No -no-reboot: the stock 5-min
+    power-save shutdown reboots the VM (the faithful device cycle), so
+    the feed self-heals and re-shows the picker each cycle; early
+    post-shutdown cycles may take the fb_blank(4) variant (touch dead
+    while blanked) until the variant flips (v0.78 boots 7/8/10). The
+    picker is interactive ~25-30 s after each (re)boot; the manager's
+    tap recipe: QMP input-send-event abs x=16384 y=16282 (= screen
+    240,398) + left press, ~140-350 ms hold, release, WITHIN the
+    window. Worktree state: vendored qemu UNCHANGED (no 0117 patch —
+    nothing to export), docs+tools committed on qemu-listview-plane.
