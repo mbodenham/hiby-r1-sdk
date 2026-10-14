@@ -1,0 +1,167 @@
+From dc151d6944104587faf8c4948b8f4bf6f215d834 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Wed, 14 Oct 2026 10:01:50 +0900
+Subject: [PATCH] =?UTF-8?q?x1600:=20DHD=20backplane=20continuation=20?=
+ =?UTF-8?q?=E2=80=94=20IOR=20mirror,=20fn1=20space,=20CMD53/PIO,=20backpla?=
+ =?UTF-8?q?ne=20(state=20from=20prior=20session)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ hw/mips/x1600.c | 99 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 98 insertions(+), 1 deletion(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 0868d89..889e7b0 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -411,6 +411,11 @@ static const MemoryRegionOps x1600_cgu_ops = {
+ #define STAT_END_CMD_RES    (1u << 11)
+ #define STAT_CLK_EN         (1u << 8)
+ #define STAT_TIME_OUT_RES   (1u << 1)
++#define STAT_RXFIFO_RDY     (1u << 6)   /* soc_msc PIO RX loop polls this */
++
++#define MSC_RXFIFO          0x38        /* RX data port (soc_msc reads words
++                                         * from here after STAT bit6) */
++#define MSC_TXFIFO          0x3c
+ 
+ #define CMDAT_RESPONSE_MASK 7u
+ #define CMDAT_BUS_WIDTH_SHF 9
+@@ -430,6 +435,13 @@ typedef struct X1600Msc {
+     uint8_t cccr[0x1000];       /* func0 space: CCCR 0x00-0xff, FBRs,
+                                  * CIS area at 0x1000+ (see init) */
+     uint8_t cis[0x400];         /* CIS chains, mapped at fn0 0x1000 */
++    uint8_t fn1[0x11010];       /* fn1 space: F1 regs (SBADDR window regs
++                                 * 0x1000a-c, ChipClkCSR 0x1000e) */
++    uint8_t fifo[512];          /* CMD53 data phase (PIO: soc_msc pops
++                                 * words from MSC_RXFIFO) */
++    unsigned fifo_len, fifo_pos;
++    uint8_t bp[0x8000];         /* backplane RAM, maps 0x18000000+ (the SI
++                                 * enum: SDIO core @+0, ARM CM3 @+0x1000) */
+     unsigned res_reads;         /* RES byte-window state, see res_pop */
+     unsigned res_count;
+     uint8_t res_bytes[20];      /* 4 (32-bit resp) or 17 (R2) */
+@@ -461,11 +473,37 @@ static uint32_t x1600_msc_cmd52(X1600Msc *s, uint32_t arg)
+         space = s->cccr + addr;
+     } else if (func == 0 && addr - 0x1000 < sizeof(s->cis)) {
+         space = s->cis + (addr - 0x1000);
++    } else if (func == 1 && addr < sizeof(s->fn1)) {
++        /* fn1 space. The DHD's backplane window lives here:
++         * SBADDR0-2 @ 0x1000a-c hold backplane address bits [15:8],
++         * [23:16], [31:24] (brcmfmac sbsdio layout); the 32K data bank
++         * is reached via CMD53 at fn1 0x8000-0xffff. ChipClkCSR
++         * (0x1000e) mirrors clock-request bits into the avail bits the
++         * DHD's dhdsdio_probe_attach polls for ("wrote 0x28 read
++         * 0x00" -> probe fail, v0.66). */
++        if (addr == 0x1000e) {
++            if (write) {
++                s->fn1[addr] = data;
++            }
++            data = s->fn1[addr];
++            data |= (data & 0x20) ? 0x40 : 0;   /* ALP_AVAIL */
++            data |= (data & 0x10) ? 0x80 : 0;   /* HT_AVAIL */
++            return data;
++        }
++        space = s->fn1 + addr;
+     } else {
+         return 0;
+     }
+     if (write) {
+         *space = data;
++        /* CCCR 0x02 (IO Enable) -> 0x03 (IO Ready): the vendor core's
++         * sdio_enable_func writes IOE then polls CCCR 0x03 for the same
++         * bit (v0.66 trace: "W 0x02=0x02" then ~45x "R 0x03" -> 0x00 ->
++         * -ETIMEDOUT, "bcmsdh_sdmmc: Failed to enable F1 Err: 0xffffffc2").
++         * A real card raises IOR when the function is on. */
++        if (space == s->cccr + 0x02) {
++            s->cccr[0x03] = data;
++        }
+     }
+     return *space;
+ }
+@@ -546,7 +584,39 @@ static void x1600_msc_command(X1600Msc *s)
+         case 52:                        /* CMD52 IO_RW_DIRECT (R5) */
+             res = x1600_msc_cmd52(s, arg);
+             break;
+-        case 53:                        /* CMD53: data path, later */
++        case 53: {                      /* CMD53 IO_RW_EXTENDED (R5) */
++            /* arg = {rw(31), fn(30:28), blkmode(27), op(26), addr(25:9),
++             * count(8:0)}; the vendor core packs fn at <<28
++             * (mmc_io_rw_direct_host: "sll s2,s2,0x1c"). The DHD's
++             * backplane reads are fn1 byte-mode CMD53s into the 32K
++             * window bank at 0x8000-0xffff; the data rides the PIO
++             * FIFO (soc_msc polls STAT bit6, then reads MSC_RXFIFO
++             * 0x38 one word at a time). */
++            unsigned c53fn = (arg >> 28) & 7;
++            unsigned c53addr = (arg >> 9) & 0x1ffff;
++            bool c53wr = (arg >> 31) & 1;
++            bool c53blk = (arg >> 27) & 1;
++            unsigned c53cnt = c53blk ? (arg & 0x1ff) * s->regs[MSC_BLKLEN / 4]
++                                     : (arg & 0x1ff);
++            if (!c53wr && c53fn == 1 && c53addr >= 0x8000 &&
++                c53cnt <= sizeof(s->fifo)) {
++                uint32_t sbaddr = s->fn1[0x1000a] | (s->fn1[0x1000b] << 8) |
++                                  (s->fn1[0x1000c] << 16);
++                uint32_t bp = (sbaddr << 8) | (c53addr & 0x7fff);
++                unsigned i;
++                for (i = 0; i < c53cnt; i++) {
++                    uint32_t off = (bp - 0x18000000u + i) & (sizeof(s->bp) - 1);
++                    s->fifo[i] = s->bp[off];
++                }
++                s->fifo_len = c53cnt;
++                s->fifo_pos = 0;
++                s->regs[MSC_STAT / 4] |= STAT_RXFIFO_RDY;
++                res = 0;
++            } else {
++                timeout = true;
++            }
++            break;
++        }
+         default:
+             timeout = true;
+             break;
+@@ -586,6 +656,18 @@ static uint64_t x1600_msc_read(void *opaque, hwaddr addr, unsigned size)
+     if (addr == MSC_RES && size == 4) {
+         ret = x1600_msc_res_pop(s);
+         s->regs[MSC_RES / 4] = ret;     /* mirror for the REG dump path */
++    } else if (addr == MSC_RXFIFO) {
++        /* PIO data phase: soc_msc polls STAT bit6 then pops words. The
++         * FIFO delivers the bytes LSB-first on the wire. */
++        unsigned i;
++        ret = 0;
++        for (i = 0; i < 4; i++) {
++            ret |= (uint32_t)(s->fifo_pos < s->fifo_len ?
++                              s->fifo[s->fifo_pos++] : 0) << (8 * i);
++        }
++        if (s->fifo_pos >= s->fifo_len) {
++            s->regs[MSC_STAT / 4] &= ~STAT_RXFIFO_RDY;
++        }
+     } else {
+         ret = (addr < sizeof(s->regs)) ? s->regs[addr / 4] : 0;
+     }
+@@ -682,6 +764,21 @@ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+ {
+     memset(s->cccr, 0, sizeof(s->cccr));
+     memset(s->cis, 0, sizeof(s->cis));
++    memset(s->fn1, 0, sizeof(s->fn1));
++    memset(s->bp, 0, sizeof(s->bp));
++    /* Backplane (maps 0x18000000+): the SI enum. Word 0 = the SDIO core's
++     * id (Broadcom manf 0x4243; the core id/rev bytes are a placeholder
++     * until the DHD's own checks reveal the expected bits); +0x1000 = the
++     * ARM CM3 core (core id 0x823). The DHD reads the F1 signature at
++     * 0x18000000 and walks the enum for the ARM/SOCRAM/chipcommon cores. */
++    {
++        uint32_t sig = 0x424380a1u;
++        s->bp[0] = sig; s->bp[1] = sig >> 8; s->bp[2] = sig >> 16;
++        s->bp[3] = sig >> 24;
++        sig = 0x42438231u;
++        s->bp[0x1000] = sig; s->bp[0x1001] = sig >> 8;
++        s->bp[0x1002] = sig >> 16; s->bp[0x1003] = sig >> 24;
++    }
+     s->cccr[0x00] = 0x11;               /* CCCR rev 1.0, SDIO spec rev 1.1 */
+     /* CIS pointers: the kernel's sdio_read_cis reads the 3-byte pointer
+      * from SDIO_FBR_BASE(fn)+0x09..0x0b — for fn=0 that's CCCR 0x09-0x0b
+-- 
+2.53.0
+

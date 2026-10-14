@@ -1,0 +1,107 @@
+From b06164b3da173591883087ac3f16b2399b37c22a Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Tue, 13 Oct 2026 17:09:36 +0900
+Subject: [PATCH] =?UTF-8?q?x1600:=20SDIO=20card=20advertises=20NF=3D2=20+?=
+ =?UTF-8?q?=20FBR2/F2=20CIS=20=E2=80=94=20the=20DHD=20notify=20chain=20nee?=
+ =?UTF-8?q?ds=20func2?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Root cause of the v0.65 "DHD never registers its sdio driver": the DHD
+power-up loop arms notify_semaphore via dhd_bus_reg_sdio_notify ->
+sdio_func_reg_notify, which registers dummy_sdmmc_driver and completes
+the semaphore only from dummy_probe when func->num == 2; with the card
+advertising one IO function (CMD5 R4 NF=1) no func2 exists, every
+down_timeout(200) times out (4x "failed to power up DHD generic
+adapter"), and dhd_wifi_platform_load returns -19 BEFORE calling
+dhd_bus_register — so sdio_register_driver(bcmsdh_sdmmc_driver) never
+happened and bcmsdh_sdmmc_probe never ran (v0.65 gdb evidence).
+
+Vendor-core decode (vmlinux.bin): mmc_attach_sdio creates func 1..NF
+from (ocr>>28)&7 and prefills func->vendor/device from the common CIS;
+card->sdio_func[] lives at card+728 (+4 per func) and sdioh_attach
+hard-fails ("func 1 or 2 is null") unless BOTH exist; per-func FBR reads
+are at fn0 (num<<8)+0x00/0x01 and the CIS pointer at +0x09..0x0b.
+
+Fix: CMD5 R4 NF=2 (0xa0000000), FBR2 CIS pointer -> 0x1300, and an F2
+CIS chain {MANFID 0x02d0/0x0000, FUNCID, Azurewave marker tuple
+81 01 01, END}. Verified by boot: the power-up loop completes on the
+first attempt (no more 5x power cycles), bcmsdh_register runs, and
+bcmsdh_sdmmc_probe now executes for fn1 and fn2.
+---
+ hw/mips/x1600.c | 38 +++++++++++++++++++++++++++++++++++---
+ 1 file changed, 35 insertions(+), 3 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 4737f0f..fb5d6cc 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -490,13 +490,20 @@ static void x1600_msc_command(X1600Msc *s)
+         case 0:                         /* GO_IDLE */
+             break;
+         case 5:                         /* CMD5 IO_SEND_OP_COND (R4) */
+-            /* card's own OCR: ready (bit31), 1 IO function (bits30:28),
++            /* card's own OCR: ready (bit31), TWO IO functions (bits30:28),
+              * and the FULL 1.65-3.6V window (bits 7-23) — the host's
+              * ocr_avail is derived from the mscX_voltage_min/max module
+              * params (1800-3300mV here) and must intersect the card's
+              * window or mmc_select_voltage bails with "no support for
+-             * card's volts" (-EINVAL, v0.64 boot13) */
+-            res = 0x90000000u | 0x00ffff80u | (arg & 0x00ffff80u);
++             * card's volts" (-EINVAL, v0.64 boot13).
++             * NF=2 is load-bearing: the vendor core creates func->num 1..NF
++             * from (ocr>>28)&7 (mmc_attach_sdio 0x8038fe40 loop) and the
++             * DHD needs a REAL func2 — its sdioh_attach hard-checks
++             * card->sdio_func[1]/[2] ("func 1 or 2 is null"), and the
++             * notify semaphore that unblocks dhd_wifi_platform_load's
++             * power-up loop is up()'d by dummy_probe only for func->num==2
++             * (v0.66 decode; NF=1 left the loop deadlocking to -19). */
++            res = 0xa0000000u | 0x00ffff80u | (arg & 0x00ffff80u);
+             break;
+         case 3:                         /* CMD3 SET_RELATIVE_ADDR (R6) */
+             s->rca = 1;
+@@ -623,6 +630,23 @@ static const uint8_t x1600_msc_cis_f1[] = {
+     0xff,                               /* CISTPL_END */
+ };
+ 
++/* Function 2 chain (fn0 0x1300). The DHD's dummy_sdmmc_driver binds fn2
++ * (id-table entry {class any, 0x02d0, device 0}) and dummy_probe completes
++ * the notify semaphore ONLY for func->num == 2 — without fn2 the DHD's
++ * power-up loop deadlocks to -19 before dhd_bus_register ever runs.
++ * MANFID device 0x0000 matches id-table entry[0] exactly. The last tuple
++ * {code 0x81, size 1, data 1} is the vendor "Azurewave Module" marker the
++ * fn2 probe path scans the cached tuple list for (cywdhd
++ * bcmsdh_sdmmc_probe 0x88a84: entry+4..6 == 81 01 01 -> cis_chipvendor=0x81,
++ * "Got the chip vendor, tuple code=0x81, Azurewave Module"). */
++static const uint8_t x1600_msc_cis_f2[] = {
++    0x20, 0x04, 0xd0, 0x02, 0x00, 0x00, /* CISTPL_MANFID: vendor 0x02d0,
++                                         * device 0x0000 */
++    0x21, 0x02, 0x00, 0x00,             /* CISTPL_FUNCID */
++    0x81, 0x01, 0x01,                   /* Azurewave module marker tuple */
++    0xff,                               /* CISTPL_END */
++};
++
+ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+                            int irq_line, qemu_irq intc_line)
+ {
+@@ -639,8 +663,16 @@ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+     s->cccr[0x109] = 0x00;              /* FBR1 CIS ptr -> 0x1200 */
+     s->cccr[0x10a] = 0x12;
+     s->cccr[0x10b] = 0x00;
++    s->cccr[0x209] = 0x00;              /* FBR2 CIS ptr -> 0x1300 (fn2 is
++                                         * required by the DHD: sdioh_attach
++                                         * checks card->sdio_func[1] AND [2],
++                                         * and dummy_probe notifies only on
++                                         * func->num == 2) */
++    s->cccr[0x20a] = 0x13;
++    s->cccr[0x20b] = 0x00;
+     memcpy(s->cis, x1600_msc_cis_common, sizeof(x1600_msc_cis_common));
+     memcpy(s->cis + 0x200, x1600_msc_cis_f1, sizeof(x1600_msc_cis_f1));
++    memcpy(s->cis + 0x300, x1600_msc_cis_f2, sizeof(x1600_msc_cis_f2));
+     s->sdio_card = sdio_card;
+     s->irq = intc_line;
+     memory_region_init_io(&s->mmio, NULL, &x1600_msc_ops, s,
+-- 
+2.53.0
+
