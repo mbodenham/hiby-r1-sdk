@@ -1031,3 +1031,77 @@ model already serves from the backplane window.
   0x18004000) and dhdsdio_download_firmware.
 - Boot-state files: /tmp/kilo/dhd2/b68{a..j}* (serial + -d unimp MSC
   traces), tools/patches/qemu-x1600/0007 + 0008 exported.
+
+## v0.69 (2026-10-14, gci round) - the "GCI/PMU poll loop" decoded: it is the
+RAM-size walk; unmapped backplane now reads 0xffffffff (patch 0009)
+
+- **The poll loop is not a GCI/PMU poll.** Full-stream decode of
+  /tmp/kilo/dhd2/b68j-unimp.log (1,092,800 MSC commands) with a new
+  streaming decoder (/tmp/kilo/gci/mscdec_stream.py, mscsum.py,
+  mscsample.py, bpmax.py): after si_doattach's chipcommon reads
+  (badge @0x18000000 = 0x1000a9a6 via SBADDRHIGH=0x18 window, then
+  chipcommon+0xfc) the DHD sets SBADDRLOW/MID=0 and issues a LINEAR
+  WORD-BY-WORD SCAN of the backplane starting at 0x00000000:
+  CMD53 fn1 byte-mode count=4 reads, arg op=1 (incrementing), 8192
+  reads per 32K window, one CMD52 word read at fn1 0xfffc (the
+  window's last word) per window, SBADDRLOW bit15 / SBADDRMID
+  switching inside bcmsdh_reg_read (its set_sbaddr_window call is
+  at bcmsdh_reg_read+0x5c/0x64, relocs 0x84a9c/0x84aa4). The v0.68
+  "GCI+0x29e0 / PMU+0x4..0x18" observations were just points along
+  this walk (0x4129e0 passed near the b68j tail; PMU 0x428004+ is
+  past it). Rate ~18k reads/s traced, ~90k/s untraced.
+- **The walk never terminated on the all-zero model.** Scanprog
+  instrumentation: base 0x3c10000 at 135 s, 0x5f58000 at 277 s -
+  it walks the full 32-bit space (~4.7 h at the model's PIO rate)
+  because every word reads 0.
+- **Exit condition proven experimentally** (temporary model fills,
+  stripped before commit): filling non-chunked backplane reads with
+  0xff breaks the walk immediately and the boot proceeds; filling
+  only [0x80000,0x18000000) breaks it at the first non-cached
+  window there. The walk checks every word and stops at the first
+  nonzero read; it is the DHD's RAM size walk inside si_doattach
+  (it runs between si_doattach's chipcommon reads and si_doattach's
+  return; si_doattach then fails fast with no further SDIO traffic
+  whenever the walk's break position is not the real RAM end).
+- **Trap found on the way: the 16-slot bp_chunks cache.** The walk
+  allocates a zero chunk per visited window, so with a fill that
+  only covered [0x80000,...) the cache still served stale zero
+  chunks and let the walk overrun to ~0x88000; si_doattach then
+  rejected the size. The unmapped check must precede the chunk
+  lookup.
+- **Model fix (vendored qemu d71ffbe, exported as
+  tools/patches/qemu-x1600/0009):** backplane windows in
+  [0x80000, 0x18000000) read 0xffffffff, on the CMD53 path (before
+  the chunk lookup) and on the CMD52 fn1 word path (the window-end
+  reads). With this the walk breaks at exactly 0x80000 (the
+  43430A1's 512KB SOCSRAM) in ~1.1 s and the boot reaches the next
+  blocker in seconds instead of hanging for hours.
+- **Next blocker 1: si_doattach still fails** ("dhdsdio_probe_attach:
+  si_attach failed!") in ~1.2 s per attempt, with no further SDIO
+  reads after the walk - a local check rejects the walk result or a
+  later init step. Break position makes no difference (tried
+  0x48000 / 0x7fffc / 0x80000). The walk's exact function could not
+  be pinned down: the live module is vmalloc'd (kseg2, per-boot
+  base), the stack sniff at the SBADDRMID window writes gave the
+  chain insmod -> probe -> ... -> bcmsdh_recv_buf/reg_read ->
+  sdioh_request_word -> mmc but the return words did not resolve
+  against the .ko (relocated + per-boot layout); candidate
+  mechanisms: si_socram_size-style scan or OTP/SROM shadow search.
+  dhd_sdio.c CIS loop (bcmsdh_cis_read(sdh, fn, cis, 512) per fn,
+  limit = bcmsdh_query_iofnum) sits before si_attach and is NOT the
+  walk (its reads are CMD52 bytes / 512-byte reads).
+- **Next blocker 2: 512-byte reads hang in the soc_msc DMA path.**
+  "md_ingenic,mmc: timeout 3000ms op:53 r sz:512 state:0 STAT:0x1800
+  DMALEN:0x00000000 blks:0/1" - the request never reaches the MSC
+  (no CMD/ARG writes logged, state 0): 512-byte transfers go through
+  the SoC DMAC (dmaengine) and the model implements no DMAC device
+  at all. These are the probe's CIS reads
+  (bcmsdh_cis_read(sdh, fn, cis, 512)) and will also carry the
+  firmware download. Implementing the Ingenic DMAC (descriptor
+  chain + completion IRQ, pattern like x1600_sfc_dma) is the next
+  model work.
+- Evidence: /tmp/kilo/gci/run1/ram.bin (mid-walk RAM dump),
+  run6/run8/run9/run11/run12 MSC + console logs, stack walks
+  (run6/msc.log n_scan=20000 section), mscdec_stream.py /
+  mscsum.py / mscsample.py / bpmax.py / stackscan*.py / bootdump.py.
+  Patch 0009 exported; vendored qemu committed.
