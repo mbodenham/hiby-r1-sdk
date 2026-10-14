@@ -883,3 +883,151 @@ guest-PC annotation on the MSC trace lines (`x1600_msc_cpu`).
    trace, then the F1 backplane reads (CMD53 eventually).
 3. EFUSE stub, SADC conversion semantics, JPEG stub 0x13050000 (M2 exit
    queue, unchanged).
+
+## v0.68 (2026-10-14, eighth session, worktree qemu-dhd-backplane): the fn1-CIS FUNCE root cause of the 0xffffffff signature read
+
+Scope this round: MSC/SDIO model + DHD backplane only (UART2/cmdline/LCD-tap
+belongs to the sibling session). Baseline: main v0.67 + patch 0006 (NF=2) +
+prior session's uncommitted continuation, committed here as patch 0007 after
+stripping the temporary physical-memory scanner instrumentation from
+x1600.c (TEMP DEBUG block in the ChipClkCSR write handler + the
+system/physmem.h include it needed).
+
+### Boot with 0007 (b68a-serial.log): the WARN reproduces
+
+17.45 s, dhdsdio_probe_attach:
+    WARNING ... sdio_ops.c:134 mmc_io_rw_extended+0xb0        (blksz == 0)
+    WARNING ... lib/scatterlist.c:287 __sg_alloc_table+0x78   (nents overflow)
+    F1 signature read @0x18000000=0xffffffff
+    si_doattach fails -> "dhdsdio_probe_attach: si_attach failed!" (3 attempts)
+
+### Decode chain (all from vmlinux.bin + cywdhd.ko, tooling in /tmp/kilo/dhd + dhd2)
+
+- sdio_io_rw_ext_helper (0x80391b6c) is vendor-modified vs upstream:
+  * entry gate card[712] bit0 = cccr.multi_block (the CCCR bitfield byte
+    parsed in mmc_sdio_init_card: bit0 <- CCCR 0x08 & 0x02 SMB, bit1 <- &0x40,
+    bit2 <- &0x80 via seb/bgez, bit3 <- reg 0x12 & 1).
+  * byte-path blksize selector: card[368] bit1 -> func->cur_blksize (0x174)
+    vs func->max_blksize (0x170); bit8 -> additionally clamp to host[440].
+  * block path always uses func->cur_blksize as unit (divu at +0xd4).
+- mmc_io_rw_extended (0x803902f8): WARN at line 134 = blksz == 0 (arg8).
+  Byte path computes nents = (blksz-1)/card[428] + 1 BEFORE choosing
+  sg_init_one -- with blksz = 0 the (blksz-1) underflows to 0xffffffff ->
+  nents huge -> sg_alloc_table WARN (scatterlist.c:287) -> -ENOMEM, and no
+  MMC command is issued.
+- sdio_readl returns 0xFFFFFFFF on error -> "F1 signature read
+  @0x18000000=0xffffffff" -> si_doattach fail. No CMD53 reaches the MSC.
+- THE WORD READ IS fn1, NOT fn0: bcmsdh_reg_read (0x84a40) word path calls
+  sdioh_request_word(sd, cmd_type=0, rw=0, fn=1, addr|0x8000, size, &word)
+  (0x84ae0: li a3,1; 0x84ac0-84ac4: movz a1, addr|0x8000, size^4). 0x8000 =
+  the fn1 32K data-port window (low 15 bits of the backplane address).
+  sdioh_request_word uses sd->func[fn] (0x87244: lw a0,1016(s5), s5=sd+4*fn).
+  The fn0 pseudo-func (&sdioh+616 = sd->func[0], memset-zero) is only used
+  by genuine fn0 word reads, which never happen here. The v0.65 fn=0 theory
+  was wrong.
+- Who zeroes cur/max: sdio_bus_probe (0x803909a8) calls
+  sdio_set_block_size(func, 0) before every driver probe (0x80390a24;
+  host[416] bit 0x2000 disables it). Vendor sdio_set_block_size
+  (0x803915bc) blksz==0 path: blksz = min(func->max_blksize, host[440]),
+  writes FBR+0x10/0x11 and func->cur_blksize -- it never writes
+  max_blksize. func->max_blksize is set ONLY by cistpl_funce_func
+  (0x803912b0): max_blksize = buf[12] | buf[13]<<8; requires size >= 42
+  when cccr.sdio_vsn != 0 (28 only for spec 1.00); buf[28..29]*10 ->
+  func+376. The v0.65 note "no writer of func+368 exists" was wrong --
+  the writer is the FUNCE CIS tuple parser.
+- Our model's fn1 CIS (MANFID+FUNCID only) has no CISTPL_FUNCE ->
+  max_blksize(fn1) = 0 -> cur(fn1) = 0 after sdio_bus_probe -> the word
+  read dies with blksz=0 as above. The live cur(fn1)=64 seen by the v0.66
+  scanner came later (sdioh_start: sdio_set_block_size(func1,
+  sd_f1_blocksize=64) at 0x8839c; fn2 <- sd_f2_blocksize=128 at 0x8840c).
+- Fake-func facts re-confirmed: sdioh_attach (0x87e64) mallocs 1048 B,
+  sd.func[0] = &sd.card (sdioh+616), sd.func[1] = card->sdio_func[0]
+  (card+728), sd.func[2] = card->sdio_func[1] (card+732). mmc_card:
+  +360 = type (3 = SD combo), +704 = cccr.sdio_vsn, +712 = cccr bitfield
+  byte, +716..724 = cis (vendor/device/blksize?/max_dtr), +728 =
+  sdio_func[].
+
+### Fix (model-side, zero firmware change)
+
+Add a 42-byte CISTPL_FUNCE (0x22) tuple to x1600_msc_cis_f1 with
+TPLFE_MAX_BLK_SIZE (buf[12..13]) = 64. Then sdio_bus_probe's
+set_block_size(func1, 0) sets cur(fn1) = 64 before the DHD probe, and the
+F1 signature read becomes a CMD53 fn1 byte-mode count=4 @0x8000 that the
+model already serves from the backplane window.
+
+### v0.68 (cont.): the CMD53 data path + the chip badge (same session)
+
+- The remaining hang after the FUNCE fix was the MSC model's CMD53
+  completion signaling. Decoded soc_msc.ko (ingenic_mmc_request 0x1b88,
+  the PIO/DMA poll loop 0x2238-0x22e8, thread 0xe94, state machine 0xb34,
+  polling_status 0x638):
+  * request fn rejects requests while host[2372] bit0 is clear
+    (cmd->error = -159 + mmc_request_done).
+  * After CTRL START_OP: polling_status waits END_CMD_RES (STAT bit11,
+    model already sets it), command_done reads RES, then the request fn
+    polls STAT in a loop at 0x2244: while STAT bit6 (0x40) is SET it
+    spins (its dma flag host[2372] bit0 is 1 for our requests). When
+    bit6 is CLEAR and (STAT & 0x3f) == 0 (the delay slot at 0x2260
+    overwrites v1 with STAT&0x3f, which is what 0x22a8 tests) it drains
+    MSC_RXFIFO 0x38 word-by-word into the sg buffer (0x22b0, kseg0 VA
+    computed from the sg page walk) plus a byte-tail loop, then
+    bytes_xfered = blksz*blocks, polls polling_status(0x1000) for reads
+    / (0x2000) for writes (request fn 0x2338-0x234c), then completes the
+    request itself (mmc_request_done at 0x23c4).
+  * The v0.65 reading "STAT bit6 = RX ready, driver polls it" was
+    INVERTED: bit6 set = hang ("timeout 3000ms op:53 ... state:0"), the
+    driver wants bit6 CLEAR to start draining.
+- Model fix (x1600.c CMD53 handler): removed the STAT bit6 set; set
+  STAT bit12 (0x1000) on CMD53 reads / bit13 (0x2000) on writes so the
+  post-drain poll exits.
+- Boot b68h: "F1 signature read @0x18000000=0x424380a1" — the full
+  kernel->helper->CMD53->FIFO->window path WORKS. si_doattach still
+  fails because 0x424380a1 was a placeholder.
+- si_doattach decode (cywdhd 0x2d3d0): the word at SI_ENUM_BASE
+  (0x18000000) is the chipcommon CHIPID badge: sih->chip = sig & 0xffff,
+  chippkg = (sig>>16)&0xf, (sig>>20)&0xf -> sih+68, rev = sig>>28 (the
+  (sig&0xfffff)==0x24335 case applies a -0xfffc rev fix). rev==0 ->
+  sb_scan; (rev & 0xfffd) == 1 (rev 1 or 3) -> ai_scan (EROM walk);
+  anything else loops back re-reading the signature. Expected chip for
+  this board: BCM43430A1/AP6212 (fw_bcm43438a1.bin, nvram_ap6212a.txt,
+  and the common-CIS MANFID device 0xa9a6) -> badge word should be
+  (rev<<28) | 0xa9a6, rev=1 -> 0x1000a9a6. Next: ai_scan/EROM walk.
+
+### v0.68 (cont.): chip badge works, DHD walks the enum; parked at the GCI/PMU poll loop
+
+- Model badge 0x1000a9a6 accepted: "F1 signature read @0x18000000=
+  0x1000a9a6", si_doattach rev=1 -> ai_scan -> the module's built-in
+  bcm43430_* tables (no EROM access at all). Tables extracted from
+  cywdhd.ko .data (file off 0xc7540):
+    coreid   : 0800 0812 0829 082a 080e 0240
+    coresba  : 18000000 18001000 18002000 18003000 18004000 19000000
+    coresba_size: 1000 1000 1000 1000 1000 10000
+    wrapba   : 18100000 18101000 18102000 18103000 18104000 18106000
+    cia      : 4bf80001 4bf81201 4bf82901 4bf82a01 4bf80e01 43b24001
+    cib(43430): 31004211 27004211 15004211 09004211 16080401 00080201
+    cib(43436): 31004211 27004211 18004211 0b004211 19080401 00080201
+  ai_scan memcpy's 6*4 words of each into si_info (+128 coreid, +256
+  coresba, +640 sizes, +1024 wrapba, +1408 cia, +1536 cib, card_rev==2
+  selects the 43436 cib) and sets numcores=6 (sih+140), sih+148 =
+  0x18107000.
+- Window protocol confirmed live: SBADDRLOW (fn1 0x1000a) holds ONLY
+  backplane bit15 (brcmfmac "b15"), SBADDRMID (0x1000b) bits[23:16],
+  SBADDRHIGH (0x1000c) bits[31:24]; CMD53 port = 0x8000 | (addr&0x7fff).
+  The DHD walks chipcommon (0x18000000, reads +0xfc etc.), then GCI at
+  0x00410000 (reads +0x29e0..+0x29e8) and PMU at 0x00428000 (reads
+  +0x4..+0x18 = pmucapabilities/res_state/res_pending/res_dep*) via
+  SBADDRMID 0x41/0x42 — the DHD KNOWS these bases independent of the
+  core table (hardcoded 43430 addresses).
+- PARKED BLOCKER: the DHD then spins forever re-issuing the same
+  GCI+PMU register reads (~1.09M requests in a 60 s boot: GCI+0x29e0/4/8
+  and PMU+0x4/8/c/10/14/18, plus CMD52 fn0 CCCR-0x00 reads between
+  groups). Model returns zeros; some polled register must report a
+  specific value (likely a PMU res_state/res_pending ready bit or a GCI
+  status) to break the wait. Next round: decode the cywdhd function
+  driving this loop (it runs between si_doattach and the firmware
+  download; find it by breaking on the SBADDRMID=0x41 write path or by
+  xrefs of the 0x410000/0x428000 bases), feed it the expected PMU/GCI
+  values, then expect the firmware download (SOCSRAM at core 0x80e,
+  0x18004000) and dhdsdio_download_firmware.
+- Boot-state files: /tmp/kilo/dhd2/b68{a..j}* (serial + -d unimp MSC
+  traces), tools/patches/qemu-x1600/0007 + 0008 exported.

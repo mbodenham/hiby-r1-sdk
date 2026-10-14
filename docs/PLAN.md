@@ -1,6 +1,7 @@
 # Plan — QEMU X1600 full-system emulation (v1.1)
 
-STATUS (2026-10-14, after the v0.66–v0.67 stubs session + M4 gate; v0.65 RES round folded in):
+STATUS (2026-10-14, after the v0.68 DHD-backplane session; worktree
+qemu-dhd-backplane; supersedes the v0.67 header below for the wifi item):
 
 - **M0: DONE.** QEMU builds in-repo (mipsel-softmmu), `X1600` machine type
   registered, `XBurstR2` from upstream, regmap verified disassembly-wise
@@ -88,18 +89,36 @@ STATUS (2026-10-14, after the v0.66–v0.67 stubs session + M4 gate; v0.65 RES r
   docs/traces/boot-baseline-v0.67.txt. The v0.67 baseline is recorded
   and verified (0 DBE / 0 adc timeouts / EFUSE + pwm initcall 0 / SDIO
   card enumerates).
-- **Next (M2 exit):** 1. the wifi session verifies the NF=2/FBR2/F2-CIS
-  fix: the notify chain completes (dummy_probe on func2 → semaphore →
-  `sdio_register_driver` → `bcmsdh_sdmmc_probe`), then walk the probe
-  chain (CCCR 0x02 IOE write via CMD52, block sizes, sdioh_cfg_read,
-  backplane reads; CMD53 modelling only when the trace demands it);
-  success = cywdhd returns 0, cascade oopses #1–#6 gone, rcS proceeds.
-  2. then theme → `S92_03_start_music_player` **= M2 EXIT**. 3.
-  Player-launch followups (research brief): BT console pollution (move
-  the console to ttyS2 0x10032000), fb readback hook (LCD +0x1000
-  descriptor tap → 480×800 RGB565 dump), NO panel model needed
-  (LG35583 init is GPIO-bitbang SPI through the existing pinctrl stub).
-- Boot evidence lives in docs/M1-bringup-log.md (v0.1–v0.65),
+- **Wifi/DHD (v0.68, this session): the backplane path WORKS.** With
+  patches 0006 (NF=2) + 0007 (IOR mirror, fn1 space, CMD53/PIO skeleton)
+  + 0008 (fn1 CIS FUNCE max-blksize 64, corrected CMD53 completion
+  semantics, chunked backplane window, chipcommon CHIPID badge
+  0x1000a9a6), the DHD now: parses the fn1 CIS, sdio_bus_probe sets
+  cur_blksize=64, reads the F1 badge successfully
+  ("F1 signature read @0x18000000=0x1000a9a6" — the earlier
+  0xffffffff/-ENOMEM failure was FUNCE-less max_blksize=0 → blksz=0 →
+  sg_alloc_table nents underflow), si_doattach rev=1 routes ai_scan to
+  the module's built-in bcm43430_* static core tables (no EROM walk;
+  tables extracted into M1-bringup-log v0.68), and walks the enum live
+  via the BCM window (SBADDRLOW=b15, MID=[23:16], HIGH=[31:24]; port =
+  0x8000|addr&0x7fff): chipcommon 0x18000000, GCI 0x00410000, PMU
+  0x00428000. soc_msc completion semantics decoded: the request fn wants
+  STAT bit6 CLEAR (v0.65 reading was inverted), drains MSC_RXFIFO 0x38
+  itself, then polls STAT bit12 (read) / bit13 (write).
+- **Parked blocker:** the DHD spins re-reading GCI+0x29e0..8 and
+  PMU+0x4..0x18 (~1.09M requests/60 s boot); the model returns zeros —
+  some PMU/GCI register must report a specific value to break the wait.
+  Decode of that cywdhd wait loop is the next round's first task; after
+  it: firmware download (SOCSRAM core 0x80e @0x18004000),
+  dhdsdio_download_firmware → then the success cascade.
+- **Next (M2 exit):** 1. the wifi session continues from the GCI/PMU
+  wait (see above); success = cywdhd returns 0, cascade oopses #1–#6
+  gone, rcS proceeds. 2. then theme → `S92_03_start_music_player`
+  **= M2 EXIT**. 3. Player-launch followups (research brief): BT
+  console pollution (move the console to ttyS2 0x10032000 — the sibling
+  session owns UART2/cmdline/LCD-tap), fb readback hook, NO panel model
+  needed.
+- Boot evidence lives in docs/M1-bringup-log.md (v0.1–v0.68),
   docs/M2-stubs-log.md (v0.66–v0.67), and
   docs/research-brief-stubs-player-launch.md.
 

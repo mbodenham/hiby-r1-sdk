@@ -1,0 +1,170 @@
+From c2aa1d63684855bf4a3474211af41324ea96e638 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Wed, 14 Oct 2026 10:52:52 +0900
+Subject: [PATCH] x1600: SDIO card fn1 CIS FUNCE (max blksize 64) + CMD53
+ backplane window data path
+
+The DHD's first backplane word read (bcmsdh_reg_read 0x18000000) failed
+with blksz=0: the fn1 CIS had no CISTPL_FUNCE, so cistpl_funce_func left
+max_blksize=0 and sdio_bus_probe's set_block_size(func,0) left
+cur_blksize=0; the vendor sdio_io_rw_ext_helper then called
+mmc_io_rw_extended with blksz=0 (WARN sdio_ops.c:134), the nents
+computation underflowed (sg_alloc_table WARN, -ENOMEM) and sdio_readl
+returned 0xffffffff -> si_doattach failed.
+
+- fn1 CIS: 42-byte FUNCE tuple, buf[12..13] = 64 (max blksize),
+  buf[0] = 1 (function type), buf[28] = 5.
+- CMD53 fn1 data path: serve the 32K BCM window from per-SBADDR chunks;
+  the soc_msc request fn (0x2244) spins while STAT bit6 is set, wants
+  bit6 CLEAR + STAT&0x3f==0, drains MSC_RXFIFO 0x38 itself, then polls
+  STAT bit12 (reads) / bit13 (writes). Model sets bit12/bit13 at CMD53.
+- chipcommon CHIPID badge at backplane 0x18000000 = 0x1000a9a6
+  (BCM43430A1/AP6212, rev 1 -> the ai_scan 0xa9a6 static-table path).
+  The DHD's ai_scan uses builtin bcm43430_* core tables, no EROM walk.
+---
+ hw/mips/x1600.c | 97 +++++++++++++++++++++++++++++++++++++++----------
+ 1 file changed, 78 insertions(+), 19 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 889e7b0..7d1c51f 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -412,6 +412,11 @@ static const MemoryRegionOps x1600_cgu_ops = {
+ #define STAT_CLK_EN         (1u << 8)
+ #define STAT_TIME_OUT_RES   (1u << 1)
+ #define STAT_RXFIFO_RDY     (1u << 6)   /* soc_msc PIO RX loop polls this */
++#define STAT_XFER_DONE_RD   (1u << 12)  /* post-data poll for CMD53 reads
++                                         * (request fn 0x2338: READ ->
++                                         * polling_status(0x1000), WRITE ->
++                                         * polling_status(0x2000)) */
++#define STAT_XFER_DONE_WR   (1u << 13)
+ 
+ #define MSC_RXFIFO          0x38        /* RX data port (soc_msc reads words
+                                          * from here after STAT bit6) */
+@@ -440,8 +445,14 @@ typedef struct X1600Msc {
+     uint8_t fifo[512];          /* CMD53 data phase (PIO: soc_msc pops
+                                  * words from MSC_RXFIFO) */
+     unsigned fifo_len, fifo_pos;
+-    uint8_t bp[0x8000];         /* backplane RAM, maps 0x18000000+ (the SI
+-                                 * enum: SDIO core @+0, ARM CM3 @+0x1000) */
++    uint8_t *bp_chunks[16];     /* backplane window content, one 32 KB
++                                 * chunk per SBADDR key (the BCM window
++                                 * = 32 KB at (SBADDR<<8) & ~0x7fff);
++                                 * chunk key = target >> 15. The DHD's
++                                 * ai_scan for 0xa9a6 uses static core
++                                 * tables, so only chipcommon (0x18000000)
++                                 * has meaningful content so far. */
++    uint32_t bp_keys[16];
+     unsigned res_reads;         /* RES byte-window state, see res_pop */
+     unsigned res_count;
+     uint8_t res_bytes[20];      /* 4 (32-bit resp) or 17 (R2) */
+@@ -603,14 +614,45 @@ static void x1600_msc_command(X1600Msc *s)
+                 uint32_t sbaddr = s->fn1[0x1000a] | (s->fn1[0x1000b] << 8) |
+                                   (s->fn1[0x1000c] << 16);
+                 uint32_t bp = (sbaddr << 8) | (c53addr & 0x7fff);
+-                unsigned i;
+-                for (i = 0; i < c53cnt; i++) {
+-                    uint32_t off = (bp - 0x18000000u + i) & (sizeof(s->bp) - 1);
+-                    s->fifo[i] = s->bp[off];
++                uint32_t key = bp >> 15;
++                uint8_t *chunk = NULL;
++                unsigned ci, i;
++                for (ci = 0; ci < 16; ci++) {
++                    if (s->bp_chunks[ci] && s->bp_keys[ci] == key) {
++                        chunk = s->bp_chunks[ci];
++                        break;
++                    }
++                }
++                if (!chunk) {
++                    for (ci = 0; ci < 16; ci++) {
++                        if (!s->bp_chunks[ci]) {
++                            s->bp_chunks[ci] = g_malloc0(0x8000);
++                            s->bp_keys[ci] = key;
++                            chunk = s->bp_chunks[ci];
++                            break;
++                        }
++                    }
++                }
++                if (chunk) {
++                    uint32_t off = bp & 0x7fff;
++                    for (i = 0; i < c53cnt && off + i < 0x8000; i++) {
++                        s->fifo[i] = chunk[off + i];
++                    }
++                } else {
++                    memset(s->fifo, 0, c53cnt);
+                 }
+                 s->fifo_len = c53cnt;
+                 s->fifo_pos = 0;
+-                s->regs[MSC_STAT / 4] |= STAT_RXFIFO_RDY;
++                /* Do NOT set STAT bit6 (RXFIFO_RDY) here: soc_msc's
++                 * request-fn poll (0x2244) spins while bit6 is SET (its
++                 * "dma mode" flag host[2372] bit0 is 1) and only falls
++                 * through to the PIO drain (reads MSC_RXFIFO 0x38
++                 * word-by-word, 0x22b0) when bit6 is CLEAR and
++                 * STAT&0x3f == 0. With bit6 set the request hangs until
++                 * the 3s request-timeout fires ("timeout 3000ms op:53").
++                 * The v0.65 "polls STAT bit6" reading was inverted. */
++                s->regs[MSC_STAT / 4] |= c53wr ? STAT_XFER_DONE_WR
++                                               : STAT_XFER_DONE_RD;
+                 res = 0;
+             } else {
+                 timeout = true;
+@@ -739,6 +781,22 @@ static const uint8_t x1600_msc_cis_f1[] = {
+                                          * the real card's F1 CIS must
+                                          * report it */
+     0x21, 0x02, 0x00, 0x00,             /* CISTPL_FUNCID */
++    /* CISTPL_FUNCE (function extension), 42 bytes. The kernel's
++     * cistpl_funce_func (0x803912b0, size>=42 required for
++     * cccr.sdio_vsn != 0) takes func->max_blksize = buf[12] |
++     * buf[13]<<8 — without it max_blksize stays 0, sdio_bus_probe's
++     * sdio_set_block_size(func,0) leaves cur_blksize 0, and the DHD's
++     * first backplane word read (bcmsdh_reg_read -> CMD53 fn1
++     * byte-mode @0x8000) dies with blksz=0: sdio_readl error path
++     * returns 0xffffffff and si_doattach fails ("F1 signature read
++     * @0x18000000=0xffffffff"). 64 matches sd_f1_blocksize. */
++    0x22, 42,
++    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* 0..7: 0=type (must be nonzero for a function FUNCE, else the common parser rejects it) */
++    0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, /* 8..15: 12=0x40 (max blk 64) */
++    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* 16..23 */
++    0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, /* 24..31: 28=5 (timeout*10) */
++    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* 32..39 */
++    0x00, 0x00,                                     /* 40..41 */
+     0xff,                               /* CISTPL_END */
+ };
+ 
+@@ -765,19 +823,20 @@ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+     memset(s->cccr, 0, sizeof(s->cccr));
+     memset(s->cis, 0, sizeof(s->cis));
+     memset(s->fn1, 0, sizeof(s->fn1));
+-    memset(s->bp, 0, sizeof(s->bp));
+-    /* Backplane (maps 0x18000000+): the SI enum. Word 0 = the SDIO core's
+-     * id (Broadcom manf 0x4243; the core id/rev bytes are a placeholder
+-     * until the DHD's own checks reveal the expected bits); +0x1000 = the
+-     * ARM CM3 core (core id 0x823). The DHD reads the F1 signature at
+-     * 0x18000000 and walks the enum for the ARM/SOCRAM/chipcommon cores. */
++    /* Backplane: chunked window (see bp_chunks). Chunk 0x18000000+
++     * word 0 = the chipcommon CHIPID badge the DHD's si_doattach reads
++     * as the "F1 signature": chipid = low 16 bits (BCM43430A1/AP6212 =
++     * 0xa9a6, matches the common-CIS MANFID device and the
++     * ai_scan 0xa9a6 static-table path), chippkg/pmu nibbles 0,
++     * rev = bits 31:28 (rev 1 routes ai_scan to the bcm43430 tables). */
+     {
+-        uint32_t sig = 0x424380a1u;
+-        s->bp[0] = sig; s->bp[1] = sig >> 8; s->bp[2] = sig >> 16;
+-        s->bp[3] = sig >> 24;
+-        sig = 0x42438231u;
+-        s->bp[0x1000] = sig; s->bp[0x1001] = sig >> 8;
+-        s->bp[0x1002] = sig >> 16; s->bp[0x1003] = sig >> 24;
++        uint32_t sig = 0x1000a9a6u;
++        s->bp_chunks[0] = g_malloc0(0x8000);
++        s->bp_keys[0] = 0x18000000u >> 15;
++        s->bp_chunks[0][0] = sig;
++        s->bp_chunks[0][1] = sig >> 8;
++        s->bp_chunks[0][2] = sig >> 16;
++        s->bp_chunks[0][3] = sig >> 24;
+     }
+     s->cccr[0x00] = 0x11;               /* CCCR rev 1.0, SDIO spec rev 1.1 */
+     /* CIS pointers: the kernel's sdio_read_cis reads the 3-byte pointer
+-- 
+2.53.0
+
