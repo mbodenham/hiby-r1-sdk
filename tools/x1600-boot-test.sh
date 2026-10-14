@@ -7,7 +7,7 @@
 # player UI), normalizes it and diffs it against the recorded per-version
 # baseline in two tiers:
 #   1. canonical message SET (distinct normalized lines, order- and
-#      multiplicity-free — the slow ttyS0 console flushes printk bursts
+#      multiplicity-free — the slow ttyS2 console flushes printk bursts
 #      asynchronously and the number of oops/warning stack-dump groups
 #      varies with scheduling, so neither order nor dump counts are
 #      reproducible under host load);
@@ -23,7 +23,7 @@
 #
 #   --timeout SEC        max boot wall time in seconds (default 360)
 #   --baseline FILE      baseline trace to diff against
-#                        (default docs/traces/boot-baseline-v0.67.txt)
+#                        (default docs/traces/boot-baseline-v0.68.txt)
 #   --update-baseline    (re)record the baseline from a fresh boot
 #   --qemu PATH          qemu-system-mipsel binary
 #                        (default tools/vendors/qemu/build/qemu-system-mipsel)
@@ -50,9 +50,15 @@ ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 MARKER='UBIFS (ubi1:0): default file-system created'
 EARLYCON_BANNER='Linux version 4.4.94+'
 EARLYCON_HANDOFF='bootconsole [early0] enabled'
+# The ttyS2 console (serial0) only carries output from its registration
+# (the 8250 console does not replay the pre-handoff buffer in 4.4.94); the
+# earlycon lives on ttyS0 (stock DTB stdout-path) = the discardable
+# serial1, so the earlycon stage is checked there.
+CONSOLE_HANDOFF='console [ttyS2] enabled'
+CONSOLE_HANDOFF_DONE='bootconsole [early0] disabled'
 # Init-thread messages whose relative order is deterministic (single vCPU,
 # same task): the module/initcall chain, console handoff, root mount.
-STRUCT_RE='^(calling |initcall |Linux version |bootconsole \[|console \[ttyS0\]|VFS: Mounted root|VFS: Cannot)'
+STRUCT_RE='^(calling |initcall |Linux version |bootconsole \[|console \[ttyS2\]|VFS: Mounted root|VFS: Cannot)'
 
 TIMEOUT=360
 BASELINE=
@@ -82,7 +88,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-[ -n "$BASELINE" ] || BASELINE=$ROOT/docs/traces/boot-baseline-v0.67.txt
+[ -n "$BASELINE" ] || BASELINE=$ROOT/docs/traces/boot-baseline-v0.68.txt
 [ -n "$QEMU" ]     || QEMU=$ROOT/tools/vendors/qemu/build/qemu-system-mipsel
 [ -n "$KERNEL" ]   || KERNEL=$ROOT/unpacked/1.6/vmlinux.bin
 
@@ -103,7 +109,12 @@ die() { printf 'x1600-boot-test: %s\n' "$1" >&2; exit 3; }
 mkdir -p -- "$OUT" || die "cannot create output dir: $OUT"
 OUT=$(CDPATH='' cd -- "$OUT" && pwd) || die "cannot enter output dir"
 
+# serial0 = ttyS2 console (captured, gated); serial1 = ttyS0 BT/earlycon
+# uart — discardable (patchram writes binary there; never gated on it,
+# but kept as a file so the earlycon stage and BT-stage debugging can
+# look at it).
 SERIAL_LOG=$OUT/serial-$$.log
+BT_LOG=$OUT/bt-serial-$$.log
 WINDOW=$OUT/window-$$.log
 
 md5of() { md5sum "$1" | awk '{print $1}'; }
@@ -163,6 +174,7 @@ normalize() {
         -e 's/^Oops\[[0-9][0-9]*\]/Oops[<N>]/' \
     | grep -v -e '^adc_read_channel_value:adc get value timeout!$' \
               -e '^i2c[0-9] write timeout([0-9][0-9]* ms)$' \
+              -e '^hrtimer: interrupt took [0-9][0-9]* ns$' \
     | awk -v marker="$MARKER" 'index($0, marker) { print; exit } { print }' \
     | uniq
 }
@@ -179,6 +191,7 @@ printf 'x1600-boot-test: booting stock firmware (%s) in %s\n' "$KERNEL" "$QEMU"
 "$QEMU" -M x1600 \
     -kernel "$KERNEL" \
     -serial "file:$SERIAL_LOG" \
+    -serial "file:$BT_LOG" \
     -display none -monitor none -no-reboot &
 QPID=$!
 
@@ -223,7 +236,10 @@ if [ "$UPDATE" -eq 1 ]; then
             printf '# vendored qemu rev: %s (hw/mips/x1600.c: %s)\n' "$qrev" \
                 "$([ -n "$qdirty" ] && printf 'UNCOMMITTED bring-up state' || printf 'clean')"
         fi
-        printf '# boot cmd: qemu-system-mipsel -M x1600 -kernel <kernel> -serial file:<log> -display none -monitor none -no-reboot\n'
+        printf '# boot cmd: qemu-system-mipsel -M x1600 -kernel <kernel> -serial file:<console log> -serial file:<ttyS0 log> -display none -monitor none -no-reboot\n'
+        printf '# console port: ttyS2 = serial0 (captured; stock cmdline\n'
+        printf '#   console=ttyS2,3000000n8); ttyS0 = serial1 (earlycon + BT uart,\n'
+        printf '#   discardable — the window is serial0 only).\n'
         printf '# window: serial output through the terminal marker "%s" —\n' "$MARKER"
         printf '#   the documented rcS end state (wifi/DHD failure stall); the gate does\n'
         printf '#   not require the player UI.\n'
@@ -233,7 +249,7 @@ if [ "$UPDATE" -eq 1 ]; then
         printf '#   the kernel per attach), oops trace IDs, PID/task/threadinfo/tls\n'
         printf '#   fields, register+stack dump contents, Modules-linked-in/Tainted\n'
         printf '#   oops snapshots; the documented timing-spam line classes (adc poller,\n'
-        printf '#   i2cN write timeout) dropped.\n'
+        printf '#   i2cN write timeout, hrtimer delay warning) dropped.\n'
         printf '# comparison: distinct canonical messages (order/multiplicity-free)\n'
         printf '#   + ordered sequence of init-thread structural lines (calling/initcall\n'
         printf '#   chain, console handoff, root mount) — see tools/x1600-boot-test.sh.\n'
@@ -249,9 +265,17 @@ BASEWIN=$OUT/baseline-window-$$.log
 grep -v '^#' "$BASELINE" | normalize > "$BASEWIN"
 [ -s "$BASEWIN" ] || die "baseline has an empty window — wrong file? $BASELINE"
 
-if ! grep -qF "$EARLYCON_BANNER" "$WINDOW" || ! grep -qF "$EARLYCON_HANDOFF" "$WINDOW"; then
-    printf 'FAIL: earlycon mismatch — "%s" / "%s" not in the boot window\n' \
+if ! grep -qF "$EARLYCON_BANNER" "$BT_LOG" || ! grep -qF "$EARLYCON_HANDOFF" "$BT_LOG"; then
+    printf 'FAIL: earlycon mismatch — "%s" / "%s" not in the ttyS0 (earlycon) log\n' \
         "$EARLYCON_BANNER" "$EARLYCON_HANDOFF" >&2
+    printf '%s\n' '--- last 15 lines of the captured window ---' >&2
+    tail -n 15 "$WINDOW" >&2
+    exit 2
+fi
+
+if ! grep -qF "$CONSOLE_HANDOFF" "$WINDOW" || ! grep -qF "$CONSOLE_HANDOFF_DONE" "$WINDOW"; then
+    printf 'FAIL: console handoff mismatch — "%s" / "%s" not in the ttyS2 capture\n' \
+        "$CONSOLE_HANDOFF" "$CONSOLE_HANDOFF_DONE" >&2
     printf '%s\n' '--- last 15 lines of the captured window ---' >&2
     tail -n 15 "$WINDOW" >&2
     exit 2

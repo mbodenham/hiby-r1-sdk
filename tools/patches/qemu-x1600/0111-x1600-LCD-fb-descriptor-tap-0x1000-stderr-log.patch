@@ -1,0 +1,46 @@
+From ad699d03030616c711aae136c6fb256cdc1929b4 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Wed, 14 Oct 2026 10:15:25 +0900
+Subject: [PATCH 111/111] x1600: LCD fb descriptor tap (+0x1000 stderr log)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Every write to LCD +0x1000 (the frame descriptor pointer stored by
+lcdc_pan_display before the +0x1004 kick) logs the guest-physical value
+to stderr ("x1600_lcd: fb descriptor @ %08x") — nothing else changes.
+tools/fb-dump.py parses the tap lines from a QEMU stderr log, reads
+desc+4 (strip the 0x80000000 flag bit), and extracts the 480x800 RGB565
+frame from an HMP pmemsave guest RAM dump into a PNG (pure stdlib).
+frame_num=2: the two descriptors (0x0250a000/0x0250b000 observed) each
+hold their own frame line address, so the newest kick shows the visible
+frame. Verified end-to-end: boot to the splash, pmemsave 0 0x4000000 at
+the tap, PNG shows the stock HiBy R1 logo (the theme:1 logo1.jpeg
+render, fb base 0x02600000).
+---
+ hw/mips/x1600.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index f3b644a..1e8678c 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -1154,6 +1154,15 @@ static void x1600_lcd_write(void *opaque, hwaddr addr,
+         val &= ~1u;                     /* BUSY self-clears instantly */
+     }
+     s->regs[addr / 4] = val;
++    if (addr == 0x1000) {
++        /* fb readback hook (M3 prep): lcdc_pan_display stores the frame
++         * descriptor's guest-physical address here before the +0x1004
++         * kick; desc+4 holds the fb line address (yoff*stride + fb_phys,
++         * bit31 = flag). Logged to stderr for tools/fb-dump.py, which
++         * pulls the 480x800 RGB565 frame out of an HMP pmemsave dump
++         * (frame_num=2: either descriptor shows the visible frame). */
++        fprintf(stderr, "x1600_lcd: fb descriptor @ %08x\n", (uint32_t)val);
++    }
+     if (addr == 0x1004 && (val & 1)) {
+         /* frame kick: descriptor stored at +0x1000, EOF latches */
+         s->regs[0x2010 / 4] |= 0x20000u;
+-- 
+2.53.0
+
