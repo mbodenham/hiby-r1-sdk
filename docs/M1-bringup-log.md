@@ -1925,3 +1925,177 @@ gesture decode + the cst8xx calibration: the tap->select round.
   - The VNC key events must use the QMP string enums ("x"/"y"/"left");
     integer enum values are accepted by input-send-event but silently
     never reach the input handler (found while wiring the tap).
+
+## v0.78 (2026-10-14, M3 round, worktree qemu-fb-wake) - the fb-blank
+wake: making the idle-blanked picker interactive again. Worktree setup
+per convention (vendors + unpacked copied, demo VM rebooted onto the
+worktree build; the pre-reboot demo console confirmed the v0.76/v0.77
+blocked state live: at t=108 s "i2c1 write timeout(136 ms)" +
+"[HYN_TS/E]hyn_ts_suspend:set TP to sleep mode fail, ret=-145" with the
+picker still rendered).
+
+- **fb_notifier_callback fully decoded** (cst8xx_touch.ko .text+0x264,
+  relocations resolved): it registers via fb_register_client and only
+  acts on FB_EVENT_BLANK (action==9), reading the blank mode from
+  *(fb_event->data):
+  - blank==0 (FB_BLANK_UNBLANK) -> `queue_work_on(1, *(hyn_data+56),
+    hyn_data+180)`: the resume work (hyn_resume_work) is queued on the
+    driver's own workqueue. That is the ONLY wake trigger — there is no
+    direct enable_irq path outside the work.
+  - blank==4 (FB_BLANK_POWERDOWN) -> the hyn_ts_suspend body INLINED:
+    if ts+256/ts+257 flags already set, a printk pair; else
+    disable_irq_nosync(*(hyn_data+244)) (the PA16/virq-100 touch IRQ),
+    ts+258=1 (suspended flag), mutex_lock(ts+232),
+    hi_i2c_write(0xa5,1,3,1) (the TP sleep command), mutex_unlock, and
+    on ret<0 `printk($LC2, .rodata+0xc8 = "hyn_ts_suspend", ret)` — the
+    recorded "[HYN_TS/E]hyn_ts_suspend:set TP to sleep mode fail"
+    print lives HERE, in the fb notifier, not in a separate suspend
+    entry point. Then if ts+24==0, `hyn_power_source_ctrl.part.3(ts)`
+    (.text+0x1d0) runs and ts+256=1 is stored (blanked latch).
+- Round continues; entries appended as decode/verify progresses.
+- **hyn_resume_work fully decoded** (cst8xx_touch.ko .text+0xaa8): runs
+  only when the ts+256 blanked latch is set; releases the stuck touch
+  (input_event BTN_TOUCH 0 + SYN_REPORT), zeroes the ts+280/284 frame
+  counters, calls hyn_power_source_ctrl.constprop.13, then the wake
+  check: hyn_read(reg 0xaa, 1 byte) up to 5x with 200 ms sleeps vs the
+  probe-time config byte at ts+40. **The check is SOFT**: on read
+  failure OR mismatch it falls through to the enable path after the
+  5 retries (`b bdc`), and the enable path runs enable_irq(ts+244),
+  clears ts+258, then clears ts+256. So the touch IRQ re-enable is
+  unconditional ~1 s after the unblank event.
+- **The wake check's ts+40 comparison decoded from init_module**: the
+  probe reads 0xaa/0xa6/0xa8 (hyn_read.constprop.14); ALL THREE must
+  succeed to write ts+40/41/48; after 5 failed rounds the fallback
+  writes ts+40=0xff, ts+41=0, ts+48=0xff (NOT bss-0 as v0.77 assumed).
+  The v0.77 model answers the 0xaa read with 0x00 — with ts+40=0xff
+  the compare mismatches every round, but the soft fall-through still
+  re-enables the IRQ. (Verified live: after `echo 0 >
+  /sys/class/graphics/fb0/blank`, a QMP tap increments
+  /proc/interrupts hyn_ts 0 -> 9.)
+- **The GUI never issues the unblank**: hiby_player disassembly has NO
+  FBIOBLANK constant (MIPS _IO('F',0xb) = 0x460b = 17931 — grep'd the
+  whole 846k-line disassembly). The player's blank path (obfuscated
+  region) prints "(hgl_fb: W) failed to access ioctl FB_BLANK_UNBLANK"
+  on failure, so a blank ioctl wrapper exists, but at the idle blank
+  the player (LD_PRELOAD shim trail) only does
+  `open+write /sys/class/backlight/backlight_pwm0/brightness '0'` —
+  no FB-range ioctl, no fb0/blank sysfs write.
+- **fb_blank(4)'s kernel callers decoded** (vmlinux.bin jal-scan +
+  /proc/kallsyms): exactly two — do_fb_ioctl (the FBIOBLANK ioctl
+  case) and store_blank (the /sys/class/graphics/fb0/blank sysfs
+  store). Both userspace-triggered; no fbcon in the kernel (no
+  fbcon_* symbols), so the VT blank path cannot reach the fb.
+- **The stock idle blank (boots 1-2) DID run fb_blank(4)** (the hyn
+  suspend prints fired with no shell interaction), but a shimmed
+  player's idle blank (boot 3) wrote ONLY the backlight '0' and NO
+  fb_blank followed — so the fb_blank issuer is a DIFFERENT process:
+  /usr/bin/sys_server (the system daemon; the player's sys_cmd layer
+  talks to it). Verified /proc fds: the player holds event0-3 open
+  (all four evdev nodes, event1 twice) yet key events do not wake;
+  sys_server restarted under the shim showed no input fds and NO idle
+  blank fired while it was shimmed (the restart broke its state).
+- **The GUI's input policy decoded** (hiby_player, the lg_event_source
+  scanner at 0x466920 + the EVIOCGNAME classifier): the key layer only
+  LISTENS to devices named "md-gpio-keys"/"gpio-keys"/"sa-ring-keys"
+  ("Skip listen Device Name" for everything else) — the "jz adc
+  keyboard" (event2, the SADC keys) and "earpods_adc" (event3) are
+  skipped by name, so only POWER/NEXTSONG (event0) reach the GUI. The
+  md-gpio-keys handler (0x4661a0) maintains a pressed-keys bitmap
+  (table at 0x764e60: 164->0x20, 163->0x10, 165->0x1, 139->0x2,
+  114->0x800, 115->0x2000, 116(POWER)->0x1000, 200->0x4000); the
+  litegui event dispatcher (0x4ed1xx) maps codes 4096 (POWER)/8192
+  (VOLUP)/16384 (code 200) through the wake path: 0x4ecf80 (can-handle
+  = setting(6)==0 && screen-flag 0x8b47a4==0), then on screen-off
+  0x4ed354 -> 0x4ec720 (the wake: 0x414820 gates on setting(93)!=0 &&
+  app-state in {3,4,5}, then the obfuscated string/dialog path).
+  **Empirically POWER (100 ms and 3 s holds), Enter/Down/Up/Right and
+  a QMP tap on the blanked picker do NOT wake it** (brightness stays
+  0, hyn_ts IRQ stays 0, no fb activity), and the key events DO reach
+  evdev (verified with /dev/input/event0/event2 captures: EV_KEY
+  code=0x74 KEY_POWER press+release in the log). The static gates
+  (settings 6/93, app state) are runtime-obfuscated; /proc/pid/mem
+  reads fail in the guest so they cannot be probed live.
+- **The stock idle blank runs fb_blank(4)** (hyn suspend prints at
+  54-108 s in every unshimmed boot); a shimmed player's blank showed
+  backlight-only (the FBIOBLANK likely bypassed the shim's filter —
+  the MIPS dir bits — or the console listener lost it at a reconnect).
+- **Guest hazard found**: killing hiby_player while the
+  hiby_player.sh wrapper is alive reboots/powers-off the device (the
+  wrapper runs `reboot` after the player exits; with -no-reboot the
+  VM halts). Swap the player by killing the wrapper FIRST, then the
+  player, then launching the replacement within a second.
+- **The idle flow decoded end-to-end (live, stock player)**: the GUI's
+  power-save policy on the emulated device runs
+  idle (~25-30 s) -> `write /sys/class/backlight/backlight_pwm0/
+  brightness 0` (the "blank") -> ~5 min idle -> the power-save
+  SHUTDOWN (the player exits; hiby_player.sh runs `reboot` -> the
+  device powers off — observed twice: t=425 s and t=736 s). While
+  blanked the GUI IGNORES ALL INPUT (keys and touch — the litegui
+  layer gates processing on the screen state), so the picker is
+  un-interactable until the wake fires or the 5-minute shutdown
+  reboots the device.
+- **The blank's fb_blank(4) step is VARIANT**: boots 1/2/5/6 (the
+  pristine volume state) ran fb_blank(4) at the blank (the hyn
+  suspend prints; the touch IRQ disabled); boots 7/8/10 (after a
+  full shutdown cycle rewrote the /usr/data state) blanked with the
+  backlight write ONLY — no fb_blank, the touch IRQ stayed enabled
+  and the touch chain stayed ALIVE (a QMP tap counted 9 hyn_ts
+  IRQs and the tap->select worked). The variant's trigger lives in
+  the persisted player settings (eq.ini/momery_list.lst territory);
+  parked.
+- **The wake trigger decode (parked at the obfuscated gates)**: the
+  litegui event dispatcher (0x4ed1xx) maps the md-gpio-keys bitmap
+  masks to events 4096 (KEY_POWER 116)/8192 (KEY_VOLUMEUP 115)/16384
+  (code 200) through the wake path 0x4ed3d0 -> 0x4ed354 -> 0x4ec720,
+  which gates on setting(6) (0x4ecf80), setting(93) (0x414820), the
+  app-state value in {3,4,5} (0x467640 over the 65-entry state table
+  at 0x7646900), and the screen flag 0x8b47a4; then posts the
+  "backlight on" message (0x433de0 with the runtime-decoded
+  obfuscated string; the "Discard backlight on/off message" strings
+  are the receiver's). Empirically POWER (100 ms/2 s/3 s holds),
+  Enter, Down, Up, Right and a QMP tap NEVER woke the blanked picker
+  (brightness stayed 0, no fb activity, no lg_message_thread prints)
+  — the gates fail at the picker's wizard state. The settings are
+  runtime-obfuscated; /proc/pid/mem and pagemap are unavailable in
+  the guest, so they cannot be probed live. Parked: the remaining
+  work is a userspace settings decode, not a model item.
+- **The model-side wake chain VERIFIED WORKING (this round's core
+  evidence)**: `echo 0 > /sys/class/graphics/fb0/blank` (the
+  kernel's fb_blank(0) — the exact call the GUI's wake would make)
+  -> fb_notifier_callback blank==0 -> queue_work_on ->
+  hyn_resume_work -> the wake-check reg 0xaa read (the model answers
+  one 0x00 byte per the v0.77 arming) -> the compare vs ts+40=0xff
+  mismatches 5x (200 ms each) -> the SOFT fall-through (`b bdc`)
+  -> enable_irq(ts+244) + ts+258/256 cleared. A QMP tap then counted
+  /proc/interrupts hyn_ts 0 -> 9 (the press INT + the 20 ms held
+  ticks + the lift) and the driver dispatched the frames. The
+  fb_blank(4) -> disable_irq path was verified dead-side: taps
+  counted NOTHING while blanked in the fb_blank(4) boots (the
+  genirq disabled-path latch; the pending replays on re-enable).
+  **No model change is required: the v0.77 cst8xx/LCD/GPIO models
+  already serve the entire blank/wake contract faithfully** (the
+  suspend write stall reproduces the recorded "i2c1 write
+  timeout(136 ms)"/"set TP to sleep mode fail, ret=-145" prints and
+  arms the wake check; the resume re-enables the INT; the LCD
+  stop-done (+0x2000=0x10) un-stalls the blank path).
+- **Verification (this round)**:
+  - (a) diag: the blank -> the touch IRQ frozen at 0 (the
+    fb_blank(4) boots); `fb0/blank=0` -> the resume -> a tap counts
+    9 IRQs. `fb0/blank=4` while suspended prints "[HYN_TS/I]
+    hyn_ts_suspend:Already in suspend state" (the $LC0 early return).
+  - (b/c) the FULL user flow on the post-shutdown boots (the touch
+    alive): QMP tap at the English row (240, 398 — the v0.77
+    calibration) on the picker -> the wizard ADVANCED (the screen
+    md5 changed; /tmp/kilo/wake/sel_before.png vs sel_after.png —
+    the bottom third goes dark as the next screen renders; the
+    settled dump matches). The language selection persisted state
+    is now in the worktree volume.
+  - (d) tools/x1600-boot-test.sh PASS (297 distinct messages, 158
+    structural lines vs docs/traces/boot-baseline-v0.75.txt; the
+    nand image rebuilt first per the v0.75 lesson, md5 ae41e974...).
+- **Operational hazards recorded**: killing hiby_player with the
+  hiby_player.sh wrapper alive reboots the device; killing it with
+  the wrapper dead leaves the player dead and the device resets
+  within ~20 s (a watchdog/PM path) — player swaps must be atomic
+  single-command-line kills+launches. The 5-minute idle shutdown
+  will reboot the demo VM by itself when nobody interacts.

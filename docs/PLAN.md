@@ -222,6 +222,32 @@ qemu-wifi-srom; supersedes the earlier headers for the wifi item —
   erased factory state for the rcS UBIFS-format marker the gate keys
   on — demo-session writes move the boot into the journal-replay
   window and the gate keys off a different message set).
+- **Status (M3 fb-blank/wake round, v0.78, worktree qemu-fb-wake):**
+  the blank/wake mechanism DECODED and the model-side wake chain
+  VERIFIED. The stock idle policy: ~25-30 s idle -> backlight 0
+  write (+ fb_blank(4) in the pre-shutdown volume state -> the hyn
+  suspend + disable_irq_nosync(100)), ~5 min idle -> the power-save
+  SHUTDOWN (the player exits -> hiby_player.sh reboots). fbNotifier
+  fully decoded (cst8xx_touch.ko): only FB_EVENT_BLANK; blank==0 ->
+  queue_work_on(hyn_resume_work); blank==4 -> the inlined
+  hyn_ts_suspend (disable + the 0xa5 sleep write + the fail print).
+  hyn_resume_work decoded: BTN_TOUCH 0 release, then the wake check
+  hyn_read(0xaa) 5x vs the probe-time ts+40 (0xff after the probe
+  fallback — NOT bss-0) and a SOFT fall-through that runs
+  enable_irq unconditionally after ~1 s. The GUI never issues
+  FBIOBLANK(0) (no 0x460b constant in the player; the kernel's
+  fb_blank callers are only do_fb_ioctl + the fb0/blank sysfs
+  store), and its own wake path (the md-gpio-keys bitmap -> the
+  litegui 4096/8192/16384 events -> 0x4ec720) is gated on runtime-
+  obfuscated settings (6/93) + the wizard app-state — parked as a
+  userspace decode, not a model item. Verified live: fb_blank(0)
+  via the fb0/blank sysfs re-enables the touch INT (the tap counts
+  9 IRQs post-resume); in the post-shutdown boots the blank is
+  backlight-only and the touch chain stays alive — QMP tap at the
+  English row selects it and the wizard advances (sel_before/
+  sel_after.png). The GUI ignores ALL input while blanked (keys and
+  touch), so interactivity depends on which blank variant fires;
+  the v0.77 model needs NO further change. Boot gate PASS.
 - **Remaining to M3 done:** 1. list scroll-follow: the drag moves
   register (the vertical scroll machinery invalidates, horizontal
   drags are correctly ignored) but the language list does not follow
