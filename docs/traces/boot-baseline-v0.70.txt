@@ -1,0 +1,740 @@
+# x1600-boot-test baseline — M4 boot regression gate (docs/PLAN.md M4)
+# generated: 2026-10-14T04:10:02Z
+# firmware: stock v1.6 UNMODIFIED; kernel /home/matt/dev/hiby-r1-sdk/unpacked/1.6/vmlinux.bin md5 dceda6683b9bc56b9a4110530b9add3f
+# nand image /home/matt/dev/hiby-r1-sdk/unpacked/1.6/nand-r1.bin md5 ae41e974e78aab2730774d05c9cbf37c
+# qemu binary /home/matt/dev/hiby-r1-sdk/tools/vendors/qemu/build/qemu-system-mipsel md5 3c0681f3fa323ca731ba0f1d12c3e67c
+# main repo HEAD: 13b2236
+# vendored qemu rev: 5e43af7 (hw/mips/x1600.c: clean)
+# boot cmd: qemu-system-mipsel -M x1600 -kernel <kernel> -serial file:<console log> -serial file:<ttyS0 log> -display none -monitor none -no-reboot
+# console port: ttyS2 = serial0 (captured; stock cmdline
+#   console=ttyS2,3000000n8); ttyS0 = serial1 (earlycon + BT uart,
+#   discardable — the window is serial0 only).
+# window: serial output through the terminal marker "UBIFS (ubi1:0): default file-system created" —
+#   the documented rcS end state (wifi/DHD failure stall); the gate does
+#   not require the player UI.
+# normalization: guest timestamps stripped; consecutive duplicate lines
+#   squeezed; volatile numbers neutralized: initcall "after <N> usecs"
+#   durations, BogoMIPS/lpj, UBIFS image sequence number (randomized by
+#   the kernel per attach), oops trace IDs, PID/task/threadinfo/tls
+#   fields, register+stack dump contents, Modules-linked-in/Tainted
+#   oops snapshots; the documented timing-spam line classes (adc poller,
+#   i2cN write timeout, hrtimer delay warning) dropped.
+# comparison: distinct canonical messages (order/multiplicity-free)
+#   + ordered sequence of init-thread structural lines (calling/initcall
+#   chain, console handoff, root mount) — see tools/x1600-boot-test.sh.
+# --- window ---
+console [ttyS2] enabled
+bootconsole [early0] disabled
+initcall serial_ingenic_init+0x0/0x68 returned 0 after <N> usecs
+calling  ingenic_rtc_driver_init+0x0/0x18 @ <PID>
+rtc-ingenic 10003000.rtc: rtc core: registered 10003000.rtc as rtc0
+ingenic_rtc: rtc power on reset !
+ingenic RTC probe success 
+initcall ingenic_rtc_driver_init+0x0/0x18 returned 0 after <N> usecs
+calling  ingenic_wdt_driver_init+0x0/0x10 @ <PID>
+ingenic watchdog probe success
+initcall ingenic_wdt_driver_init+0x0/0x10 returned 0 after <N> usecs
+calling  sock_diag_init+0x0/0x48 @ <PID>
+initcall sock_diag_init+0x0/0x48 returned 0 after <N> usecs
+calling  nfnetlink_init+0x0/0xbc @ <PID>
+Netfilter messages via NETLINK v0.30.
+initcall nfnetlink_init+0x0/0xbc returned 0 after <N> usecs
+calling  nfnetlink_queue_init+0x0/0xb4 @ <PID>
+initcall nfnetlink_queue_init+0x0/0xb4 returned 0 after <N> usecs
+calling  nfnetlink_log_init+0x0/0xd0 @ <PID>
+initcall nfnetlink_log_init+0x0/0xd0 returned 0 after <N> usecs
+calling  xt_init+0x0/0xe0 @ <PID>
+initcall xt_init+0x0/0xe0 returned 0 after <N> usecs
+calling  tcpudp_mt_init+0x0/0x10 @ <PID>
+initcall tcpudp_mt_init+0x0/0x10 returned 0 after <N> usecs
+calling  nflog_tg_init+0x0/0xc @ <PID>
+initcall nflog_tg_init+0x0/0xc returned 0 after <N> usecs
+calling  nfqueue_tg_init+0x0/0x10 @ <PID>
+initcall nfqueue_tg_init+0x0/0x10 returned 0 after <N> usecs
+calling  quota_mt_init+0x0/0xc @ <PID>
+initcall quota_mt_init+0x0/0xc returned 0 after <N> usecs
+calling  ip_set_init+0x0/0xcc @ <PID>
+ip_set: protocol 6
+initcall ip_set_init+0x0/0xcc returned 0 after <N> usecs
+calling  bitmap_ipmac_init+0x0/0xc @ <PID>
+initcall bitmap_ipmac_init+0x0/0xc returned 0 after <N> usecs
+calling  gre_offload_init+0x0/0x10 @ <PID>
+initcall gre_offload_init+0x0/0x10 returned 0 after <N> usecs
+calling  sysctl_ipv4_init+0x0/0x64 @ <PID>
+initcall sysctl_ipv4_init+0x0/0x64 returned 0 after <N> usecs
+calling  ip_tables_init+0x0/0xc8 @ <PID>
+ip_tables: (C) 2000-2006 Netfilter Core Team
+initcall ip_tables_init+0x0/0xc8 returned 0 after <N> usecs
+calling  iptable_filter_init+0x0/0x70 @ <PID>
+initcall iptable_filter_init+0x0/0x70 returned 0 after <N> usecs
+calling  iptable_mangle_init+0x0/0x70 @ <PID>
+initcall iptable_mangle_init+0x0/0x70 returned 0 after <N> usecs
+calling  iptable_raw_init+0x0/0x70 @ <PID>
+initcall iptable_raw_init+0x0/0x70 returned 0 after <N> usecs
+calling  inet_diag_init+0x0/0xa4 @ <PID>
+initcall inet_diag_init+0x0/0xa4 returned 0 after <N> usecs
+calling  tcp_diag_init+0x0/0xc @ <PID>
+initcall tcp_diag_init+0x0/0xc returned 0 after <N> usecs
+calling  cubictcp_register+0x0/0x84 @ <PID>
+initcall cubictcp_register+0x0/0x84 returned 0 after <N> usecs
+calling  packet_init+0x0/0x5c @ <PID>
+NET: Registered protocol family 17
+initcall packet_init+0x0/0x5c returned 0 after <N> usecs
+calling  rfcomm_init+0x0/0x118 @ <PID>
+Bluetooth: RFCOMM TTY layer initialized
+Bluetooth: RFCOMM socket layer initialized
+Bluetooth: RFCOMM ver 1.11
+initcall rfcomm_init+0x0/0x118 returned 0 after <N> usecs
+calling  hidp_init+0x0/0x28 @ <PID>
+Bluetooth: HIDP (Human Interface Emulation) ver 1.2
+Bluetooth: HIDP socket layer initialized
+initcall hidp_init+0x0/0x28 returned 0 after <N> usecs
+calling  init_dns_resolver+0x0/0x12c @ <PID>
+Key type dns_resolver registered
+initcall init_dns_resolver+0x0/0x12c returned 0 after <N> usecs
+calling  check_rootfs+0x0/0xd8 @ <PID>
+check file /linuxrc ... 
+failed -2.
+check file /init ... 
+failed -2.
+check file /init.rc ... 
+failed -2.
+check file /sbin/adbd ... 
+failed -2.
+check file /bin/busybox ... 
+failed -2.
+initcall check_rootfs+0x0/0xd8 returned 0 after <N> usecs
+calling  pm_init+0x0/0x24 @ <PID>
+initcall pm_init+0x0/0x24 returned 0 after <N> usecs
+calling  init_oops_id+0x0/0x54 @ <PID>
+initcall init_oops_id+0x0/0x54 returned 0 after <N> usecs
+calling  pm_qos_power_init+0x0/0xf8 @ <PID>
+initcall pm_qos_power_init+0x0/0xf8 returned 0 after <N> usecs
+calling  pm_debugfs_init+0x0/0x3c @ <PID>
+initcall pm_debugfs_init+0x0/0x3c returned 0 after <N> usecs
+calling  printk_late_init+0x0/0x64 @ <PID>
+initcall printk_late_init+0x0/0x64 returned 0 after <N> usecs
+calling  tk_debug_sleep_time_init+0x0/0x54 @ <PID>
+initcall tk_debug_sleep_time_init+0x0/0x54 returned 0 after <N> usecs
+calling  fault_around_debugfs+0x0/0x50 @ <PID>
+initcall fault_around_debugfs+0x0/0x50 returned 0 after <N> usecs
+calling  ubifs_init+0x0/0xf0 @ <PID>
+initcall ubifs_init+0x0/0xf0 returned 0 after <N> usecs
+calling  init_root_keyring+0x0/0x8 @ <PID>
+initcall init_root_keyring+0x0/0x8 returned 0 after <N> usecs
+calling  prandom_reseed+0x0/0x50 @ <PID>
+initcall prandom_reseed+0x0/0x50 returned 0 after <N> usecs
+calling  deferred_probe_initcall+0x0/0x88 @ <PID>
+initcall deferred_probe_initcall+0x0/0x88 returned 0 after <N> usecs
+calling  dma_coherent_debugfs_init+0x0/0x3c @ <PID>
+initcall dma_coherent_debugfs_init+0x0/0x3c returned 0 after <N> usecs
+calling  ubi_init+0x0/0x2b4 @ <PID>
+initcall ubi_init+0x0/0x2b4 returned 0 after <N> usecs
+calling  rtc_hctosys+0x0/0x114 @ <PID>
+rtc-ingenic 10003000.rtc: setting system clock to 2020-03-01 12:00:00 UTC (1583064000)
+initcall rtc_hctosys+0x0/0x114 returned 0 after <N> usecs
+calling  of_fdt_raw_init+0x0/0x8c @ <PID>
+initcall of_fdt_raw_init+0x0/0x8c returned 0 after <N> usecs
+calling  clk_debug_init+0x0/0x164 @ <PID>
+initcall clk_debug_init+0x0/0x164 returned 0 after <N> usecs
+calling  register_sk_filter_ops+0x0/0x8 @ <PID>
+initcall register_sk_filter_ops+0x0/0x8 returned 0 after <N> usecs
+calling  tcp_congestion_default+0x0/0xc @ <PID>
+initcall tcp_congestion_default+0x0/0xc returned 0 after <N> usecs
+calling  ip_auto_config+0x0/0x1194 @ <PID>
+initcall ip_auto_config+0x0/0x1194 returned 0 after <N> usecs
+calling  regulator_init_complete+0x0/0x4c @ <PID>
+initcall regulator_init_complete+0x0/0x4c returned 0 after <N> usecs
+calling  clk_disable_unused+0x0/0x134 @ <PID>
+initcall clk_disable_unused+0x0/0x134 returned 0 after <N> usecs
+calling  alsa_sound_last_init+0x0/0xac @ <PID>
+ALSA device list:
+No soundcards found.
+initcall alsa_sound_last_init+0x0/0xac returned 0 after <N> usecs
+mtd: rootfs 41943040 131072 0
+VFS: Mounted root (squashfs filesystem) readonly on device 50:2.
+devtmpfs: mounted
+Freeing unused kernel memory: 1272K
+Starting mdev... OK
+Starting display... 
+calling  init_module+0x0/0x38 [utils] @ <PID>
+initcall init_module+0x0/0x38 [utils] returned 0 after <N> usecs
+calling  rmem_manager_init+0x0/0x80 [rmem_manager] @ <PID>
+rmem:no remem set, use kmalloc
+initcall rmem_manager_init+0x0/0x80 [rmem_manager] returned 0 after <N> usecs
+calling  utils_init+0x0/0x30 [soc_utils] @ <PID>
+initcall utils_init+0x0/0x30 [soc_utils] returned 0 after <N> usecs
+calling  jz_arch_i2c_init+0x0/0x60 [soc_i2c] @ <PID>
+initcall jz_arch_i2c_init+0x0/0x60 [soc_i2c] returned 0 after <N> usecs
+calling  i2c_gpio_init+0x0/0x5c [i2c_gpio_add] @ <PID>
+initcall i2c_gpio_init+0x0/0x5c [i2c_gpio_add] returned 0 after <N> usecs
+md_i2c_gpio md_i2c_gpio.3: using pins 63 (SDA) and 62 (SCL)
+calling  axp2101_i2c_init+0x0/0x94 [axp2101] @ <PID>
+AXP2101: IRQ GPIO is 55 -> irq is 72
+AXP2101: Charge Voltage Limit 4400
+AXP2101: Charge Current Term 100
+axp20x-i2c 0-0034: AXP20x variant AXP2101 found
+axp20x-i2c 0-0034: Failed to set masks in 0x40: -145
+axp20x-i2c 0-0034: failed to add irq chip: -145
+axp20x-i2c: probe of 0-0034 failed with error -145
+initcall axp2101_i2c_init+0x0/0x94 [axp2101] returned 0 after <N> usecs
+calling  cw215_init+0x0/0x44 [cw2015] @ <PID>
+cw2015_probe : cw2015 init fail!
+cw201x: probe of 0-0062 failed with error -145
+initcall cw215_init+0x0/0x44 [cw2015] returned 0 after <N> usecs
+calling  gpio_keys_init+0x0/0x1c [keyboard_gpio_add] @ <PID>
+initcall gpio_keys_init+0x0/0x1c [keyboard_gpio_add] returned 0 after <N> usecs
+input: md-gpio-keys as /devices/platform/md-gpio-keys/input/input0
+calling  gpio_init+0x0/0x5c [soc_gpio] @ <PID>
+initcall gpio_init+0x0/0x5c [soc_gpio] returned 0 after <N> usecs
+calling  jz_pwm_init+0x0/0x290 [soc_pwm] @ <PID>
+pwm clk source rate 1200000000
+initcall jz_pwm_init+0x0/0x290 [soc_pwm] returned 0 after <N> usecs
+calling  init_module+0x0/0x1d8 [pwm_backlight] @ <PID>
+initcall init_module+0x0/0x1d8 [pwm_backlight] returned 0 after <N> usecs
+calling  jzfb_module_init+0x0/0x178 [soc_fb] @ <PID>
+initcall jzfb_module_init+0x0/0x178 [soc_fb] returned 0 after <N> usecs
+calling  aic_init+0x0/0x7c [soc_aic] @ <PID>
+initcall aic_init+0x0/0x7c [soc_aic] returned 0 after <N> usecs
+calling  msc_init+0x0/0x138 [soc_msc] @ <PID>
+div_msc0 gate_msc0
+md_ingenic,mmc md_ingenic,mmc.0: register success!
+div_msc1 gate_msc1
+md_ingenic,mmc md_ingenic,mmc.1: Got CD GPIO
+md_ingenic,mmc md_ingenic,mmc.1: register success!
+initcall msc_init+0x0/0x138 [soc_msc] returned 0 after <N> usecs
+md_ingenic,mmc md_ingenic,mmc.1: card inserted, state=0
+calling  jz_adc_init+0x0/0x1b4 [soc_adc] @ <PID>
+initcall jz_adc_init+0x0/0x1b4 [soc_adc] returned 0 after <N> usecs
+calling  lg35583_init+0x0/0x500 [lcd_lg35583] @ <PID>
+deviceless supply bldo1 not found, using dummy regulator
+deviceless supply bldo2 not found, using dummy regulator
+LCD: lcd_id_vol:3299 lcd_id:1
+initcall lg35583_init+0x0/0x500 [lcd_lg35583] returned 0 after <N> usecs
+Wait display... 
+calling  switch_init+0x0/0x424 [sa_sound_switch] @ <PID>
+[SASS]1 detect items
+[SASS]success to init switch item headphone
+[SASS]switch_probe OK
+initcall switch_init+0x0/0x424 [sa_sound_switch] returned 0 after <N> usecs
+calling  cs43131_init+0x0/0xc8 [codec_cs43131] @ <PID>
+[CS43131_MX30] cs43131_power pin:34 output
+[CS43131_MX30] cs43131_reset pin:53 output
+initcall cs43131_init+0x0/0xc8 [codec_cs43131] returned 0 after <N> usecs
+calling  hyn_ts_init+0x0/0x9a0 [cst8xx_touch] @ <PID>
+hyn_ts_init load touch driver
+input: hyn_ts as /devices/i2c-1/1-0015/input/input1
+1-0015 supply aldo2 not found, using dummy regulator
+1-0015 supply vcc_i2c not found, using dummy regulator
+create proc entry lcd_reg success
+Finish display... 
+[HYN_TS/I]hyn_get_ic_information:read chip_ID fail !!!
+TP: lcd_id_vol:3299 lcd_id:1
+hyn_ts_probe_entry 9-2  fw update start
+
+CTP cst78xx start:0x0000 length:0x3c00 checksum:044a
+[HYN_TS/E]cst78xx_update:enter boot mode faile!
+[HYN_TS/E]cst78xx_read_checksum:enter boot mode faile!!!
+
+CTP cst78xx update fail, checksum-0xffff 
+hyn_ts_probe_entry 9-2  fw update end
+[HYN_TS/I]hyn_irq_registration:== irq:100, flag:2002
+[HYN_TS/I]hyn_ts_probe:Touch Screen(I2C BUS) driver prboe successfully
+initcall hyn_ts_init+0x0/0x9a0 [cst8xx_touch] returned 0 after <N> usecs
+calling  dhd_module_init+0x0/0x2a8 [cywdhd] @ <PID>
+dhd_module_init in
+[clooney]dhd_init_gpio_wlan_hostwake: WL_HOST_WAKE=8, oob_irq=101, oob_irq_flags=0x414
+Power-up adapter 'DHD generic adapter'
+=========== WLAN placed in NOMAL ON========
+wlan power on: init
+bcm_wlan_power_on  NORMAL
+mmc0: queuing unknown CIS tuple 0x81 (1 bytes)
+mmc0: new SDIO card at address 0001
+wifi_platform_bus_enumerate device present 1
+bcmsdh_register: register client driver
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:1 failed with error -12
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:2 failed with error -12
+dhd_wifi_platform_load_sdio: sdio_register_driver timeout or error 
+=========== WLAN placed in NOMAL OFF ========
+wlan power off: initok
+wifi_platform_bus_enumerate device present 0
+unregister wifi platform drivers
+dhd_module_init: Failed to load the driver, try cnt 3
+dhd_init_gpio_wlan_hostwake: gpio_request(8) for WL_HOST_WAKE failed
+Power-up adapter 'DHD generic adapter'
+=========== WLAN placed in RESET ON  ========
+wlan power on: poweron
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
+bcmsdh_register: register client driver
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:1 failed with error -12
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+------------[ cut here ]------------
+WARNING: CPU: 0 PID: <PID> at fs/sysfs/dir.c:31 sysfs_warn_dup+0x6c/0x88()
+sysfs: cannot create duplicate filename '/devices/platform/md_ingenic,mmc.0/mmc_host/mmc0/mmc0:0001/mmc0:0001:2/chipvendor'
+<modules>
+CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
+<stack dump>
+Call Trace:
+[<8001c960>] show_stack+0x54/0x88
+[<8003071c>] warn_slowpath_common+0xa0/0xd0
+[<80030778>] warn_slowpath_fmt+0x2c/0x38
+[<80123b88>] sysfs_warn_dup+0x6c/0x88
+[<80123848>] sysfs_add_file_mode_ns+0x140/0x1d0
+[<80123910>] sysfs_create_file_ns+0x38/0x44
+[<c03c5a54>] bcmsdh_sdmmc_probe+0x12c/0x4a8 [cywdhd]
+[<80390a6c>] sdio_bus_probe+0xc4/0x158
+[<802c10d4>] driver_probe_device+0x138/0x2bc
+[<802c12d4>] __driver_attach+0x7c/0xb4
+[<802bf3c4>] bus_for_each_dev+0x94/0xa4
+[<802c073c>] bus_add_driver+0xf0/0x200
+[<802c1cd0>] driver_register+0xb0/0x104
+[<c03c255c>] bcmsdh_register+0x5c/0x94 [cywdhd]
+[<c03abec8>] dhd_wifi_platform_load+0x320/0x498 [cywdhd]
+[<c03ac74c>] dhd_wifi_platform_register_drv+0x2a4/0x32c [cywdhd]
+[<c0439148>] dhd_module_init+0x148/0x2a8 [cywdhd]
+[<80010584>] do_one_initcall+0xf0/0x1fc
+[<8008b770>] do_init_module+0x74/0x1d4
+[<80087458>] load_module+0x17b8/0x1c78
+[<80087b04>] SyS_finit_module+0x70/0x88
+[<8002092c>] syscall_common+0x30/0x54
+
+---[ end trace <ID> ]---
+could not create sysfs files
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:2 failed with error -12
+dhd_wifi_platform_load_sdio: sdio_register_driver timeout or error 
+=========== WLAN placed in RESET OFF========
+wlan power off: poweroff
+wifi_platform_bus_enumerate device present 0
+unregister wifi platform drivers
+dhd_module_init: Failed to load the driver, try cnt 2
+dhd_init_gpio_wlan_hostwake: gpio_request(8) for WL_HOST_WAKE failed
+Power-up adapter 'DHD generic adapter'
+=========== WLAN placed in RESET ON  ========
+wlan power on: poweron
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
+bcmsdh_register: register client driver
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:1 failed with error -12
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+------------[ cut here ]------------
+WARNING: CPU: 0 PID: <PID> at fs/sysfs/dir.c:31 sysfs_warn_dup+0x6c/0x88()
+sysfs: cannot create duplicate filename '/devices/platform/md_ingenic,mmc.0/mmc_host/mmc0/mmc0:0001/mmc0:0001:2/chipvendor'
+<modules>
+CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
+<stack dump>
+Call Trace:
+[<8001c960>] show_stack+0x54/0x88
+[<8003071c>] warn_slowpath_common+0xa0/0xd0
+[<80030778>] warn_slowpath_fmt+0x2c/0x38
+[<80123b88>] sysfs_warn_dup+0x6c/0x88
+[<80123848>] sysfs_add_file_mode_ns+0x140/0x1d0
+[<80123910>] sysfs_create_file_ns+0x38/0x44
+[<c03c5a54>] bcmsdh_sdmmc_probe+0x12c/0x4a8 [cywdhd]
+[<80390a6c>] sdio_bus_probe+0xc4/0x158
+[<802c10d4>] driver_probe_device+0x138/0x2bc
+[<802c12d4>] __driver_attach+0x7c/0xb4
+[<802bf3c4>] bus_for_each_dev+0x94/0xa4
+[<802c073c>] bus_add_driver+0xf0/0x200
+[<802c1cd0>] driver_register+0xb0/0x104
+[<c03c255c>] bcmsdh_register+0x5c/0x94 [cywdhd]
+[<c03abec8>] dhd_wifi_platform_load+0x320/0x498 [cywdhd]
+[<c03ac74c>] dhd_wifi_platform_register_drv+0x2a4/0x32c [cywdhd]
+[<c0439148>] dhd_module_init+0x148/0x2a8 [cywdhd]
+[<80010584>] do_one_initcall+0xf0/0x1fc
+[<8008b770>] do_init_module+0x74/0x1d4
+[<80087458>] load_module+0x17b8/0x1c78
+[<80087b04>] SyS_finit_module+0x70/0x88
+[<8002092c>] syscall_common+0x30/0x54
+
+---[ end trace <ID> ]---
+could not create sysfs files
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:2 failed with error -12
+dhd_wifi_platform_load_sdio: sdio_register_driver timeout or error 
+=========== WLAN placed in RESET OFF========
+wlan power off: poweroff
+wifi_platform_bus_enumerate device present 0
+unregister wifi platform drivers
+dhd_module_init: Failed to load the driver, try cnt 1
+dhd_init_gpio_wlan_hostwake: gpio_request(8) for WL_HOST_WAKE failed
+Power-up adapter 'DHD generic adapter'
+=========== WLAN placed in RESET ON  ========
+wlan power on: poweron
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
+bcmsdh_register: register client driver
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:1 failed with error -12
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+------------[ cut here ]------------
+WARNING: CPU: 0 PID: <PID> at fs/sysfs/dir.c:31 sysfs_warn_dup+0x6c/0x88()
+sysfs: cannot create duplicate filename '/devices/platform/md_ingenic,mmc.0/mmc_host/mmc0/mmc0:0001/mmc0:0001:2/chipvendor'
+<modules>
+CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
+<stack dump>
+Call Trace:
+[<8001c960>] show_stack+0x54/0x88
+[<8003071c>] warn_slowpath_common+0xa0/0xd0
+[<80030778>] warn_slowpath_fmt+0x2c/0x38
+[<80123b88>] sysfs_warn_dup+0x6c/0x88
+[<80123848>] sysfs_add_file_mode_ns+0x140/0x1d0
+[<80123910>] sysfs_create_file_ns+0x38/0x44
+[<c03c5a54>] bcmsdh_sdmmc_probe+0x12c/0x4a8 [cywdhd]
+[<80390a6c>] sdio_bus_probe+0xc4/0x158
+[<802c10d4>] driver_probe_device+0x138/0x2bc
+[<802c12d4>] __driver_attach+0x7c/0xb4
+[<802bf3c4>] bus_for_each_dev+0x94/0xa4
+[<802c073c>] bus_add_driver+0xf0/0x200
+[<802c1cd0>] driver_register+0xb0/0x104
+[<c03c255c>] bcmsdh_register+0x5c/0x94 [cywdhd]
+[<c03abec8>] dhd_wifi_platform_load+0x320/0x498 [cywdhd]
+[<c03ac74c>] dhd_wifi_platform_register_drv+0x2a4/0x32c [cywdhd]
+[<c0439148>] dhd_module_init+0x148/0x2a8 [cywdhd]
+[<80010584>] do_one_initcall+0xf0/0x1fc
+[<8008b770>] do_init_module+0x74/0x1d4
+[<80087458>] load_module+0x17b8/0x1c78
+[<80087b04>] SyS_finit_module+0x70/0x88
+[<8002092c>] syscall_common+0x30/0x54
+
+---[ end trace <ID> ]---
+could not create sysfs files
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:2 failed with error -12
+dhd_wifi_platform_load_sdio: sdio_register_driver timeout or error 
+=========== WLAN placed in RESET OFF========
+wlan power off: poweroff
+wifi_platform_bus_enumerate device present 0
+unregister wifi platform drivers
+dhd_module_init: Failed to load the driver, try cnt 0
+dhd_module_init: Failed to load driver max retry reached**
+dhd_module_init out
+initcall dhd_module_init+0x0/0x2a8 [cywdhd] returned -62 after <N> usecs
+calling  dhd_module_init+0x0/0x2a8 [cywdhd] @ <PID>
+------------[ cut here ]------------
+WARNING: CPU: 0 PID: <PID> at fs/sysfs/dir.c:31 sysfs_warn_dup+0x6c/0x88()
+sysfs: cannot create duplicate filename '/devices/platform/md_bcmdhd_bt_power'
+<modules>
+CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
+<stack dump>
+Call Trace:
+[<8001c960>] show_stack+0x54/0x88
+[<8003071c>] warn_slowpath_common+0xa0/0xd0
+[<80030778>] warn_slowpath_fmt+0x2c/0x38
+[<80123b88>] sysfs_warn_dup+0x6c/0x88
+[<80123c94>] sysfs_create_dir_ns+0x84/0xac
+[<80249d70>] kobject_add_internal+0x104/0x2cc
+[<80249fc8>] kobject_add+0x90/0xa8
+[<802be2a4>] device_add+0x108/0x55c
+[<802c2bb0>] platform_device_add+0x19c/0x234
+[<c06b8034>] dhd_module_init+0x34/0x2a8 [cywdhd]
+[<80010584>] do_one_initcall+0xf0/0x1fc
+[<8008b770>] do_init_module+0x74/0x1d4
+[<80087458>] load_module+0x17b8/0x1c78
+[<80087a4c>] SyS_init_module+0x134/0x17c
+[<8002092c>] syscall_common+0x30/0x54
+
+---[ end trace <ID> ]---
+------------[ cut here ]------------
+WARNING: CPU: 0 PID: <PID> at lib/kobject.c:240 kobject_add_internal+0x264/0x2cc()
+kobject_add_internal failed for md_bcmdhd_bt_power with -EEXIST, don't try to register things with the same name in the same directory.
+<modules>
+CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
+<stack dump>
+Call Trace:
+[<8001c960>] show_stack+0x54/0x88
+[<8003071c>] warn_slowpath_common+0xa0/0xd0
+[<80030778>] warn_slowpath_fmt+0x2c/0x38
+[<80249ed0>] kobject_add_internal+0x264/0x2cc
+[<80249fc8>] kobject_add+0x90/0xa8
+[<802be2a4>] device_add+0x108/0x55c
+[<802c2bb0>] platform_device_add+0x19c/0x234
+[<c06b8034>] dhd_module_init+0x34/0x2a8 [cywdhd]
+[<80010584>] do_one_initcall+0xf0/0x1fc
+[<8008b770>] do_init_module+0x74/0x1d4
+[<80087458>] load_module+0x17b8/0x1c78
+[<80087a4c>] SyS_init_module+0x134/0x17c
+[<8002092c>] syscall_common+0x30/0x54
+
+---[ end trace <ID> ]---
+initcall dhd_module_init+0x0/0x2a8 [cywdhd] returned -17 after <N> usecs
+insmod: can't insert 'cywdhd.ko': File exists
+calling  init_module+0x0/0x44 [keyboard_adc_multifunc] @ <PID>
+CPU 0 Unable to handle kernel paging request at virtual address c04060a8, epc == 802c1368, ra == 802bf484
+Oops[#1]:
+CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
+task: <ADDR> ti: <ADDR> task.ti: <ADDR>
+<regdump>
+epc   : 802c1368 __device_attach_driver+0x24/0xbc
+ra    : 802bf484 bus_for_each_drv+0x9c/0xac
+Status: <CP0>	KERNEL EXL IE 
+Cause : <CP0> (ExcCode 02)
+BadVA : c04060a8
+PrId  : 2ed1024f (Xburst)
+<modules>
+Process insmod (pid: <PID>, threadinfo=<ADDR>, task=<ADDR>, tls=<ADDR>)
+<stack dump>
+Call Trace:
+[<802c1368>] __device_attach_driver+0x24/0xbc
+[<802bf484>] bus_for_each_drv+0x9c/0xac
+[<802c0ef8>] __device_attach+0xa4/0x128
+[<802c04b8>] bus_probe_device+0x3c/0xb0
+[<802be5e8>] device_add+0x44c/0x55c
+[<802c2bb0>] platform_device_add+0x19c/0x234
+[<c06e9bac>] adc_keyboard_dev_init+0x1c/0x2c [keyboard_adc_multifunc]
+[<c06ed018>] init_module+0x18/0x44 [keyboard_adc_multifunc]
+[<80010584>] do_one_initcall+0xf0/0x1fc
+[<8008b770>] do_init_module+0x74/0x1d4
+[<80087458>] load_module+0x17b8/0x1c78
+[<80087b04>] SyS_finit_module+0x70/0x88
+[<8002092c>] syscall_common+0x30/0x54
+
+Code: 8e420044  14400020  00a08825 <8c820004> 8c42001c  14400007  00808025  0c0b04c3  02002025 
+---[ end trace <ID> ]---
+Segmentation fault
+calling  leds_pwm_dev_init+0x0/0x78 [leds_pwm_add] @ <PID>
+CPU 0 Unable to handle kernel paging request at virtual address c04060a8, epc == 802c1368, ra == 802bf484
+Oops[#2]:
+CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
+task: <ADDR> ti: <ADDR> task.ti: <ADDR>
+<regdump>
+epc   : 802c1368 __device_attach_driver+0x24/0xbc
+ra    : 802bf484 bus_for_each_drv+0x9c/0xac
+Status: <CP0>	KERNEL EXL IE 
+Cause : <CP0> (ExcCode 02)
+BadVA : c04060a8
+PrId  : 2ed1024f (Xburst)
+<modules>
+Process insmod (pid: <PID>, threadinfo=<ADDR>, task=<ADDR>, tls=<ADDR>)
+<stack dump>
+Call Trace:
+[<802c1368>] __device_attach_driver+0x24/0xbc
+[<802bf484>] bus_for_each_drv+0x9c/0xac
+[<802c0ef8>] __device_attach+0xa4/0x128
+[<802c04b8>] bus_probe_device+0x3c/0xb0
+[<802be5e8>] device_add+0x44c/0x55c
+[<802c2bb0>] platform_device_add+0x19c/0x234
+[<c06f8020>] leds_pwm_dev_init+0x20/0x78 [leds_pwm_add]
+[<80010584>] do_one_initcall+0xf0/0x1fc
+[<8008b770>] do_init_module+0x74/0x1d4
+[<80087458>] load_module+0x17b8/0x1c78
+[<80087b04>] SyS_finit_module+0x70/0x88
+[<8002092c>] syscall_common+0x30/0x54
+
+Code: 8e420044  14400020  00a08825 <8c820004> 8c42001c  14400007  00808025  0c0b04c3  02002025 
+---[ end trace <ID> ]---
+Segmentation fault
+calling  sa_config_init+0x0/0x78 [sa_config_module] @ <PID>
+CPU 0 Unable to handle kernel paging request at virtual address c04060a8, epc == 802c1368, ra == 802bf484
+Oops[#3]:
+CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
+task: <ADDR> ti: <ADDR> task.ti: <ADDR>
+<regdump>
+epc   : 802c1368 __device_attach_driver+0x24/0xbc
+ra    : 802bf484 bus_for_each_drv+0x9c/0xac
+Status: <CP0>	KERNEL EXL IE 
+Cause : <CP0> (ExcCode 02)
+BadVA : c04060a8
+PrId  : 2ed1024f (Xburst)
+<modules>
+Process insmod (pid: <PID>, threadinfo=<ADDR>, task=<ADDR>, tls=<ADDR>)
+<stack dump>
+Call Trace:
+[<802c1368>] __device_attach_driver+0x24/0xbc
+[<802bf484>] bus_for_each_drv+0x9c/0xac
+[<802c0ef8>] __device_attach+0xa4/0x128
+[<802c04b8>] bus_probe_device+0x3c/0xb0
+[<802be5e8>] device_add+0x44c/0x55c
+[<802c2bb0>] platform_device_add+0x19c/0x234
+[<c0700020>] sa_config_init+0x20/0x78 [sa_config_module]
+[<80010584>] do_one_initcall+0xf0/0x1fc
+[<8008b770>] do_init_module+0x74/0x1d4
+[<80087458>] load_module+0x17b8/0x1c78
+[<80087b04>] SyS_finit_module+0x70/0x88
+[<8002092c>] syscall_common+0x30/0x54
+
+Code: 8e420044  14400020  00a08825 <8c820004> 8c42001c  14400007  00808025  0c0b04c3  02002025 
+---[ end trace <ID> ]---
+Segmentation fault
+calling  earpods_adc_init+0x0/0x100 [sa_earpods_adc] @ <PID>
+CPU 0 Unable to handle kernel paging request at virtual address c04060a8, epc == 802c1368, ra == 802bf484
+Oops[#4]:
+CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
+task: <ADDR> ti: <ADDR> task.ti: <ADDR>
+<regdump>
+epc   : 802c1368 __device_attach_driver+0x24/0xbc
+ra    : 802bf484 bus_for_each_drv+0x9c/0xac
+Status: <CP0>	KERNEL EXL IE 
+Cause : <CP0> (ExcCode 02)
+BadVA : c04060a8
+PrId  : 2ed1024f (Xburst)
+<modules>
+Process insmod (pid: <PID>, threadinfo=<ADDR>, task=<ADDR>, tls=<ADDR>)
+<stack dump>
+Call Trace:
+[<802c1368>] __device_attach_driver+0x24/0xbc
+[<802bf484>] bus_for_each_drv+0x9c/0xac
+[<802c0ef8>] __device_attach+0xa4/0x128
+[<802c04b8>] bus_probe_device+0x3c/0xb0
+[<802be5e8>] device_add+0x44c/0x55c
+[<802c2bb0>] platform_device_add+0x19c/0x234
+[<c070a0a4>] earpods_adc_init+0xa4/0x100 [sa_earpods_adc]
+[<80010584>] do_one_initcall+0xf0/0x1fc
+[<8008b770>] do_init_module+0x74/0x1d4
+[<80087458>] load_module+0x17b8/0x1c78
+[<80087b04>] SyS_finit_module+0x70/0x88
+[<8002092c>] syscall_common+0x30/0x54
+
+Code: 8e420044  14400020  00a08825 <8c820004> 8c42001c  14400007  00808025  0c0b04c3  02002025 
+---[ end trace <ID> ]---
+Segmentation fault
+calling  sahd_init+0x0/0x9c [sa_hgl_dma] @ <PID>
+[SAUD]sahd_init
+initcall sahd_init+0x0/0x9c [sa_hgl_dma] returned 0 after <N> usecs
+calling  jz_efuse_init+0x0/0x340 [soc_efuse] @ <PID>
+initcall jz_efuse_init+0x0/0x340 [soc_efuse] returned 0 after <N> usecs
+calling  tcs1421_dev_init+0x0/0x78 [tcs1421_add] @ <PID>
+CPU 0 Unable to handle kernel paging request at virtual address c04060a8, epc == 802c1368, ra == 802bf484
+Oops[#5]:
+CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
+task: <ADDR> ti: <ADDR> task.ti: <ADDR>
+<regdump>
+epc   : 802c1368 __device_attach_driver+0x24/0xbc
+ra    : 802bf484 bus_for_each_drv+0x9c/0xac
+Status: <CP0>	KERNEL EXL IE 
+Cause : <CP0> (ExcCode 02)
+BadVA : c04060a8
+PrId  : 2ed1024f (Xburst)
+<modules>
+Process insmod (pid: <PID>, threadinfo=<ADDR>, task=<ADDR>, tls=<ADDR>)
+<stack dump>
+Call Trace:
+[<802c1368>] __device_attach_driver+0x24/0xbc
+[<802bf484>] bus_for_each_drv+0x9c/0xac
+[<802c0ef8>] __device_attach+0xa4/0x128
+[<802c04b8>] bus_probe_device+0x3c/0xb0
+[<802be5e8>] device_add+0x44c/0x55c
+[<802c2bb0>] platform_device_add+0x19c/0x234
+[<c0724020>] tcs1421_dev_init+0x20/0x78 [tcs1421_add]
+[<80010584>] do_one_initcall+0xf0/0x1fc
+[<8008b770>] do_init_module+0x74/0x1d4
+[<80087458>] load_module+0x17b8/0x1c78
+[<80087b04>] SyS_finit_module+0x70/0x88
+[<8002092c>] syscall_common+0x30/0x54
+
+Code: 8e420044  14400020  00a08825 <8c820004> 8c42001c  14400007  00808025  0c0b04c3  02002025 
+---[ end trace <ID> ]---
+Segmentation fault
+calling  codec_board_init+0x0/0x4c [x1600_hiby_r1_sound_card] @ <PID>
+CPU 0 Unable to handle kernel paging request at virtual address c04060a8, epc == 802c1368, ra == 802bf484
+Oops[#6]:
+CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
+task: <ADDR> ti: <ADDR> task.ti: <ADDR>
+<regdump>
+epc   : 802c1368 __device_attach_driver+0x24/0xbc
+ra    : 802bf484 bus_for_each_drv+0x9c/0xac
+Status: <CP0>	KERNEL EXL IE 
+Cause : <CP0> (ExcCode 02)
+BadVA : c04060a8
+PrId  : 2ed1024f (Xburst)
+<modules>
+Process insmod (pid: <PID>, threadinfo=<ADDR>, task=<ADDR>, tls=<ADDR>)
+<stack dump>
+Call Trace:
+[<802c1368>] __device_attach_driver+0x24/0xbc
+[<802bf484>] bus_for_each_drv+0x9c/0xac
+[<802c0ef8>] __device_attach+0xa4/0x128
+[<802c04b8>] bus_probe_device+0x3c/0xb0
+[<802be5e8>] device_add+0x44c/0x55c
+[<802c2bb0>] platform_device_add+0x19c/0x234
+[<c072b01c>] codec_board_init+0x1c/0x4c [x1600_hiby_r1_sound_card]
+[<80010584>] do_one_initcall+0xf0/0x1fc
+[<8008b770>] do_init_module+0x74/0x1d4
+[<80087458>] load_module+0x17b8/0x1c78
+[<80087b04>] SyS_finit_module+0x70/0x88
+[<8002092c>] syscall_common+0x30/0x54
+
+Code: 8e420044  14400020  00a08825 <8c820004> 8c42001c  14400007  00808025  0c0b04c3  02002025 
+---[ end trace <ID> ]---
+Segmentation fault
+/
+Saving random seed: SKIP (read-only file system detected)
+ubi1: attaching mtd6
+ubi1: scanning is finished
+ubi1: empty MTD device detected
+ubi1: attached mtd6 (name "userdata", size 32 MiB)
+ubi1: PEB size: 131072 bytes (128 KiB), LEB size: 126976 bytes
+ubi1: min./max. I/O unit sizes: 2048/2048, sub-page size 2048
+ubi1: VID header offset: 2048 (aligned 2048), data offset: 4096
+ubi1: good PEBs: 260, bad PEBs: 0, corrupted PEBs: 0
+ubi1: user volume: 0, internal volumes: 1, max. volumes count: 128
+ubi1: max/mean erase counter: 0/0, WL threshold: 4096, image sequence number: <N>
+ubi1: available PEBs: 236, total reserved PEBs: 24, PEBs reserved for bad PEB handling: 20
+ubi1: background thread "ubi_bgt1d" started, PID <PID>
+UBI device number 1, total 260 LEBs (33013760 bytes, 31.4 MiB), available 236 LEBs (29966336 bytes, 28.5 MiB), LEB size 126976 bytes (124.0 KiB)
+Set volume size to 29966336
+Volume ID 0, size 236 LEBs (29966336 bytes, 28.5 MiB), LEB size 126976 bytes (124.0 KiB), dynamic, name "user_data", alignment 1
+UBIFS (ubi1:0): default file-system created
