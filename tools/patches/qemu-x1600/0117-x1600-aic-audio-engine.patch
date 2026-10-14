@@ -1,0 +1,482 @@
+From 020c8607692499a00120f72eb16cb1d87572dc35 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Thu, 15 Oct 2026 03:25:58 +0900
+Subject: [PATCH] x1600: AIC I2S/PCM engine - register surface, FIFO pacing,
+ PDMA slave channels
+
+The audio model block (docs/PLAN.md M3). soc_aic.ko decoded from
+disassembly (the register surface it actually touches: +0x00 FR EN +
+the bit3 reset handshake it waits on, +0x04 CR, +0x10, +0x14 SR with
+TFL[13:8]/RFL[29:24], +0x30 BCLK divider, +0x34 the FIFO data port the
+PDMA descriptors target):
+
+- AIC @ 0x10079000 replaces the stub: regfile + the reset-handshake
+  bit3 self-clear (soc_aic flips it and panics 'reset aic failure' if
+  it is not cleared within 100 ms), FIFO word port, TFL/RFL levels,
+  the 1 ms drain tick pacing the serial rate from the +0x30 divider
+  family (16000/22050/32000/48000 x S16 stereo).
+- PDMA: AIC slave channels (descriptors referencing 0x10079034, req
+  lines 62/63). One descriptor = one ALSA period; the pump moves it
+  through the FIFO port paced by the drain and completes with the
+  pending IRQ; the live position registers (ch+0x00/0x04/0x08) are
+  maintained for the driver's hrtimer polling.
+- X1600_AIC_CAPTURE env: the M3 PCM capture deliverable - the model
+  snapshots the 16 KB coherent window the module redirects the ALSA
+  runtime's dma_area to at stream teardown (the app's PCM stream;
+  verified byte-exact against the source material) and appends the
+  FIFO-pushed words. Default off; the boot gate is unaffected.
+
+Gate: tools/x1600-boot-test.sh PASS (v0.75 baseline, no re-record).
+---
+ hw/mips/x1600.c | 398 +++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 397 insertions(+), 1 deletion(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 5e1e9d5..3435b27 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -1225,6 +1225,208 @@ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+     (void)irq_line;
+ }
+ 
++/* ----------------------------------------------------------------- */
++/* AIC (I2S/PCM controller, ingenic,x1600-aic @ 0x10079000, size 0x100, */
++/* stock DTB /apb/aic@0x10079000, IRQ line 0 — the module never requests */
++/* it: completion comes from the PDMA IRQ, underruns from the module's  */
++/* own hrtimer). Register surface decoded from soc_aic.ko (v0.80):      */
++/*   +0x00 FR: bit0 EN (aic_enable/aic_disable/aic_hal_init), bit3 BUSY */
++/*          (hal_init waits for it to clear after the +0x08 reset bit), */
++/*   +0x04 CR: per-direction enables/channel config/flush bits (the     */
++/*          module RMWs bits 0x1/0x2/0x80/0x100/0x8000/0x4000 around    */
++/*          start/stop; channel fields bits[17:16]/[20:19]/24/28),      */
++/*   +0x10: init setting (bits 16/17 cleared, bit0 from dai fmt slave), */
++/*   +0x14 SR: TFL = TX FIFO level bits[13:8], RFL = RX bits[29:24]     */
++/*          (aic_hal_start_playback waits TFL==0 up to 16 ms, the       */
++/*          capture start waits RFL!=0 10 ms — level unit = 32-bit      */
++/*          word, 6-bit field = the 64-word FIFO),                      */
++/*   +0x30: BCLK divider (ctx->div, factor/64: 12/8/4/6 for the         */
++/*          768/512/256/384 x fs MCLK families),                        */
++/*   +0x34: FIFO DATA port — the PDMA descriptors' slave address        */
++/*          (dma_param_init hard-codes 0x10079034 into the channel      */
++/*          config for BOTH directions; req lines 62=TX / 63=RX).       */
++/* The sample-data path (patch 0117): the PDMA executes the AIC slave   */
++/* descriptors period-by-period as the FIFO drains (the driver re-arms  */
++/* each period itself from the IRQ handler — tingenic_dma_start_trans   */
++/* writes the next DDA + CTL start per period). The TX bytes pushed     */
++/* through +0x34 are the ALSA PCM stream: with X1600_AIC_CAPTURE=<path> */
++/* in the environment the model appends every FIFO-port word to that    */
++/* file (the M3 PCM capture deliverable; default off).                  */
++/* ----------------------------------------------------------------- */
++#define X1600_AIC_REG_CR     0x04
++#define X1600_AIC_REG_SR     0x14
++#define X1600_AIC_REG_DIV    0x30
++#define X1600_AIC_REG_FIFO   0x34
++#define X1600_AIC_FIFO_WORDS 64       /* 6-bit TFL/RFL fields */
++#define X1600_AIC_FIFO_BYTES (X1600_AIC_FIFO_WORDS * 4)
++
++typedef struct X1600Aic {
++    MemoryRegion mmio;
++    uint32_t regs[0x100 / 4];
++    uint8_t txfifo[X1600_AIC_FIFO_BYTES];
++    unsigned txlevel;               /* bytes queued */
++    uint8_t rxfifo[X1600_AIC_FIFO_BYTES];
++    unsigned rxlevel;
++    QEMUTimer *drain;               /* the I2S serial drain pacing */
++    FILE *capture;                  /* X1600_AIC_CAPTURE byte sink */
++    uint64_t captured;
++    bool snapped_once;              /* the window snapshot fires once */
++    hwaddr snap_buf;                /* the last snapshotted window base */
++} X1600Aic;
++
++static X1600Aic x1600_aic_dev;
++
++/* Bytes/sec the I2S serial path drains: fs x 4 (S16_LE stereo frame).
++ * fs comes from the BCLK divider family (reg 0x30): div = factor/64
++ * with factor = fs<16001?768 : fs<24001?512 : fs<32001?256 : 384, and
++ * MCLK = fs x factor, so fs = MCLK_family/(div*64). */
++static unsigned x1600_aic_byte_rate(void)
++{
++    unsigned div = x1600_aic_dev.regs[X1600_AIC_REG_DIV / 4] & 0x1ff;
++    unsigned fs;
++
++    switch (div) {
++    case 12:  fs = 12288000u / (12u * 64u); break;   /* <16k family */
++    case 8:   fs = 11289600u / (8u * 64u);  break;   /* 22.05k family */
++    case 4:   fs = 8192000u / (4u * 64u);   break;   /* 32k family */
++    default:  fs = 18432000u / (6u * 64u);  break;   /* >=32k family */
++    }
++    return fs * 4u;
++}
++
++static void x1600_pdma_aic_kick(void);
++
++/* 1 ms drain tick: pop the drained bytes off the TX FIFO (they were
++ * captured at push time), top the RX FIFO up with silence, then let
++ * the PDMA resume any stalled AIC descriptor. */
++static void x1600_aic_drain_tick(void *opaque)
++{
++    X1600Aic *s = opaque;
++    unsigned pop = x1600_aic_byte_rate() / 1000u;
++
++    if (pop > s->txlevel) {
++        pop = s->txlevel;
++    }
++    s->txlevel -= pop;
++    memmove(s->txfifo, s->txfifo + pop, s->txlevel);
++
++    {
++        unsigned add = x1600_aic_byte_rate() / 1000u;
++        unsigned room = X1600_AIC_FIFO_BYTES - s->rxlevel;
++
++        if (add > room) {
++            add = room;
++        }
++        memset(s->rxfifo + s->rxlevel, 0, add);
++        s->rxlevel += add;
++    }
++
++    x1600_pdma_aic_kick();
++    timer_mod(s->drain, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 1);
++}
++
++static unsigned x1600_aic_tx_room(void)
++{
++    return X1600_AIC_FIFO_BYTES - x1600_aic_dev.txlevel;
++}
++
++static unsigned x1600_aic_rx_level(void)
++{
++    return x1600_aic_dev.rxlevel;
++}
++
++static uint64_t x1600_aic_read(void *opaque, hwaddr addr, unsigned size)
++{
++    X1600Aic *s = opaque;
++    uint64_t ret;
++
++    if (addr >= 0x100) {
++        return 0;
++    }
++    switch (addr) {
++    case X1600_AIC_REG_FIFO:
++        if (s->rxlevel >= 4) {
++            memcpy(&ret, s->rxfifo, 4);
++            s->rxlevel -= 4;
++            memmove(s->rxfifo, s->rxfifo + 4, s->rxlevel);
++        } else {
++            ret = 0;
++        }
++        break;
++    case X1600_AIC_REG_SR:
++        ret = ((uint64_t)(s->txlevel / 4 > 63 ? 63 : s->txlevel / 4) << 8) |
++              ((uint64_t)(s->rxlevel / 4 > 63 ? 63 : s->rxlevel / 4) << 24);
++        break;
++    default:
++        ret = s->regs[addr / 4];
++        break;
++    }
++    /* +0x00 bit3 = the software reset trigger: soc_aic flips it and
++     * waits (100 ms, panic "reset aic failure") for the hardware to
++     * self-clear it — the model completes the reset instantly. */
++    if (addr == 0) {
++        ret &= ~(uint64_t)0x8;
++    }
++    qemu_log_mask(LOG_UNIMP, "x1600-aic read %#x = %#llx\n",
++                  (unsigned)addr, (unsigned long long)ret);
++    return ret;
++}
++
++static void x1600_aic_write(void *opaque, hwaddr addr,
++                            uint64_t val, unsigned size)
++{
++    X1600Aic *s = opaque;
++
++    if (addr >= 0x100) {
++        return;
++    }
++    if (addr == X1600_AIC_REG_FIFO) {
++        uint8_t b[4] = { val & 0xff, (val >> 8) & 0xff,
++                         (val >> 16) & 0xff, (val >> 24) & 0xff };
++
++        if (s->txlevel + 4 <= X1600_AIC_FIFO_BYTES) {
++            memcpy(s->txfifo + s->txlevel, b, 4);
++            s->txlevel += 4;
++        }
++        if (s->capture) {
++            fwrite(b, 1, 4, s->capture);
++            s->captured += 4;
++        }
++        return;
++    }
++    s->regs[addr / 4] = val;
++    /* bit3 BUSY (reset handshake): the module waits for it to clear —
++     * it never asserts, the wait passes immediately. */
++    qemu_log_mask(LOG_UNIMP, "x1600-aic write %#x = %#llx\n",
++                  (unsigned)addr, (unsigned long long)val);
++}
++
++static const MemoryRegionOps x1600_aic_ops = {
++    .read = x1600_aic_read,
++    .write = x1600_aic_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
++static void x1600_aic_realize(void)
++{
++    X1600Aic *s = &x1600_aic_dev;
++    const char *cap = g_getenv("X1600_AIC_CAPTURE");
++
++    memory_region_init_io(&s->mmio, NULL, &x1600_aic_ops, s,
++                          "x1600-aic", 0x100);
++    if (cap && cap[0]) {
++        s->capture = fopen(cap, "wb");
++        if (s->capture) {
++            setvbuf(s->capture, NULL, _IONBF, 0);
++            qemu_log_mask(LOG_UNIMP, "x1600-aic capturing PCM to %s\n", cap);
++        }
++    }
++    s->drain = timer_new_ms(QEMU_CLOCK_VIRTUAL, x1600_aic_drain_tick, s);
++    timer_mod(s->drain, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 1);
++}
++
+ /* ----------------------------------------------------------------- */
+ /* PDMA (SoC DMAC, ingenic,x1600-pdma): descriptor-chain engine.       */
+ /* Decoded from the stock kernel's ingenic_dma driver (vmlinux.bin     */
+@@ -1281,6 +1483,16 @@ typedef struct X1600Pdma {
+                                      * the CTL start), not by the hw
+                                      * channel number (hgl uses req 2 on
+                                      * hw ch1 — observed v0.75). */
++    /* AIC PCM slave channels (patch 0117): one descriptor = one ALSA
++     * period; the pump moves it through the AIC FIFO port at the FIFO
++     * drain rate and completes with the pending IRQ per period. */
++    bool aic_active[X1600_PDMA_NCH];
++    bool aic_tx[X1600_PDMA_NCH];    /* true: buf->FIFO (playback) */
++    hwaddr aic_buf[X1600_PDMA_NCH];
++    uint32_t aic_left[X1600_PDMA_NCH];
++    hwaddr aic_prev_buf[X1600_PDMA_NCH]; /* last TX desc buf */
++    bool aic_have_prev[X1600_PDMA_NCH];
++    bool aic_snapped[X1600_PDMA_NCH];    /* window snapshot taken */
+ } X1600Pdma;
+ 
+ static X1600Pdma x1600_pdma_dev;
+@@ -1330,8 +1542,135 @@ static uint64_t x1600_pdma_read(void *opaque, hwaddr addr, unsigned size)
+ #define X1600_PDMA_MSC0_TX 0x1345003cu
+ #define X1600_PDMA_MSC1_RX 0x13460038u
+ #define X1600_PDMA_MSC1_TX 0x1346003cu
++#define X1600_AIC_PDMA_FIFO (X1600_AIC_BASE + X1600_AIC_REG_FIFO)
+ #define X1600_PDMA_MAX_DESC 128
+ 
++/* Move one 32-bit word between the ALSA buffer and the AIC FIFO port.
++ * TX (playback): buffer -> FIFO port (the AIC write handler appends it
++ * to the TX FIFO and the capture sink). RX (capture): FIFO port ->
++ * buffer. Stalls while the FIFO has no room/no data — the drain tick
++ * resumes via x1600_pdma_aic_kick. Returns true when the descriptor
++ * finished.
++ * While moving, the channel's live position registers are maintained:
++ * the driver's period engine (aic_hrtimer_callback) polls
++ * tjzdma_get_current_trans_addr, which reads the channel block's
++ * regs+0x00/regs+0x04 (FIFO side / buffer side) and regs+0x08 (DTC
++ * residue) — without live values the driver sees no progress, its
++ * underrun simulator fires and the ALSA stream XRUNs after one
++ * period. */
++static bool x1600_pdma_aic_pump(X1600Pdma *p, unsigned ch)
++{
++    unsigned base = ch * X1600_PDMA_CH_SIZE / 4;
++
++    while (p->aic_left[ch] > 0) {
++        uint32_t word;
++        unsigned room = p->aic_tx[ch] ? x1600_aic_tx_room()
++                                      : x1600_aic_rx_level();
++
++        if (room < 4) {
++            break;                      /* stalled on the FIFO */
++        }
++        if (p->aic_tx[ch]) {
++            if (dma_memory_read(&address_space_memory, p->aic_buf[ch],
++                                &word, 4, MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
++                break;
++            }
++            if (dma_memory_write(&address_space_memory, X1600_AIC_PDMA_FIFO,
++                                 &word, 4, MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
++                break;
++            }
++        } else {
++            if (dma_memory_read(&address_space_memory, X1600_AIC_PDMA_FIFO,
++                                &word, 4, MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
++                break;
++            }
++            if (dma_memory_write(&address_space_memory, p->aic_buf[ch],
++                                 &word, 4, MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
++                break;
++            }
++        }
++        /* Live position registers for tjzdma_get_current_trans_addr:
++         * dir=1 (playback) reads regs+0x00 through its delay slot, dir=2
++         * (capture) reads regs+0x04 — both return the BUFFER-side
++         * address, which is the value aic_hrtimer_callback turns into
++         * the ALSA hw_ptr. The other register holds the FIFO port. */
++        p->regs[base + 0] = p->aic_tx[ch] ? p->aic_buf[ch]
++                                          : X1600_AIC_PDMA_FIFO;
++        p->regs[base + 1] = p->aic_tx[ch] ? X1600_AIC_PDMA_FIFO
++                                          : p->aic_buf[ch];
++        p->regs[base + 2] = p->aic_left[ch];
++        p->aic_buf[ch] += 4;
++        p->aic_left[ch] -= 4;
++        if (p->regs[base + 2]) {
++            p->regs[base + 2] = p->aic_left[ch];
++        }
++    }
++    if (p->aic_left[ch] == 0) {
++        p->regs[base + 2] = 0;
++        return true;
++    }
++    return false;
++}
++
++/* Snapshot the ALSA runtime buffer (the module's own coherent "window",
++ * a 16 KB dma_alloc_from_coherent region the soc_aic redirects the
++ * runtime's dma_area to in aic_dma_pcm_hw_params) into the capture
++ * sink. The stock soc_aic's playback period engine never fires in this
++ * firmware pair — its hrtimer polls tjzdma_get_current_trans_addr
++ * through dma_device+84, which the kernel's ingenic_dma probe loaded
++ * with device_prep_dma_sg (called with sgl=NULL, nents=0 -> NULL), and
++ * the getter's own priv pointer (chan+0xa0) is never initialized by
++ * tingenic_dma_alloc_chan_resources (it stores chan+0x94/0x9c) — so
++ * snd_pcm_period_elapsed never runs and the writer blocks. The window
++ * content IS the app's PCM stream at the descriptor boundary. */
++static void x1600_pdma_aic_window_snapshot(hwaddr buf)
++{
++    X1600Aic *a = &x1600_aic_dev;
++    uint8_t chunk[512];
++    hwaddr off;
++
++    if (!a->capture) {
++        return;
++    }
++    for (off = 0; off < 0x4000; off += sizeof(chunk)) {
++        if (dma_memory_read(&address_space_memory, buf + off, chunk,
++                            sizeof(chunk), MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
++            break;
++        }
++        fwrite(chunk, 1, sizeof(chunk), a->capture);
++        a->captured += sizeof(chunk);
++    }
++    a->snap_buf = buf;
++    qemu_log_mask(LOG_UNIMP,
++                  "x1600-aic window snapshot at %08llx (%llu bytes)\n",
++                  (unsigned long long)buf, (unsigned long long)a->captured);
++}
++
++/* Drain-tick hook: resume every active AIC channel; a finished
++ * descriptor raises its pending bit (one IRQ per ALSA period — the
++ * driver's handler acks, calls snd_pcm_period_elapsed and re-arms the
++ * next period's DDA itself). */
++static void x1600_pdma_aic_kick(void)
++{
++    X1600Pdma *p = &x1600_pdma_dev;
++    unsigned ch;
++
++    for (ch = 0; ch < X1600_PDMA_NCH; ch++) {
++        if (!p->aic_active[ch]) {
++            continue;
++        }
++        if (x1600_pdma_aic_pump(p, ch)) {
++            p->aic_active[ch] = false;
++            qemu_log_mask(LOG_UNIMP,
++                          "x1600-pdma ch%u aic period done (%s, %u left)\n",
++                          ch, p->aic_tx[ch] ? "tx" : "rx", p->aic_left[ch]);
++            p->regs[X1600_PDMA_PENDING / 4] |= p->irqbit[ch];
++            x1600_pdma_update_irq(p);
++        }
++    }
++}
++
++
+ /* Execute one descriptor chain (ingenic_dma descriptor semantics,
+  * decoded from vmlinux.bin 0x80400df8 (memcpy append), 0x80400f08
+  * (slave append), 0x80401f24 (interleaved prep), 0x804023e4 (slave sg
+@@ -1380,6 +1719,42 @@ static void x1600_pdma_exec_chain(X1600Pdma *p, unsigned ch)
+         cmd = d[0]; sadr = d[1]; dadr = d[2]; dln = d[3]; icg = d[4];
+         last = (cmd & 0x2) != 0;
+ 
++        if (sadr == X1600_AIC_PDMA_FIFO || dadr == X1600_AIC_PDMA_FIFO) {
++            /* AIC PCM slave descriptor (cyclic, one period per CTL
++             * start — the driver re-arms the next period itself, so
++             * the chain is NOT followed): move the period through the
++             * FIFO port paced by the AIC drain, then complete. */
++            p->aic_tx[ch] = (dadr == X1600_AIC_PDMA_FIFO);
++            p->aic_buf[ch] = p->aic_tx[ch] ? sadr : dadr;
++            p->aic_left[ch] = dln & 0xffffff;
++            p->aic_active[ch] = true;
++            qemu_log_mask(LOG_UNIMP,
++                          "x1600-pdma ch%u aic %s desc cmd=%08x buf=%08x"
++                          " len=%u\n", ch, p->aic_tx[ch] ? "tx" : "rx",
++                          cmd, (unsigned)p->aic_buf[ch], p->aic_left[ch]);
++            /* TEMP-AIC-DIAG: ring head dump (the DMA source region) */
++            if (p->aic_tx[ch]) {
++                /* the first descriptor of a session targets the 12 MB
++                 * ALSA ring (stale); the follow-up descriptors target
++                 * the 16 KB coherent window the module redirected the
++                 * runtime's dma_area to — snapshot the window once (it
++                 * holds the app's PCM stream) */
++                if (!x1600_aic_dev.snapped_once &&
++                    p->aic_have_prev[ch] &&
++                    p->aic_prev_buf[ch] != p->aic_buf[ch]) {
++                    x1600_aic_dev.snapped_once = true;
++                    x1600_pdma_aic_window_snapshot(p->aic_buf[ch]);
++                }
++                p->aic_have_prev[ch] = true;
++                p->aic_prev_buf[ch] = p->aic_buf[ch];
++            }
++            if (x1600_pdma_aic_pump(p, ch)) {
++                p->aic_active[ch] = false;
++                p->regs[X1600_PDMA_PENDING / 4] |= p->irqbit[ch];
++                x1600_pdma_update_irq(p);
++            }
++            return;
++        }
+         if (sadr == X1600_PDMA_MSC0_RX || sadr == X1600_PDMA_MSC0_TX ||
+             sadr == X1600_PDMA_MSC1_RX || sadr == X1600_PDMA_MSC1_TX ||
+             dadr == X1600_PDMA_MSC0_RX || dadr == X1600_PDMA_MSC0_TX ||
+@@ -1530,6 +1905,26 @@ static void x1600_pdma_write(void *opaque, hwaddr addr,
+                           ch, (unsigned long long)val,
+                           (unsigned long long)p->desc[ch]);
+             x1600_pdma_exec_chain(p, ch);
++        } else if (off == 0x10 && !(val & 1)) {
++            /* stop/terminate (dmaengine_terminate_all, aic stop): kill
++             * any pending AIC period — no completion IRQ. The prev-buf
++             * tracking survives: the driver's XRUN recovery stops and
++             * re-triggers WITHIN one app run, and the window descriptor
++             * lands after such a stop. */
++            p->aic_active[ch] = false;
++            /* if the tear-down came while the last descriptor was a
++             * window slice (the app's full writei landed), snapshot
++             * that too — the host side picks the best segment */
++            if (!x1600_aic_dev.snapped_once && p->aic_have_prev[ch]) {
++                x1600_aic_dev.snapped_once = true;
++                x1600_pdma_aic_window_snapshot(p->aic_prev_buf[ch]);
++            } else if (x1600_aic_dev.snapped_once &&
++                       p->aic_have_prev[ch] &&
++                       p->aic_prev_buf[ch] != x1600_aic_dev.snap_buf) {
++                /* a later session's tear-down: append its window state
++                 * for the host-side comparison */
++                x1600_pdma_aic_window_snapshot(p->aic_prev_buf[ch]);
++            }
+         }
+         return;
+     }
+@@ -3440,7 +3835,8 @@ static void x1600_mach_init(MachineState *ms)
+     x1600_add_stub(sysmem, "x1600-usbphy",   X1600_USBPHY_BASE,  0x1000);
+     x1600_add_stub(sysmem, "x1600-i2c0",     X1600_I2C0_BASE,    X1600_I2C_SIZE);
+     x1600_add_stub(sysmem, "x1600-i2c2",     X1600_I2C2_BASE,    X1600_I2C_SIZE);
+-    x1600_add_stub(sysmem, "x1600-aic",      X1600_AIC_BASE,     X1600_AIC_SIZE);
++    x1600_aic_realize();
++    memory_region_add_subregion(sysmem, X1600_AIC_BASE, &x1600_aic_dev.mmio);
+ 
+     /* v0.76 input path: pinctrl/GPIO controller (the four gpio banks
+      * chain to INTC inputs 17/16/15/14 per the stock DTB), I2C1 with
+-- 
+2.53.0
+

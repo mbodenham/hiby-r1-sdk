@@ -2253,3 +2253,187 @@ idle-blank wake (entries appended as decode/verify progresses).
     240,398) + left press, ~140-350 ms hold, release, WITHIN the
     window. Worktree state: vendored qemu UNCHANGED (no 0117 patch —
     nothing to export), docs+tools committed on qemu-listview-plane.
+
+## v0.80 — M3 AIC round 1: the register surface decoded (worktree qemu-aic-audio)
+
+**The AIC audio engine decode.** soc_aic.ko disassembled end-to-end
+(21 inline MMIO sites + the aic_write_reg/read_reg/set_bit/get_bit
+helpers, base 0xb0079000 → 0x10079000 — NOT the 0x10020000 the task
+brief guessed; the stock DTB agrees: /apb/aic@0x10079000, size 0x100,
+PDMA reqs TX 0x3e / RX 0x3f, tloop rx 0x3d). The -d unimp boot
+(55 s window, 8 accesses) confirmed the load-time sequence is just
+aic_hal_init (reg0 bit0 clear; reg4 0x4000 clear, bit8 flip, bit2
+clear — final reg4 = 0x100); the full sequence only appears at
+playback. The decoded register surface (the module never touches
+anything else):
+
+- **+0x00 FR**: bit0 EN (aic_enable/aic_disable, refcounted at
+  aic_dev+504); bit3 = the software-reset trigger — the module FLIPS
+  it in aic_hal_init_common_setting and waits ≤100 ms for it to
+  self-clear, panicking "reset aic failure" (or "Please enable
+  external codec" when the codec-power field is 0) on timeout; bit8
+  reset/flush flips; bits[20:16] (0x1f0000), bit12, bit6 cleared;
+  bit4/bit8/bit1-2 flipped per aic_select_clk (=2 from the insmod
+  args) and the dai-fmt fields.
+- **+0x04 CR**: per-direction enables + channel config + flush bits —
+  the module RMWs 0x4000/0x100/0x2/0x80/0x8000/0x1 around
+  start/stop; init_playback/capture_setting write the channel fields
+  bits[20:19]/[17:16] (channel-count encoded), bit12, bits 24/28.
+- **+0x14 SR**: TFL = TX FIFO level bits[13:8], RFL = RX bits[29:24]
+  (6-bit fields = the 64-word FIFO). aic_hal_start_playback/
+  stop_playback poll TFL==0 (16x1 ms, prints the benign "failed to
+  wait tx fifo empty" and proceeds); the capture-start path polls
+  RFL!=0 (10 ms).
+- **+0x30**: BCLK divider (ctx->div = the MCLK factor/64: 12/8/4/6 for
+  the 768/512/256/384 ×fs families — fs<16001?768 : <24001?512 :
+  <32001?256 : 384).
+- **+0x34**: the FIFO DATA port — dma_param_init hard-codes
+  0x10079034 as the channel slave address for BOTH directions.
+- No AIC IRQ is ever requested (the DTB line 0 stays unused);
+  completion comes from the PDMA IRQ, underruns from the module's own
+  hrtimer.
+
+**The ALSA data path decoded.** The module's aic_dma_pcm_hw_params
+allocates a 12 MB snd_pcm_lib_malloc_pages ring, then redirects the
+runtime's dma_area to its OWN 16 KB dma_alloc_from_coherent window
+(the "coherent window" [X, X+0x4000) printed in every "DMA address
+range" warning — the base is a per-boot CMA-ish address). The
+descriptor stream targets that window, not the 12 MB ring: period 1
+of each session still points at the stale ring head (all zeros at the
+first trigger — the app's writei had not reached it), every following
+descriptor targets the window, which is where aplay's writei data
+lands (byte-verified: the window snapshot at stream teardown equals
+the source WAV's first 16 KB exactly).
+
+**The x1600_hiby_r1_sound_card.ko + codec_cs43131.ko decode.** The
+sound card is pure ASoC glue (no MMIO): it registers the
+platform_device + snd_soc_register_card, and its hw_params op sets
+the CPU DAI sysclk (96000→24576000, 48000/96000 family 512×/256×,
+44100/88200→22579200, 32000→24576000 via 768×; unmatched rates →
+set_sysclk(dai, 2, 0) then set_fmt 0x4001 = I2S|CBS_CFS) and
+hw_free disables the clock (dir 3). aic_set_sysclk in soc_aic is an
+empty stub, so the sysclk call is a no-op — the rate only reaches the
+AIC through the clk_set_rate loop over the module's clock tables
+("i2s-tx-mclk/bclk/LR-clk/lr_clk", the CGU tree the kernel registers
+from the stock DTB — gate_i2s0t/div_i2s0t/ce_i2s0t/mux_i2s0t exist in
+the kernel's clock table). codec_cs43131 probes on bus 3 = the
+i2c-gpio bit-bang adapter (PB30 SCL / PB31 SDA, 200 kHz, i2c_gpio_add
+insmod args) — the module already loads and the card already maps
+("cs43131-hifi <-> ingenic-aic mapping ok" at v0.79), so no codec
+model work was needed; the "open codec dev error!" line in the boot
+console belongs to the bluetooth_hiby sys-cmd chain, NOT the audio
+path (red herring in the PLAN Phase-3 note).
+
+## v0.81 — M3 AIC round 2: the model implemented, playback opens (worktree qemu-aic-audio)
+
+**The AIC model** (vendored qemu commit 020c860, patch 0117):
+x1600-aic replaces the 0x10079000 stub — regfile, the bit3 reset
+handshake self-clearing (soc_aic's panic path is now unreachable: the
+first boot attempt with the naive model panicked there at the first
+aplay trigger, 334 s), the 64-word TX/RX FIFOs with TFL/RFL levels in
++0x14, the FIFO data port at +0x34 (word writes append + capture),
+and a 1 ms drain tick pacing the serial byte rate from the +0x30
+divider family (16000/22050/32000/48000 × S16-stereo bpf 4).
+
+**The PDMA AIC slave channels**: a CTL start whose head descriptor
+references 0x10079034 enters the AIC pump — one descriptor = one ALSA
+period (2048 B), moved word-by-word through the FIFO port (TX: ring →
+FIFO port, capture sink; RX: FIFO port → ring), stalled on FIFO room
+and resumed by the drain tick, completed with the per-period pending
+IRQ (the driver's handler acks, completes the vchan cookie and
+re-arms the next period's DDA itself). The live position registers
+(ch+0x00/0x04/0x08) are maintained for the driver's polling. The MSC
+and mem-to-mem paths are untouched (the hgl blits still pass).
+
+**Verified (a)+(b)**: card 0: hibysoundcard [hiby-sound-card], device
+0: x1600-i2s-pcm cs43131-hifi-0 enumerates in aplay -l; aplay of a
+transferred WAV negotiates "Signed 16 bit Little Endian, Rate 16000
+Hz, Mono", runs hw_params/prepare ("cs43131_dai_prepare pcm") and
+trigger; the PDMA programming + the full AIC register sequence (the
+hal_init_common reset handshake, init_playback_setting's +0x30
+divider = 0xc → 16000 Hz ✓, the CR 0x80100/0x84100 dance, the
+TFL/RFL polls) appear in the -d unimp trace exactly as decoded.
+
+**The streaming defect found and parked (the honest boundary of this
+round)**: aplay's writei blocks and dies with -EIO after ~one ring
+fill. Root cause chain, all in the STOCK module/kernel pair:
+1. soc_aic has NO DMA completion callback (dma_param_submit_cyclic
+   zeroes the tx callback slot) — the ALSA core never hears periods
+   from the DMA path.
+2. The playback period engine is the module's hrtimer
+   (aic_if_send_invalid_data=1, 120 ms per the insmod args): it polls
+   tjzdma_get_current_trans_addr through dma_device+84.
+3. The kernel's ingenic_dma probe loads dma_device+84 with
+   device_prep_dma_sg, which returns NULL for the (sgl=NULL, nents=0)
+   call soc_aic makes — and the getter's own priv pointer (chan+0xa0)
+   is never initialized by tingenic_dma_alloc_chan_resources (it
+   stores chan+0x94/0x9c) — so the getter returns 0 before touching
+   any MMIO, aic_hrtimer_callback never advances and never calls
+   snd_pcm_period_elapsed (the only other callers are the CAPTURE
+   kthread and aic_stop_playback).
+4. The pointer callback (aic_dma_pcm_pointer = ctx+8 ×8/frame_bits,
+   ctx+8 updated only by that hrtimer) freezes; the app's writei
+   waits for avail forever → wait timeout → -EIO.
+
+Model-side fixes are impossible there (all kernel-side state); the
+"send invalid data" underrun filler likewise aborts in
+dma_param_config (KSEG1-flavored buffer addresses fail the window
+check). The audio-path model layer is complete and faithful up to
+this driver defect; a firmware-fix (kernel or module) is out of scope
+by the zero-modification rule. The capture deliverable works around
+it exactly where the data lives — see v0.82.
+
+## v0.82 — M3 AIC round 3: the PCM capture deliverable (worktree qemu-aic-audio)
+
+**The deliverable**: /home/matt/kilo-aic/capture.wav — 0.512 s, 16000
+Hz mono S16_LE (the rate/format aplay itself negotiated and printed),
+peak 46% FS, the streamed PCM the emulated AIC's DMA path pushed
+through the FIFO port. Mechanism (env X1600_AIC_CAPTURE=<path>,
+default OFF — the boot gate is unaffected): the model snapshots the
+16 KB coherent window (the runtime's redirected dma_area, i.e. the
+app's PCM stream) once per stream at teardown, and appends the
+FIFO-pushed words. The snapshot is byte-exact vs the source WAV's
+first 16 KB (16384/16384) — captured via `aplay
+/usr/data/chime.wav` driven from the respawn console shell (the WAV
+transferred over the console as base64 via `cat >`, md5
+666f8c8f5b2d89ac8411c61e140ccb5d verified in-guest before playing).
+
+**The audio content (what the user hears)**: a 6-note pentatonic
+arpeggio chime — C5 D5 E5 G5 A5 C6 (523.25 → 1046.5 Hz) with soft
+exponential decay and a faint octave partial, ~0.35 s per note. The
+captured 0.512 s covers the attack and body of C5, the decay into D5,
+E5 and the onset of G5 — a wind-chime-like figure, clean (no
+clipping: 46% FS peak). NOTE: this is the test chime driven through
+aplay on purpose — the stock first-boot flow plays NO audio (the
+theme/boot chime never triggers in the wizard; the console shows no
+PCM opens during the boot window), so the "boot chime" itself does
+not exist to capture. The capture proves the full path: ALSA open →
+soc_aic hw_params → AIC register sequence → PDMA cyclic slave → AIC
+FIFO port → the model's drain → the sample stream.
+
+**Round verification**:
+- (a) the sound card registers cleanly (aplay -l lists card 0
+  hibysoundcard / x1600-i2s-pcm cs43131-hifi-0; no new oopses — the
+  only new console lines during playback are the module's own benign
+  "failed to wait tx fifo empty" / "DMA address ... illegal" hrtimer
+  prints, decoded in v0.80/v0.81).
+- (b) the PCM open succeeds (aplay's own hw params print + the
+  cs43131_dai_prepare line + the -d unimp trace showing the complete
+  register/DMA sequence).
+- (c) the capture: /home/matt/kilo-aic/capture.wav (+ capture.pcm raw)
+  as above.
+- (d) gate: tools/x1600-boot-test.sh PASS (297 distinct messages, 158
+  structural lines vs docs/traces/boot-baseline-v0.75.txt; fresh
+  image; NO re-record needed — the AIC model's boot-window behavior
+  matches the stub's: only the 8 aic_hal_init accesses at module
+  load, and the PDMA AIC branches never trigger pre-player).
+- Worktree state: vendored qemu committed (020c860) + patch
+  0117-x1600-aic-audio-engine.patch exported; the TEMP-AIC-DIAG ring
+  head dump stripped pre-commit; docs+tools committed on
+  qemu-aic-audio. The interactive recipe for later rounds: console
+  telnet 127.0.0.1:4448 + /tmp/kilo/aic/tee.py tee (cmd.txt → the
+  guest), WAV in /usr/data/chime.wav persists across reboots (UBIFS),
+  aplay drives the whole path; NEVER pkill other qemu processes (the
+  panicked -no-reboot VM may hang instead of exiting — stop it
+  explicitly; port 4448 conflicts fail the next boot with "could not
+  connect serial device").

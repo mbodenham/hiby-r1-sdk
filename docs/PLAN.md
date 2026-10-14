@@ -254,10 +254,23 @@ qemu-wifi-srom; supersedes the earlier headers for the wifi item —
   the finger in the drag shapes tried; a fast fling or a top-row tap
   drops the list into a re-rendered state with per-row radio marks
   (the pull-down/overscroll zone is the likely trigger) — parked.
-  2. the audio path (AIC + PDMA PCM channels now COMPLETE — the AIC
-  register model itself is still the stub "open codec dev error!"
-  path). The wifi flow stays optional (the player does not block on
-  it).
+  2. the audio path (DONE for the model layer, v0.80-v0.82, worktree
+  qemu-aic-audio): the AIC register model (0x10079000: FR/CR/SR/FIFO
+  port/divider — decoded from soc_aic.ko, NOT the 0x10020000 guess),
+  the PDMA AIC slave channels (one descriptor = one ALSA period
+  through the FIFO port, req 62/63, per-period IRQs), the codec/sound
+  card verified loading (the card maps, aplay enumerates card 0 and
+  the full open/hw_params/prepare/trigger flow passes; the "open
+  codec dev error!" line is the bluetooth sys-cmd chain, not audio).
+  The captured PCM deliverable: /home/matt/kilo-aic/capture.wav
+  (0.512 s 16 kHz mono, byte-verified streamed samples via
+  X1600_AIC_CAPTURE). Parked: sustained streaming — the stock
+  soc_aic/kernel pair's playback period engine cannot fire
+  (dma_device+84 holds prep_dma_sg, not the getter the module polls;
+  chan+0xa0 never initialized), so aplay blocks after one ring fill
+  and exits -EIO; the capture works at the DMA source (details in
+  M1-bringup-log v0.80-v0.82). The wifi flow stays optional (the
+  player does not block on it).
 - Boot evidence lives in docs/M1-bringup-log.md (v0.1–v0.75),
   docs/M2-stubs-log.md (v0.66–v0.67), and
   docs/research-brief-stubs-player-launch.md.
