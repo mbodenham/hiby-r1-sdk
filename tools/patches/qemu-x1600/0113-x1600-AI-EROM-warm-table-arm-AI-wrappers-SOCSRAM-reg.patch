@@ -1,0 +1,288 @@
+From f4322e3d1ac69b531f1542a6ddc9c9faf91641de Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Wed, 14 Oct 2026 18:22:20 +0900
+Subject: [PATCH] x1600: AI EROM + warm-table arm + AI wrappers + SOCSRAM regs
+ - the wifi DHD attaches
+
+The DHD's stalled probe chain completes: cywdhd insmod returns 0, the
+six module-cascade oopses disappear, rcS runs into the product UI.
+
+- AI EROM (enumeration ROM) at backplane 0x0: 40 entries reproducing the
+  six 43430 cores from cywdhd's own warm-resume tables (the entry format
+  was decoded from get_erom_ent/get_asd/ai_scan). The cold walk now
+  exits cleanly at the ER_END marker instead of reading 131k zero words.
+- CCCR 0x03 fn2 IOR bit sticky (| 0x04): the DHD's probe arms its
+  static-core-table workaround at exactly ready == 6 (alive =
+  0x15151515); the cold walk structurally cannot count cores (the
+  master-wrapper match sets s6, ai_scan 0x21a78 then skips the count).
+- AI core wrappers 0x18100000-0x18107fff: ioctrl (wrap+0x408) = 1 and
+  resetstatus (wrap+0x804) = 1 so ai_iscoreup is true and _ai_core_reset
+  does not spin; SOCSRAM coreinfo (0x18004000) = 0x20 (2 banks) and
+  bankinfo (0x18004040) = 0x1f (256 KB/bank) -> dongle ram size 524288.
+- ChipClkCSR (0x1000e): ALP_AVAIL (0x40) also on the request bit 0x08
+  (dhdsdio_htclk wrote 0x08 and polled for 0x40 -> HT Avail timeout).
+- MSC CMD53 TX PIO path: the host starts a TX command before pushing
+  data through MSC_TXFIFO (0x3c); stage the phase on the command and
+  deliver on the fifo writes, then set STAT bit13 / IFLG bit15. The
+  host driver's per-write warning trio disappears.
+---
+ hw/mips/x1600.c | 178 +++++++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 155 insertions(+), 23 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index cad284a..ce50748 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -506,6 +506,31 @@ static uint8_t *x1600_msc_bp_chunk(X1600Msc *s, uint32_t bp)
+     return NULL;
+ }
+ 
++/* The AI core wrappers (0x18100000 + 0x1000*coreidx, six wrappers fit
++ * in the 0x18100000-0x18107fff chunk): the DHD's ai_iscoreup reads
++ * ioctrl (wrap+0x408, wants bits[1:0] == 1) and resetctrl (wrap+0x800,
++ * wants bit0 == 0), and _ai_core_reset pulses resetctrl then polls
++ * resetstatus (wrap+0x804, wants nonzero). Serve the "clocked, out of
++ * reset" state; other wrapper bytes read 0. One byte of the SBADDR-
++ * mapped backplane (bp < 0x80000 is the SRAM/EROM region, chunk-backed;
++ * [0x80000, 0x18000000) is unmapped and reads 0xff). */
++static uint8_t x1600_msc_bp_read(X1600Msc *s, uint32_t bp)
++{
++    if (bp >= 0x18100000u && bp < 0x18108000u) {
++        uint32_t off = bp & 0xfff;
++
++        return (off == 0x408 || off == 0x804) ? 1 : 0;
++    }
++    if (bp >= 0x80000u && bp < 0x18000000u) {
++        return 0xff;                /* unmapped backplane */
++    }
++    {
++        uint8_t *chunk = x1600_msc_bp_chunk(s, bp);
++
++        return chunk ? chunk[bp & 0x7fff] : 0xff;
++    }
++}
++
+ /* CMD52 IO_RW_DIRECT: arg = {rw(31), func(28:26), raw(27), addr(25:9),
+  * data(7:0)}; R5 response — the core extracts the data byte as
+  * resp[0] & 0xFF (mmc_io_rw_direct_host), so the byte sits in the RES
+@@ -537,6 +562,10 @@ static uint32_t x1600_msc_cmd52(X1600Msc *s, uint32_t arg)
+             data = s->fn1[addr];
+             data |= (data & 0x20) ? 0x40 : 0;   /* ALP_AVAIL */
+             data |= (data & 0x10) ? 0x80 : 0;   /* HT_AVAIL */
++            /* The real request bits (sbsdio.h): ALP_AVAIL_REQ = 0x08,
++             * HT_AVAIL_REQ = 0x10 — dhdsdio_htclk writes 0x08 and polls
++             * for 0x40 (v0.72 run3: "HT Avail timeout: clkctl 0x08"). */
++            data |= (data & 0x08) ? 0x40 : 0;   /* ALP_AVAIL_REQ */
+             return data;
+         }
+         if (!write && addr >= 0x8000) {
+@@ -546,9 +575,8 @@ static uint32_t x1600_msc_cmd52(X1600Msc *s, uint32_t arg)
+             uint32_t sbaddr = s->fn1[0x1000a] | (s->fn1[0x1000b] << 8) |
+                               (s->fn1[0x1000c] << 16);
+             uint32_t bp = (sbaddr << 8) | (addr & 0x7fff);
+-            if (bp >= 0x80000 && bp < 0x18000000) {
+-                return 0xffffffffu;
+-            }
++
++            return x1600_msc_bp_read(s, bp);
+         }
+         space = s->fn1 + addr;
+     } else {
+@@ -560,9 +588,19 @@ static uint32_t x1600_msc_cmd52(X1600Msc *s, uint32_t arg)
+          * sdio_enable_func writes IOE then polls CCCR 0x03 for the same
+          * bit (v0.66 trace: "W 0x02=0x02" then ~45x "R 0x03" -> 0x00 ->
+          * -ETIMEDOUT, "bcmsdh_sdmmc: Failed to enable F1 Err: 0xffffffc2").
+-         * A real card raises IOR when the function is on. */
++         * A real card raises IOR when the function is on. fn2's IOR bit
++         * is sticky (| 0x04): on the real BCM43430 the card readies both
++         * functions, and the DHD's bcmsdh_sdmmc_probe arms its static-
++         * core-table workaround at exactly "ready == 6" (alive =
++         * 0x15151515, cywdhd 0x88cb8) — the cold ai_scan EROM walk
++         * structurally cannot count cores (v0.72: the master-wrapper
++         * match sets s6, ai_scan 0x21a78 then skips the numcores++, and
++         * the only s6==0 exits are an unbounded scan or numcores = 0),
++         * so the warm-table path is how the real card attaches. Without
++         * the sticky bit the workaround never arms (both probes see
++         * ready = 0x02, v0.72 run1) and si_attach always fails. */
+         if (space == s->cccr + 0x02) {
+-            s->cccr[0x03] = data;
++            s->cccr[0x03] = data | 0x04;
+         }
+     }
+     return *space;
+@@ -630,6 +668,7 @@ static uint8_t x1600_msc_fn_read(X1600Msc *s, unsigned fn, uint32_t addr,
+ 
+             d |= (d & 0x20) ? 0x40 : 0;     /* ALP_AVAIL */
+             d |= (d & 0x10) ? 0x80 : 0;     /* HT_AVAIL */
++            d |= (d & 0x08) ? 0x40 : 0;     /* ALP_AVAIL_REQ */
+             *ok = true;
+             return d;
+         }
+@@ -639,17 +678,7 @@ static uint8_t x1600_msc_fn_read(X1600Msc *s, unsigned fn, uint32_t addr,
+             uint32_t bp = (sbaddr << 8) | (addr & 0x7fff);
+ 
+             *ok = true;
+-            if (bp >= 0x80000 && bp < 0x18000000) {
+-                return 0xff;                /* unmapped backplane */
+-            }
+-            if ((bp & 0x7fff) < 0x8000) {
+-                uint8_t *chunk = x1600_msc_bp_chunk(s, bp);
+-
+-                if (chunk) {
+-                    return chunk[bp & 0x7fff];
+-                }
+-            }
+-            return 0xff;
++            return x1600_msc_bp_read(s, bp);
+         }
+         *ok = true;
+         return s->fn1[addr];
+@@ -665,9 +694,10 @@ static bool x1600_msc_fn_write(X1600Msc *s, unsigned fn, uint32_t addr,
+     if (fn == 0 && addr < sizeof(s->cccr)) {
+         s->cccr[addr] = val;
+         /* CCCR 0x02 (IO Enable) -> 0x03 (IO Ready): the vendor core's
+-         * sdio_enable_func polls CCCR 0x03 for the same bit (v0.66). */
++         * sdio_enable_func polls CCCR 0x03 for the same bit (v0.66); the
++         * fn2 IOR bit is sticky (see the cmd52 mirror above, v0.72). */
+         if (addr == 0x02) {
+-            s->cccr[0x03] = val;
++            s->cccr[0x03] = val | 0x04;
+         }
+         return true;
+     }
+@@ -802,11 +832,22 @@ static void x1600_msc_command(X1600Msc *s)
+                 s->regs[MSC_STAT / 4] |= STAT_XFER_DONE_RD;
+                 res = 0;
+             } else {
+-                /* TX: the data comes from guest memory through the
+-                 * internal DMA (the driver never drives TX from the
+-                 * PIO fifo); without the DMA kick there is no data
+-                 * source. */
+-                timeout = true;
++                /* TX: the host starts the command first and only then
++                 * pushes the data through MSC_TXFIFO (0x3c) — the run4
++                 * trace shows arg 0x9500b004 (W fn1 0x80b0 x4) with
++                 * MSC_CTRL = START_OP and NO fifo or DMA writes before
++                 * it. Accept the command, stage the phase, and the
++                 * TXFIFO write handler completes the data (the read
++                 * branch stages the same way for a possible DMA kick). */
++                s->fifo_len = c53cnt;
++                s->fifo_pos = 0;
++                s->dma_pending = true;
++                s->dma_wr = true;
++                s->dma_len = c53cnt;
++                s->dma_fn = c53fn;
++                s->dma_addr = c53addr;
++                s->dma_inc = c53inc;
++                res = 0;
+             }
+             break;
+         }
+@@ -908,6 +949,38 @@ static void x1600_msc_write(void *opaque, hwaddr addr,
+     if (addr == MSC_IMASK) {
+         x1600_msc_update_irq(s);
+     }
++    if (addr == MSC_TXFIFO) {
++        /* PIO TX data phase (v0.73): the host pushes the write bytes
++         * here after the CMD53 response; deliver to the fn space when
++         * the staged length is reached and set the data-done bit the
++         * request-fn polls for (STAT bit13, "polling status(0x2000)"). */
++        if (s->dma_pending && s->dma_wr && s->fifo_len > 0 &&
++            s->fifo_pos < s->fifo_len) {
++            unsigned i;
++            bool ok = true;
++
++            for (i = 0; i < 4 && s->fifo_pos < s->fifo_len; i++) {
++                s->fifo[s->fifo_pos++] = (val >> (8 * i)) & 0xff;
++            }
++            if (s->fifo_pos >= s->fifo_len) {
++                unsigned n;
++
++                for (n = 0; n < s->fifo_len && ok; n++) {
++                    ok = x1600_msc_fn_write(s, s->dma_fn,
++                                            s->dma_inc ? s->dma_addr + n
++                                                       : s->dma_addr,
++                                            s->fifo[n]);
++                }
++                s->dma_pending = false;
++                if (ok) {
++                    s->regs[MSC_STAT / 4] |= STAT_XFER_DONE_WR;
++                    s->regs[MSC_IFLG / 4] |= 1u << 15;
++                    x1600_msc_update_irq(s);
++                }
++            }
++        }
++        return;
++    }
+     if (addr == MSC_DMAC && (val & 1) && s->dma_pending) {
+         /* internal-DMA kick (v0.71): the driver stages the sg into its
+          * uncached descriptor ring, writes MSC_DMADA (0x48) = the first
+@@ -1060,6 +1133,65 @@ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+         s->bp_chunks[0][1] = sig >> 8;
+         s->bp_chunks[0][2] = sig >> 16;
+         s->bp_chunks[0][3] = sig >> 24;
++        /* SOCSRAM core (0x18004000) registers for si_socram_size
++         * (v0.72 decode: coreinfo at curmap+0, bits[7:4] = the bank
++         * count for socram rev >= 8; socram_banksize reads bankinfo at
++         * curmap+0x40 and returns ((info & 0x7f) + 1) << 13 per bank;
++         * 2 banks x ((31+1) << 13) = 512 KB SRAM, matching the
++         * [0x80000, ...) unmapped rule; socram_banksize asserts
++         * idx < 3, so 2 banks, not 4). */
++        s->bp_chunks[0][0x4000] = 0x20;   /* coreinfo: 2 banks */
++        s->bp_chunks[0][0x4040] = 0x1f;   /* bankinfo: 256 KB/bank */
++    }
++    /* Backplane chunk key 0 = [0x00000000, 0x8000): the AI EROM
++     * (enumeration ROM). ai_scan's cold path reads the EROM pointer
++     * from chipcommon +0xfc (0x180000fc, served as 0 below via the
++     * zeroed chipcommon chunk) and walks 32-bit entries from backplane
++     * 0 (get_erom_ent through the fn1 32K window, SBADDR 0). The
++     * entries reproduce the six 43430 cores the DHD's own warm-resume
++     * tables (bcm43430_coreid/coresba/wrapba/cia/cib, cywdhd.ko .data
++     * 0x29c0-0x2a68) expect, in the entry format decoded from
++     * get_erom_ent/get_asd/ai_scan (v0.72 log):
++     *   bit0 valid, bits[3:1] tag (0 = core desc, 1 = addr window,
++     *   2 = asd), asd bits[7:6] agent type (0 bridge, 1 master-wrap,
++     *   2 slave port, 3 master port), bits[5:4] size exp (4K<<n, 3 =
++     *   explicit size entries follow), bits[11:8] port, bits[31:12]
++     *   address. Master asds use the explicit form (size entry 0x1008
++     *   = 4096 with bit3, then a 0 word) because the master loop
++     *   rejects stale trailing-size outs. */
++    {
++        static const uint32_t erom[] = {
++            0x4bf80001, 0x31004211,             /* CC 0x800 cia/cib */
++            0x18000003, 0x18000045,             /* NAW, core space */
++            0x181000f5, 0x00001008, 0x00000000, /* master port 0 */
++            0x4bf81201, 0x27004211,             /* 802.11 0x812 */
++            0x18001003, 0x18001045,
++            0x181010f5, 0x00001008, 0x00000000,
++            0x4bf82901, 0x15004211,             /* MIPS74K 0x829 */
++            0x18002003, 0x18002045,
++            0x181020f5, 0x00001008, 0x00000000,
++            0x4bf82a01, 0x09004211,             /* ARM CM3 0x82a */
++            0x18003003, 0x18003045,
++            0x181030f5, 0x00001008, 0x00000000,
++            0x4bf80e01, 0x16080401,             /* SOCSRAM 0x80e */
++            0x18004045,                         /* core space */
++            0x00000135, 0x00080008, 0x00000000, /* SRAM window @0 512K */
++            0x18104185,                         /* slave port 1 = wrap */
++            0x43b24001, 0x00080201,             /* SDIO dev 0x240 */
++            0x19000045,                         /* core space */
++            0x18106085,                         /* slave port 0 = wrap */
++            0x0000000f,                         /* ER_END */
++        };
++        unsigned i;
++
++        s->bp_chunks[1] = g_malloc0(0x8000);
++        s->bp_keys[1] = 0;
++        for (i = 0; i < sizeof(erom) / sizeof(erom[0]); i++) {
++            s->bp_chunks[1][4 * i + 0] = erom[i];
++            s->bp_chunks[1][4 * i + 1] = erom[i] >> 8;
++            s->bp_chunks[1][4 * i + 2] = erom[i] >> 16;
++            s->bp_chunks[1][4 * i + 3] = erom[i] >> 24;
++        }
+     }
+     s->cccr[0x00] = 0x11;               /* CCCR rev 1.0, SDIO spec rev 1.1 */
+     /* CIS pointers: the kernel's sdio_read_cis reads the 3-byte pointer
+-- 
+2.53.0
+

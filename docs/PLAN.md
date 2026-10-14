@@ -1,7 +1,8 @@
 # Plan — QEMU X1600 full-system emulation (v1.1)
 
-STATUS (2026-10-14, after the v0.68 DHD-backplane session; worktree
-qemu-dhd-backplane; supersedes the v0.67 header below for the wifi item):
+STATUS (2026-10-14, after the v0.74 wifi-srom session; worktree
+qemu-wifi-srom; supersedes the earlier headers for the wifi item —
+**cywdhd now insmods clean and rcS reaches the product app**):
 
 - **M0: DONE.** QEMU builds in-repo (mipsel-softmmu), `X1600` machine type
   registered, `XBurstR2` from upstream, regmap verified disassembly-wise
@@ -133,18 +134,44 @@ qemu-dhd-backplane; supersedes the v0.67 header below for the wifi item):
   already serves, so the walk (or the check on its result inside
   si_doattach.isra.10 - see M1 log v0.71 for the disassembly pointers)
   is the standing blocker.
-- **Next (M2 exit):** 1. the wifi session continues from the si_doattach
-  failure above (decode the walk's expectation: the SRAM contents the
-  walk sees are all zeros in the model - check for an SROM/OTP shadow or
-  a bank-valid bit the DHD expects in [0,0x80000), and decode
-  si_doattach's post-walk branches 0x2d780-0x2e150); the MSC internal-DMA
-  model is stage-ready for the 512-byte transfers the moment the probe
-  gets past it. Success = cywdhd returns 0, cascade oopses #1–#6
-  gone, rcS proceeds. 2. then theme → `S92_03_start_music_player`
-  **= M2 EXIT**. 3. Player-launch followups (research brief): BT
-  console pollution (move the console to ttyS2 0x10032000 — the sibling
-  session owns UART2/cmdline/LCD-tap), fb readback hook, NO panel model
-  needed.
+- **Wifi state after the srom round (M1 log v0.72-v0.74): RESOLVED —
+  cywdhd insmod returns 0, all six cascade oopses gone, rcS runs into
+  the product app (patch 0113).** The "RAM walk" was decoded as the AI
+  EROM (enumeration ROM) walk: ai_scan reads the EROM pointer at
+  chipcommon+0xfc (= 0) and walks 32-bit entries from backplane 0x0
+  (get_erom_ent skips invalid entries unboundedly — the model's zero
+  SRAM made it read 131k words to the 0x80000 unmapped break, v0.71's
+  mystery). The DHD's cold EROM walk structurally cannot count cores
+  (the master-wrapper asd match sets s6; ai_scan 0x21a78 skips the
+  numcores++ for every wrapper-matched core), so the DHD arms its OWN
+  workaround when CCCR 0x03 == 6 (bcmsdh_sdmmc_probe sets alive =
+  0x15151515 and card_dev; cywdhd 0x88cb8) and ai_scan then takes the
+  static bcm43430_* tables. The model now: serves a 40-entry EROM image
+  reproducing the six 43430 cores (from the DHD's own .data tables),
+  makes the fn2 IOR bit sticky so the ready==6 check fires, answers the
+  AI wrapper registers (ioctrl/resetstatus so ai_iscoreup is true) and
+  the SOCSRAM coreinfo/bankinfo (2 banks x 256 KB = 512 KB, matching
+  "DHD: dongle ram size is set to 524288"), and mirrors the ChipClkCSR
+  ALP request bit (0x08 -> 0x40). Plus the MSC CMD53 TX PIO path (the
+  host pushes write bytes through MSC_TXFIFO 0x3c AFTER starting the
+  command; the model stages on the command and delivers on the fifo
+  writes) — the host driver's per-write warning trio is gone.
+  Gate baseline re-recorded as boot-baseline-v0.74 (the six oopses
+  replaced by the wifi attach messages), gate PASSes. wlan0 registers
+  (MAC 00:90:4c:11:22:33) and parks OFF at init like the driver wants;
+  the ifup/firmware-download flow (devreset ON) is future work if the
+  trace demands it.
+- **Next (M2 exit):** 1. wifi done through insmod (v0.74). 2. next step
+  toward `S92_03_start_music_player` **= M2 EXIT**: the player/theme
+  chain already starts (rcS reaches the product app; the music player
+  logs "(SYS:D) Libsystem Build ..." and the audio manager imports
+  devices); remaining theme/first-frame work per the research brief:
+  BT console pollution (move the console to ttyS2 0x10032000 — the
+  sibling session owns UART2/cmdline/LCD-tap), fb readback hook, NO
+  panel model needed. Optional wifi followups (only if the trace
+  demands): the ifup/firmware-download flow (dhd_bus_devreset ON →
+  dhdsdio_download_firmware, fw_bcm43438a1.bin ~350 KB through the
+  MSC internal DMA) and the AIC/audio PDMA completion.
 - Boot evidence lives in docs/M1-bringup-log.md (v0.1–v0.68),
   docs/M2-stubs-log.md (v0.66–v0.67), and
   docs/research-brief-stubs-player-launch.md.

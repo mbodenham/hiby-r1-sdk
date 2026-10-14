@@ -1,0 +1,355 @@
+# x1600-boot-test baseline — M4 boot regression gate (docs/PLAN.md M4)
+# generated: 2026-10-14T09:25:07Z
+# firmware: stock v1.6 UNMODIFIED; kernel /home/matt/dev/hiby-r1-sdk/.kilo/worktrees/qemu-wifi-srom/unpacked/1.6/vmlinux.bin md5 dceda6683b9bc56b9a4110530b9add3f
+# nand image /home/matt/dev/hiby-r1-sdk/.kilo/worktrees/qemu-wifi-srom/unpacked/1.6/nand-r1.bin md5 ae41e974e78aab2730774d05c9cbf37c
+# qemu binary /home/matt/dev/hiby-r1-sdk/.kilo/worktrees/qemu-wifi-srom/tools/vendors/qemu/build/qemu-system-mipsel md5 10eeb65b356d29ac4c09b0957dab9c6e
+# main repo HEAD: 2707ad7
+# vendored qemu rev: f4322e3 (hw/mips/x1600.c: clean)
+# boot cmd: qemu-system-mipsel -M x1600 -kernel <kernel> -serial file:<console log> -serial file:<ttyS0 log> -display none -monitor none -no-reboot
+# console port: ttyS2 = serial0 (captured; stock cmdline
+#   console=ttyS2,3000000n8); ttyS0 = serial1 (earlycon + BT uart,
+#   discardable — the window is serial0 only).
+# window: serial output through the terminal marker "UBIFS (ubi1:0): default file-system created" —
+#   the documented rcS end state (wifi/DHD failure stall); the gate does
+#   not require the player UI.
+# normalization: guest timestamps stripped; consecutive duplicate lines
+#   squeezed; volatile numbers neutralized: initcall "after <N> usecs"
+#   durations, BogoMIPS/lpj, UBIFS image sequence number (randomized by
+#   the kernel per attach), oops trace IDs, PID/task/threadinfo/tls
+#   fields, register+stack dump contents, Modules-linked-in/Tainted
+#   oops snapshots; the documented timing-spam line classes (adc poller,
+#   i2cN write timeout, hrtimer delay warning) dropped.
+# comparison: distinct canonical messages (order/multiplicity-free)
+#   + ordered sequence of init-thread structural lines (calling/initcall
+#   chain, console handoff, root mount) — see tools/x1600-boot-test.sh.
+# --- window ---
+console [ttyS2] enabled
+bootconsole [early0] disabled
+initcall serial_ingenic_init+0x0/0x68 returned 0 after <N> usecs
+calling  ingenic_rtc_driver_init+0x0/0x18 @ <PID>
+rtc-ingenic 10003000.rtc: rtc core: registered 10003000.rtc as rtc0
+ingenic_rtc: rtc power on reset !
+ingenic RTC probe success 
+initcall ingenic_rtc_driver_init+0x0/0x18 returned 0 after <N> usecs
+calling  ingenic_wdt_driver_init+0x0/0x10 @ <PID>
+ingenic watchdog probe success
+initcall ingenic_wdt_driver_init+0x0/0x10 returned 0 after <N> usecs
+calling  sock_diag_init+0x0/0x48 @ <PID>
+initcall sock_diag_init+0x0/0x48 returned 0 after <N> usecs
+calling  nfnetlink_init+0x0/0xbc @ <PID>
+Netfilter messages via NETLINK v0.30.
+initcall nfnetlink_init+0x0/0xbc returned 0 after <N> usecs
+calling  nfnetlink_queue_init+0x0/0xb4 @ <PID>
+initcall nfnetlink_queue_init+0x0/0xb4 returned 0 after <N> usecs
+calling  nfnetlink_log_init+0x0/0xd0 @ <PID>
+initcall nfnetlink_log_init+0x0/0xd0 returned 0 after <N> usecs
+calling  xt_init+0x0/0xe0 @ <PID>
+initcall xt_init+0x0/0xe0 returned 0 after <N> usecs
+calling  tcpudp_mt_init+0x0/0x10 @ <PID>
+initcall tcpudp_mt_init+0x0/0x10 returned 0 after <N> usecs
+calling  nflog_tg_init+0x0/0xc @ <PID>
+initcall nflog_tg_init+0x0/0xc returned 0 after <N> usecs
+calling  nfqueue_tg_init+0x0/0x10 @ <PID>
+initcall nfqueue_tg_init+0x0/0x10 returned 0 after <N> usecs
+calling  quota_mt_init+0x0/0xc @ <PID>
+initcall quota_mt_init+0x0/0xc returned 0 after <N> usecs
+calling  ip_set_init+0x0/0xcc @ <PID>
+ip_set: protocol 6
+initcall ip_set_init+0x0/0xcc returned 0 after <N> usecs
+calling  bitmap_ipmac_init+0x0/0xc @ <PID>
+initcall bitmap_ipmac_init+0x0/0xc returned 0 after <N> usecs
+calling  gre_offload_init+0x0/0x10 @ <PID>
+initcall gre_offload_init+0x0/0x10 returned 0 after <N> usecs
+calling  sysctl_ipv4_init+0x0/0x64 @ <PID>
+initcall sysctl_ipv4_init+0x0/0x64 returned 0 after <N> usecs
+calling  ip_tables_init+0x0/0xc8 @ <PID>
+ip_tables: (C) 2000-2006 Netfilter Core Team
+initcall ip_tables_init+0x0/0xc8 returned 0 after <N> usecs
+calling  iptable_filter_init+0x0/0x70 @ <PID>
+initcall iptable_filter_init+0x0/0x70 returned 0 after <N> usecs
+calling  iptable_mangle_init+0x0/0x70 @ <PID>
+initcall iptable_mangle_init+0x0/0x70 returned 0 after <N> usecs
+calling  iptable_raw_init+0x0/0x70 @ <PID>
+initcall iptable_raw_init+0x0/0x70 returned 0 after <N> usecs
+calling  inet_diag_init+0x0/0xa4 @ <PID>
+initcall inet_diag_init+0x0/0xa4 returned 0 after <N> usecs
+calling  tcp_diag_init+0x0/0xc @ <PID>
+initcall tcp_diag_init+0x0/0xc returned 0 after <N> usecs
+calling  cubictcp_register+0x0/0x84 @ <PID>
+initcall cubictcp_register+0x0/0x84 returned 0 after <N> usecs
+calling  packet_init+0x0/0x5c @ <PID>
+NET: Registered protocol family 17
+initcall packet_init+0x0/0x5c returned 0 after <N> usecs
+calling  rfcomm_init+0x0/0x118 @ <PID>
+Bluetooth: RFCOMM TTY layer initialized
+Bluetooth: RFCOMM socket layer initialized
+Bluetooth: RFCOMM ver 1.11
+initcall rfcomm_init+0x0/0x118 returned 0 after <N> usecs
+calling  hidp_init+0x0/0x28 @ <PID>
+Bluetooth: HIDP (Human Interface Emulation) ver 1.2
+Bluetooth: HIDP socket layer initialized
+initcall hidp_init+0x0/0x28 returned 0 after <N> usecs
+calling  init_dns_resolver+0x0/0x12c @ <PID>
+Key type dns_resolver registered
+initcall init_dns_resolver+0x0/0x12c returned 0 after <N> usecs
+calling  check_rootfs+0x0/0xd8 @ <PID>
+check file /linuxrc ... 
+failed -2.
+check file /init ... 
+failed -2.
+check file /init.rc ... 
+failed -2.
+check file /sbin/adbd ... 
+failed -2.
+check file /bin/busybox ... 
+failed -2.
+initcall check_rootfs+0x0/0xd8 returned 0 after <N> usecs
+calling  pm_init+0x0/0x24 @ <PID>
+initcall pm_init+0x0/0x24 returned 0 after <N> usecs
+calling  init_oops_id+0x0/0x54 @ <PID>
+initcall init_oops_id+0x0/0x54 returned 0 after <N> usecs
+calling  pm_qos_power_init+0x0/0xf8 @ <PID>
+initcall pm_qos_power_init+0x0/0xf8 returned 0 after <N> usecs
+calling  pm_debugfs_init+0x0/0x3c @ <PID>
+initcall pm_debugfs_init+0x0/0x3c returned 0 after <N> usecs
+calling  printk_late_init+0x0/0x64 @ <PID>
+initcall printk_late_init+0x0/0x64 returned 0 after <N> usecs
+calling  tk_debug_sleep_time_init+0x0/0x54 @ <PID>
+initcall tk_debug_sleep_time_init+0x0/0x54 returned 0 after <N> usecs
+calling  fault_around_debugfs+0x0/0x50 @ <PID>
+initcall fault_around_debugfs+0x0/0x50 returned 0 after <N> usecs
+calling  ubifs_init+0x0/0xf0 @ <PID>
+initcall ubifs_init+0x0/0xf0 returned 0 after <N> usecs
+calling  init_root_keyring+0x0/0x8 @ <PID>
+initcall init_root_keyring+0x0/0x8 returned 0 after <N> usecs
+calling  prandom_reseed+0x0/0x50 @ <PID>
+initcall prandom_reseed+0x0/0x50 returned 0 after <N> usecs
+calling  deferred_probe_initcall+0x0/0x88 @ <PID>
+initcall deferred_probe_initcall+0x0/0x88 returned 0 after <N> usecs
+calling  dma_coherent_debugfs_init+0x0/0x3c @ <PID>
+initcall dma_coherent_debugfs_init+0x0/0x3c returned 0 after <N> usecs
+calling  ubi_init+0x0/0x2b4 @ <PID>
+initcall ubi_init+0x0/0x2b4 returned 0 after <N> usecs
+calling  rtc_hctosys+0x0/0x114 @ <PID>
+rtc-ingenic 10003000.rtc: setting system clock to 2020-03-01 12:00:00 UTC (1583064000)
+initcall rtc_hctosys+0x0/0x114 returned 0 after <N> usecs
+calling  of_fdt_raw_init+0x0/0x8c @ <PID>
+initcall of_fdt_raw_init+0x0/0x8c returned 0 after <N> usecs
+calling  clk_debug_init+0x0/0x164 @ <PID>
+initcall clk_debug_init+0x0/0x164 returned 0 after <N> usecs
+calling  register_sk_filter_ops+0x0/0x8 @ <PID>
+initcall register_sk_filter_ops+0x0/0x8 returned 0 after <N> usecs
+calling  tcp_congestion_default+0x0/0xc @ <PID>
+initcall tcp_congestion_default+0x0/0xc returned 0 after <N> usecs
+calling  ip_auto_config+0x0/0x1194 @ <PID>
+initcall ip_auto_config+0x0/0x1194 returned 0 after <N> usecs
+calling  regulator_init_complete+0x0/0x4c @ <PID>
+initcall regulator_init_complete+0x0/0x4c returned 0 after <N> usecs
+calling  clk_disable_unused+0x0/0x134 @ <PID>
+initcall clk_disable_unused+0x0/0x134 returned 0 after <N> usecs
+calling  alsa_sound_last_init+0x0/0xac @ <PID>
+ALSA device list:
+No soundcards found.
+initcall alsa_sound_last_init+0x0/0xac returned 0 after <N> usecs
+mtd: rootfs 41943040 131072 0
+VFS: Mounted root (squashfs filesystem) readonly on device 50:2.
+devtmpfs: mounted
+Freeing unused kernel memory: 1272K
+Starting mdev... OK
+Starting display... 
+calling  init_module+0x0/0x38 [utils] @ <PID>
+initcall init_module+0x0/0x38 [utils] returned 0 after <N> usecs
+calling  rmem_manager_init+0x0/0x80 [rmem_manager] @ <PID>
+rmem:no remem set, use kmalloc
+initcall rmem_manager_init+0x0/0x80 [rmem_manager] returned 0 after <N> usecs
+calling  utils_init+0x0/0x30 [soc_utils] @ <PID>
+initcall utils_init+0x0/0x30 [soc_utils] returned 0 after <N> usecs
+calling  jz_arch_i2c_init+0x0/0x60 [soc_i2c] @ <PID>
+initcall jz_arch_i2c_init+0x0/0x60 [soc_i2c] returned 0 after <N> usecs
+calling  i2c_gpio_init+0x0/0x5c [i2c_gpio_add] @ <PID>
+initcall i2c_gpio_init+0x0/0x5c [i2c_gpio_add] returned 0 after <N> usecs
+md_i2c_gpio md_i2c_gpio.3: using pins 63 (SDA) and 62 (SCL)
+calling  axp2101_i2c_init+0x0/0x94 [axp2101] @ <PID>
+AXP2101: IRQ GPIO is 55 -> irq is 72
+AXP2101: Charge Voltage Limit 4400
+AXP2101: Charge Current Term 100
+axp20x-i2c 0-0034: AXP20x variant AXP2101 found
+axp20x-i2c 0-0034: Failed to set masks in 0x40: -145
+axp20x-i2c 0-0034: failed to add irq chip: -145
+axp20x-i2c: probe of 0-0034 failed with error -145
+initcall axp2101_i2c_init+0x0/0x94 [axp2101] returned 0 after <N> usecs
+calling  cw215_init+0x0/0x44 [cw2015] @ <PID>
+cw2015_probe : cw2015 init fail!
+cw201x: probe of 0-0062 failed with error -145
+initcall cw215_init+0x0/0x44 [cw2015] returned 0 after <N> usecs
+calling  gpio_keys_init+0x0/0x1c [keyboard_gpio_add] @ <PID>
+initcall gpio_keys_init+0x0/0x1c [keyboard_gpio_add] returned 0 after <N> usecs
+input: md-gpio-keys as /devices/platform/md-gpio-keys/input/input0
+calling  gpio_init+0x0/0x5c [soc_gpio] @ <PID>
+initcall gpio_init+0x0/0x5c [soc_gpio] returned 0 after <N> usecs
+calling  jz_pwm_init+0x0/0x290 [soc_pwm] @ <PID>
+pwm clk source rate 1200000000
+initcall jz_pwm_init+0x0/0x290 [soc_pwm] returned 0 after <N> usecs
+calling  init_module+0x0/0x1d8 [pwm_backlight] @ <PID>
+initcall init_module+0x0/0x1d8 [pwm_backlight] returned 0 after <N> usecs
+calling  jzfb_module_init+0x0/0x178 [soc_fb] @ <PID>
+initcall jzfb_module_init+0x0/0x178 [soc_fb] returned 0 after <N> usecs
+calling  aic_init+0x0/0x7c [soc_aic] @ <PID>
+initcall aic_init+0x0/0x7c [soc_aic] returned 0 after <N> usecs
+calling  msc_init+0x0/0x138 [soc_msc] @ <PID>
+div_msc0 gate_msc0
+md_ingenic,mmc md_ingenic,mmc.0: register success!
+div_msc1 gate_msc1
+md_ingenic,mmc md_ingenic,mmc.1: Got CD GPIO
+md_ingenic,mmc md_ingenic,mmc.1: register success!
+initcall msc_init+0x0/0x138 [soc_msc] returned 0 after <N> usecs
+md_ingenic,mmc md_ingenic,mmc.1: card inserted, state=0
+calling  jz_adc_init+0x0/0x1b4 [soc_adc] @ <PID>
+initcall jz_adc_init+0x0/0x1b4 [soc_adc] returned 0 after <N> usecs
+calling  lg35583_init+0x0/0x500 [lcd_lg35583] @ <PID>
+deviceless supply bldo1 not found, using dummy regulator
+deviceless supply bldo2 not found, using dummy regulator
+LCD: lcd_id_vol:3299 lcd_id:1
+initcall lg35583_init+0x0/0x500 [lcd_lg35583] returned 0 after <N> usecs
+Wait display... 
+calling  switch_init+0x0/0x424 [sa_sound_switch] @ <PID>
+[SASS]1 detect items
+[SASS]success to init switch item headphone
+[SASS]switch_probe OK
+initcall switch_init+0x0/0x424 [sa_sound_switch] returned 0 after <N> usecs
+calling  cs43131_init+0x0/0xc8 [codec_cs43131] @ <PID>
+[CS43131_MX30] cs43131_power pin:34 output
+[CS43131_MX30] cs43131_reset pin:53 output
+initcall cs43131_init+0x0/0xc8 [codec_cs43131] returned 0 after <N> usecs
+calling  hyn_ts_init+0x0/0x9a0 [cst8xx_touch] @ <PID>
+hyn_ts_init load touch driver
+input: hyn_ts as /devices/i2c-1/1-0015/input/input1
+1-0015 supply aldo2 not found, using dummy regulator
+1-0015 supply vcc_i2c not found, using dummy regulator
+create proc entry lcd_reg success
+Finish display... 
+
+[HYN_TS/I]hyn_get_ic_information:read chip_ID fail !!!
+TP: lcd_id_vol:3299 lcd_id:1
+hyn_ts_probe_entry 9-2  fw update start
+
+CTP cst78xx start:0x0000 length:0x3c00 checksum:044a
+[HYN_TS/E]cst78xx_update:enter boot mode faile!
+[HYN_TS/E]cst78xx_read_checksum:enter boot mode faile!!!
+
+CTP cst78xx update fail, checksum-0xffff 
+hyn_ts_probe_entry 9-2  fw update end
+[HYN_TS/I]hyn_irq_registration:== irq:100, flag:2002
+[HYN_TS/I]hyn_ts_probe:Touch Screen(I2C BUS) driver prboe successfully
+initcall hyn_ts_init+0x0/0x9a0 [cst8xx_touch] returned 0 after <N> usecs
+calling  dhd_module_init+0x0/0x2a8 [cywdhd] @ <PID>
+dhd_module_init in
+[clooney]dhd_init_gpio_wlan_hostwake: WL_HOST_WAKE=8, oob_irq=101, oob_irq_flags=0x414
+Power-up adapter 'DHD generic adapter'
+=========== WLAN placed in NOMAL ON========
+wlan power on: init
+bcm_wlan_power_on  NORMAL
+mmc0: queuing unknown CIS tuple 0x81 (1 bytes)
+mmc0: new SDIO card at address 0001
+wifi_platform_bus_enumerate device present 1
+bcmsdh_register: register client driver
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000006
+F1 signature read @0x18000000=0x1000a9a6
+F1 signature OK, socitype:0x1 chip:0xa9a6 rev:0x0 pkg:0x3
+DHD: dongle ram size is set to 524288(orig 524288) at 0x0
+wifi_platform_prealloc: failed to alloc static mem section 7
+firmware path not found
+CFG80211-ERROR) wl_setup_wiphy : Registering Vendor80211
+wl_create_event_handler(): thread:wl_event_handler:<PID> started
+CFG80211-ERROR) wl_event_handler : tsk Enter, tsk = <ADDR>
+dhd_attach(): thread:dhd_watchdog_thread:<PID> started
+dhd_attach(): thread:dhd_dpc:<PID> started
+dhd_attach(): thread:dhd_rxf:<PID> started
+dhd_deferred_work_init: work queue initialized 
+Dongle Host Driver, version 1.363.125.19 (r)
+Compiled in /mnt/disk3/zcz/x1600_clean/ingenic.linux/module_driver/devices/wireless/bcmdhd_1.363.125.19_infineon
+Register interface [wlan0]  MAC: 00:90:4c:11:22:33
+
+CFG80211-ERROR) wl_event_handler : was terminated
+wl_destroy_event_handler(): thread:wl_event_handler:<PID> terminated OK
+dhd_wl_ioctl: returning as busstate=0
+dhd_bus_devreset: == Power OFF ==
+bcmsdh_oob_intr_unregister: Enter
+bcmsdh_oob_intr_unregister: irq is not registered
+dhd_bus_devreset:  WLAN OFF DONE
+=========== WLAN placed in NOMAL OFF ========
+wlan power off: initok
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000006
+F1 signature read @0x18000000=0x1000a9a6
+F1 signature OK, socitype:0x1 chip:0xa9a6 rev:0x0 pkg:0x3
+DHD: dongle ram size is set to 524288(orig 524288) at 0x0
+wifi_platform_prealloc: failed to alloc static mem section 7
+firmware path not found
+CFG80211-ERROR) wl_setup_wiphy : Registering Vendor80211
+wl_create_event_handler(): thread:wl_event_handler:<PID> started
+CFG80211-ERROR) wl_event_handler : tsk Enter, tsk = <ADDR>
+dhd_attach(): thread:dhd_watchdog_thread:<PID> started
+dhd_attach(): thread:dhd_dpc:<PID> started
+dhd_attach(): thread:dhd_rxf:<PID> started
+dhd_deferred_work_init: work queue initialized 
+Dongle Host Driver, version 1.363.125.19 (r)
+Compiled in /mnt/disk3/zcz/x1600_clean/ingenic.linux/module_driver/devices/wireless/bcmdhd_1.363.125.19_infineon
+Register interface [wlan1]  MAC: 00:90:4c:11:22:33
+
+CFG80211-ERROR) wl_event_handler : was terminated
+wl_destroy_event_handler(): thread:wl_event_handler:<PID> terminated OK
+dhd_wl_ioctl: returning as busstate=0
+dhd_bus_devreset: == Power OFF ==
+bcmsdh_oob_intr_unregister: Enter
+bcmsdh_oob_intr_unregister: irq is not registered
+dhd_bus_devreset:  WLAN OFF DONE
+=========== WLAN placed in RESET OFF========
+wlan power off: poweroff
+dhd_module_init out
+initcall dhd_module_init+0x0/0x2a8 [cywdhd] returned 0 after <N> usecs
+calling  init_module+0x0/0x44 [keyboard_adc_multifunc] @ <PID>
+input: jz adc keyboard as /devices/virtual/input/input2
+jz adc keyboard driver has been initialized successfully!
+initcall init_module+0x0/0x44 [keyboard_adc_multifunc] returned 0 after <N> usecs
+calling  leds_pwm_dev_init+0x0/0x78 [leds_pwm_add] @ <PID>
+initcall leds_pwm_dev_init+0x0/0x78 [leds_pwm_add] returned 0 after <N> usecs
+calling  sa_config_init+0x0/0x78 [sa_config_module] @ <PID>
+initcall sa_config_init+0x0/0x78 [sa_config_module] returned 0 after <N> usecs
+calling  earpods_adc_init+0x0/0x100 [sa_earpods_adc] @ <PID>
+earpods_adc supply aldo4 not found, using dummy regulator
+input: earpods_adc as /devices/platform/earpods_adc/input/input3
+initcall earpods_adc_init+0x0/0x100 [sa_earpods_adc] returned 0 after <N> usecs
+calling  sahd_init+0x0/0x9c [sa_hgl_dma] @ <PID>
+[SAUD]sahd_init
+initcall sahd_init+0x0/0x9c [sa_hgl_dma] returned 0 after <N> usecs
+calling  jz_efuse_init+0x0/0x340 [soc_efuse] @ <PID>
+initcall jz_efuse_init+0x0/0x340 [soc_efuse] returned 0 after <N> usecs
+calling  tcs1421_dev_init+0x0/0x78 [tcs1421_add] @ <PID>
+initcall tcs1421_dev_init+0x0/0x78 [tcs1421_add] returned 0 after <N> usecs
+calling  codec_board_init+0x0/0x4c [x1600_hiby_r1_sound_card] @ <PID>
+hiby-hifi-board hiby-hifi-board.0: cs43131-hifi <-> ingenic-aic mapping ok
+initcall codec_board_init+0x0/0x4c [x1600_hiby_r1_sound_card] returned 0 after <N> usecs
+/
+Saving random seed: SKIP (read-only file system detected)
+ubi1: attaching mtd6
+ubi1: scanning is finished
+ubi1: empty MTD device detected
+ubi1: attached mtd6 (name "userdata", size 32 MiB)
+ubi1: PEB size: 131072 bytes (128 KiB), LEB size: 126976 bytes
+ubi1: min./max. I/O unit sizes: 2048/2048, sub-page size 2048
+ubi1: VID header offset: 2048 (aligned 2048), data offset: 4096
+ubi1: good PEBs: 260, bad PEBs: 0, corrupted PEBs: 0
+ubi1: user volume: 0, internal volumes: 1, max. volumes count: 128
+ubi1: max/mean erase counter: 0/0, WL threshold: 4096, image sequence number: <N>
+ubi1: available PEBs: 236, total reserved PEBs: 24, PEBs reserved for bad PEB handling: 20
+ubi1: background thread "ubi_bgt1d" started, PID <PID>
+UBI device number 1, total 260 LEBs (33013760 bytes, 31.4 MiB), available 236 LEBs (29966336 bytes, 28.5 MiB), LEB size 126976 bytes (124.0 KiB)
+Set volume size to 29966336
+Volume ID 0, size 236 LEBs (29966336 bytes, 28.5 MiB), LEB size 126976 bytes (124.0 KiB), dynamic, name "user_data", alignment 1
+UBIFS (ubi1:0): default file-system created

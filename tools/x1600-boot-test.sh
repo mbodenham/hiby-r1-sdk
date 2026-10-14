@@ -172,6 +172,9 @@ normalize() {
         -e 's/^Modules linked in: .*/<modules>/' \
         -e 's/Tainted: [A-Za-z ][A-Za-z ]*/Tainted: <TAINT> /' \
         -e 's/^Oops\[[0-9][0-9]*\]/Oops[<N>]/' \
+        -e 's/successFinish display\.\.\./success\nFinish display.../' \
+        -e 's/tsk = 0x[0-9a-f][0-9a-f]*/tsk = <ADDR>/' \
+        -e 's/\(thread:[A-Za-z_]*:\)[0-9a-f][0-9a-f]*/\1<PID>/' \
     | grep -v -e '^adc_read_channel_value:adc get value timeout!$' \
               -e '^i2c[0-9] write timeout([0-9][0-9]* ms)$' \
               -e '^hrtimer: interrupt took [0-9][0-9]* ns$' \

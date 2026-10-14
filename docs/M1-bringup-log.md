@@ -1315,3 +1315,191 @@ post-walk check (v0.69 blocker 1)
   = the unmapped read, sp 0x82005fc8), cywdhd_full.dis (module-wide
   objdump with relocs), syms.txt, si_doattach.dis, ingenic_dma.dis,
   soc_msc_req.dis; the gate pass with .cctmp/bt.
+
+## v0.72 (2026-10-14, srom round, worktree qemu-wifi-srom) - the "RAM walk" decoded:
+it is the AI EROM (enumeration ROM) walk, and the EROM lives at backplane
+0x00000000
+
+- **Premise correction (the brief's "SROM/OTP shadow in SRAM" is wrong).**
+  The stalled walk is not a RAM-size scan of chip SRAM. Re-decode from
+  cywdhd.ko (si_doattach.isra.10 0x2d3d0-0x2e150 has NO walk; it is clock
+  handshake + chipid parse 0xa9a6/rev0/AI + ai_scan + core enum + CC
+  workaround, returns sih):
+  1. si_doattach reads the F1 badge at 0x18000000 through fn1 0x8000
+     (CMD53 arg 0x15000004, count 4) = 0x1000a9a6 (chipid low16 = 0xa9a6
+     = 43430, bits[31:28] = 1 = socitype AI), then ai_scan.
+  2. dhdsdio_probe_attach (0x954d0): si_corerev, then si_setcore(0x83e
+     ARM_CR4) -> not found on 43430 -> si_socram_size (0x308d4).
+  3. THE WALK = ai_scan (0x212b4) COLD path: reads core0 (chipcommon)
+     base+0xfc = 0x180000fc (bcmsdh_reg_read, ai_scan 0x214a0/0x214d8)
+     = the EROM POINTER; eromlim = eromptr0 + 0xe00 (0x2158c addiu 3584);
+     loop while eromptr < eromlim (0x215a4-0x215b0): get_erom_ent
+     (0x20b30-0x20c28).
+  4. get_erom_ent: reads 32-bit entries at *eromptr through the fn1 32K
+     window (SBADDR updated per 32 KB), eromptr += 4 each read; with
+     mask != 0 it skips entries with bit0 (ER_VALID) clear and LOOPS
+     WITH NO BOUND on that skip path (0x20bd8 beqz v1,0x20b70) - the
+     bound (s8 < 4096) only applies to valid entries that fail the
+     mask/match. With the model's all-zero backplane every entry is
+     invalid -> the skip loop reads [0, 0x80000) until the first
+     0xffffffff (the patch-0009 unmapped rule), then 4096 more 0xffffffff
+     words, then returns 0xffffffff. That is EXACTLY the observed
+     16x8192-word walk to 0x80000 (v0.71 blocker). ai_scan then exits
+     with zero usable cores -> "dhdsdio_probe_attach: si_attach failed!"
+  5. run7 trace re-decode (/tmp/kilo/srom/run7.msc.txt, mscdec on
+     run7/unimp.log): SBADDR 0x1000a/b/c = 00/00/18 -> badge reads at
+     0x18000000 x2 (dhd + si_doattach), one read at 0x180000fc (the
+     ai_scan EROM-pointer read), then SBADDR 00/00/00 and word reads
+     stepping +4 from 0x00000000 (5981 captured, truncated mid-walk).
+     The walk reads backplane [0,0x80000), NOT [0x18000000,0x18080000).
+- **ai_scan WARM path = static 43430 tables (the ground truth for the
+  EROM contents).** ai_scan 0x212b4: if global alive == 0x15151515 AND
+  card_dev == 0xa9a6: numcores = 6, sih+148 (common/second wrap base) =
+  0x18107000, and 6 memcpys from module .data tables (ELF syms, .data
+  file off 0x0c7540): bcm43430_coreid@0x2a38, coresba@0x2a20,
+  coresba_size@0x2a50, wrapba@0x29f0, cia@0x29d8, cib@0x29c0
+  (bcm43436_cib@0x29c0 alt used when card_rev==2). Values:
+    idx coreid coresba      wrapba      cia        cib
+    0   0x800  0x18000000   0x18100000  0x4bf80001 0x31004211
+    1   0x812  0x18001000   0x18101000  0x4bf81201 0x27004211
+    2   0x829  0x18002000   0x18102000  0x4bf82901 0x15004211
+    3   0x82a  0x18003000   0x18103000  0x4bf82a01 0x09004211
+    4   0x80e  0x18004000   0x18104000  0x4bf80e01 0x16080401
+    5   0x240  0x19000000   0x18106000  0x43b24001 0x080201
+  coresba_size all 0x0. coreid 0x240 = the SDIO DEVICE core (0x19000000,
+  outside the 0x180xxxxx range); 0x80e = SOCSRAM; 0x82a = ARM CM3; 0x829
+  = MIPS74K; 0x812 = 802.11. cia>>8 & 0xfff == coreid for all 6
+  (cia IS the EROM core-descriptor entry: bit0 = ER_VALID, bits[3:1]
+  = 0 so get_erom_ent(mask 14, match 0) accepts it, (cia>>20) = 0x4bf
+  except core 5's 0x43b = the special path ai_scan takes for the SDIO
+  core, 0x215f8 li 1083).
+- **EROM entry format decoded from get_erom_ent/get_asd/ai_scan:**
+  get_erom_ent(sih, &eromptr, mask, match): ent = backplane[eromptr],
+  eromptr += 4; if mask == 0 return ent raw; skip while (ent & 1) == 0;
+  return when ent == 15 or (ent & mask) == match; bound 4096 skipped
+  bytes on the valid-but-unmatched path only.
+  Core sequence per core in the ai_scan main loop (0x215a4):
+    cia = get_erom_ent(mask 14, match 0)  # (ent&0xe) must be 0
+    cib = get_erom_ent(mask 0, match 0)   # raw next word
+    fail if (cib & 0xe) != 0 (0x215f0)
+    if (cia >> 20) == 0x43b and ((cia >> 8) & 0xfff) == 0xfff: skip core
+    nwrap = (cib >> 9) & 0x1f; skip core if 0 (0x21608/0x21618)
+    nmasters = (cib >> 14) & 0x1f (56(sp)); naddr?? = (cib >> 19) & 0x1f
+      (68(sp)); if nmasters + naddr != 0 OR coreid in {0x367, 0x50b,
+      0x827, 0x840}: process core (0x21638/0x21690)
+    store: cia -> s0+1408+4n, cib -> s0+1536+4n, coreid=(cia>>8)&0xfff
+      -> s0+128+4n (0x216c4-0x216cc)
+    port loop: nwin = (cib >> 4) & 0x1f times: get_asd(sih, &eromptr,
+      req 1, qual 1, idx t0, tag 2) (0x216dc-0x216ec); each returned ent
+      must have (ent & 0xe) == 2 else fail (0x216f8)
+    master-wrapper scan (0x21750-0x21798): get_asd(req 0, qual 0x40)
+      repeatedly; fail if out2/out4 nonzero; loop continues while the
+      returned size == 4096; s6=1 = found (0x21794)
+    first asd addr -> coresba[n] = s0+256+4n (0x217cc), its size ->
+      coresba_size[n] = s0+640+4n (0x217d0)
+    second asd (req 1, qual 0x40??): 4096 -> s0+768+4n, addr -> s0+512+4n
+      (0x2183c-0x21840) [wrapba at s0+1024 filled later in the loop]
+    get_asd.isra.1 (0x21154): ent = get_erom_ent(mask 1, match 1) (VALID
+      required); if (ent & 6) != 4 or ((ent >> 8) & 0xf) != req or
+      (ent & 0xc0) != qual: eromptr -= 4 (undo), return 0; on match:
+      addr = ent & 0xfffff000 -> arg5 out; if (ent & 8): size-ent =
+      get_erom_ent(0,0) -> arg6 out; size = 4K << ((ent >> 4) & 3) when
+      (ent & 0x30) != 0x30, else explicit size entries follow (arg7 out
+      = ent & ~0xfff of the next, arg8 out = one more raw ent).
+
+## v0.73 (2026-10-14, srom round, worktree qemu-wifi-srom) - THE WIFI DHD
+ATTACHES: cywdhd insmod returns 0, all six module-cascade oopses gone, rcS
+completes into the product app
+
+- **The three model changes that did it (0011 patch, this round):**
+  1. **AI EROM image at backplane [0x00000000, 0xa4)** (bp chunk key 0):
+     the 40-entry enumeration ROM reproducing the six 43430 cores from
+     the DHD's own warm-resume tables (bcm43430_coreid/coresba/wrapba/
+     cia/cib, cywdhd.ko .data 0x29c0-0x2a68; entry format decoded from
+     get_erom_ent/get_asd/ai_scan, v0.72). The EROM pointer is
+     chipcommon+0xfc (0x180000fc) = 0. The walk now consumes all
+     entries and exits cleanly at the ER_END marker (0x0000000f) in
+     ~40 reads instead of 131k (run1 trace).
+  2. **CCCR 0x03 (IO Ready) fn2 bit sticky**: the 0x02->0x03 mirror
+     writes data|0x04. The DHD's bcmsdh_sdmmc_probe arms its
+     static-core-table workaround at exactly "ready == 6" (alive =
+     0x15151515 + card_dev, cywdhd 0x88cb8; the print "sdioh_probe,
+     147, ready = %06x" shows it). Structural fact: the cold ai_scan
+     EROM walk in this DHD build CANNOT count cores - the master-
+     wrapper asd match (get_asd us 0, ms 1) sets s6 = 1 and ai_scan
+     0x21a78 (bnez s6) skips the numcores++ for every wrapper-matched
+     core; the only s6 == 0 exits are an unbounded scan or
+     numcores = 0 (ai_scan 0x21a90). The warm-table path is how the
+     real card attaches; with ready = 0x02 both probes failed
+     (v0.72 run1), with 0x06 the first probe takes the tables.
+  3. **AI wrapper responder** (0x18100000-0x18107fff, all six core
+     wrappers in one 32 KB chunk): ioctrl (wrap+0x408) = 1 and
+     resetstatus (wrap+0x804) = 1, everything else 0, so ai_iscoreup
+     ((ioctrl & 3) == 1 && !(resetctrl & 1)) is true and _ai_core_reset
+     never spins (v0.72 run2 looped there). Plus SOCSRAM core
+     registers: coreinfo (0x18004000) = 0x20 (bits[7:4] = 2 banks),
+     bankinfo (0x18004040) = 0x1f ((31+1) << 13 = 256 KB/bank = 512 KB
+     total; socram_banksize asserts idx < 3 so 2 banks, not 4). Result:
+     "DHD: dongle ram size is set to 524288(orig 524288) at 0x0".
+  4. **ChipClkCSR ALP request bit**: the 0x1000e mirror also sets
+     ALP_AVAIL (0x40) on the request bit 0x08 (sbsdio.h
+     ALP_AVAIL_REQ = 0x08; dhdsdio_htclk wrote 0x08 and polled for
+     0x40, run3 "HT Avail timeout (1000000): clkctl 0x08"). The 0x20
+     and 0x10 rules stay (the probe's 0x28/0x21 self-checks pass).
+- **Boot evidence (run4, /tmp/kilo/srom/run4):**
+  [18.76] F1 signature OK, socitype:0x1 chip:0xa9a6 rev:0x0 pkg:0x3
+  [18.99] DHD: dongle ram size is set to 524288(orig 524288) at 0x0
+  [19.03] firmware path not found (one candidate path; harmless)
+  [19.04] Register interface [wlan0] MAC: 00:90:4c:11:22:33
+  [19.20] dhd_bus_devreset: WLAN OFF DONE (interface parks OFF)
+  [19.38] WLAN placed in NOMAL OFF; the DHD retries its probe (fn1 +
+          fn2, "ready = 00000006" both times now)
+  [20.78] initcall dhd_module_init [cywdhd] returned 0 after 2.70 s
+  [20.88-22.85] keyboard_adc_multifunc, leds_pwm_add, sa_config_module,
+          sa_earpods_adc, tcs1421_add, x1600_hiby_r1_sound_card all
+          "initcall ... returned 0" - THE SIX CASCADE OOPSES ARE GONE
+          (0 "Oops[" lines in the whole 300 s log)
+  [31+]  rcS continues: system message bus, network OK, sys_server,
+          S80_bt_init (BT firmware BCM4343A1_...hcd selected), music
+          player app: ot_device headset + 101-step gains, fb ready,
+          hyn_ts ready - the product UI stack is alive.
+- **Remaining noise (cosmetic, does not stop the boot):** the MSC host
+  driver still warns per 4-byte PIO CMD53 write: "polling status
+  (0x00000800) error, op=53, status=0x00001802" + "PIO mode: command
+  response error" (msc.c:1017, ingenic_mmc_request+0xc8). The reads
+  return correct data (the F1 signature + ram size prove it); the DHD
+  parks the interface OFF at init exactly like the driver's flow wants.
+  The wlan0 ifup/firmware-download flow (devreset ON) is future work if
+  the trace demands it.
+
+## v0.74 (2026-10-14, srom round, worktree qemu-wifi-srom) - the MSC PIO TX
+path + clean attach; the round is gated
+
+- **MSC CMD53 TX fix (the last "polling status(0x800/0x2000) error, op=53"
+  spam, gone: run5 has ZERO host-driver warnings):** the host starts a TX
+  CMD53 with NO fifo or DMA writes before it (run4 trace: arg 0x9500b004
+  = W fn1 0x80b0 x4 with MSC_CTRL = START_OP immediately after CMDAT;
+  MSC_TXFIFO (0x3c) and MSC_DMAC writes come only after the response for
+  multi-block/DMA cases). The model timed out every small TX
+  ("the driver never drives TX from the PIO fifo" was wrong for these).
+  Now the CMD53 TX branch stages the phase (fifo_len/fifo_pos/dma_wr,
+  res = 0) like the read branch, and the MSC_TXFIFO write handler
+  appends the 4 pushed bytes little-endian, delivers them through
+  x1600_msc_fn_write when the staged length is reached, sets STAT bit13
+  (XFER_DONE_WR, the "polling status(0x00002000)" poll) and IFLG bit15.
+  The host driver's warning trio ("polling status(0x00000800) error" /
+  "PIO mode: command response error" / "operate in non-idle state",
+  msc.c:1017) disappears entirely.
+- **run5 evidence (/tmp/kilo/srom/run5, 300 s):**
+  [18.17] F1 signature OK chip:0xa9a6; [18.20] dongle ram size 524288;
+  [18.24] wlan0 registered MAC 00:90:4c:11:22:33; [18.26] WLAN OFF DONE
+  (the driver parks the interface OFF at init, the app brings it up);
+  [18.89] dhd_module_init returned 0 after 1.10 s (vs 2.70 s in run4);
+  [18.94-20.15] keyboard_adc_multifunc, leds_pwm_add, sa_config_module,
+  sa_earpods_adc, tcs1421_add, x1600_hiby_r1_sound_card all return 0;
+  0 "Oops[" lines in the whole log; "Starting network: OK",
+  "lg_system_main in", "product name: r1" - rcS completes into the
+  product UI stack.
+- **Gate:** baseline re-recorded as docs/traces/boot-baseline-v0.74.txt
+  (the dmesg window changed materially: the wifi attach messages replaced
+  the six oopses); tools/x1600-boot-test.sh PASSes against it.
