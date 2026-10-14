@@ -1,0 +1,225 @@
+From ca29cd6fd49f1a2c0b551abbc7c35638c7250933 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Wed, 14 Oct 2026 16:57:12 +0900
+Subject: [PATCH 120/121] x1600: SFC CDT-group walk + program/erase row fix +
+ descriptor diagnostics
+
+The driver fires an operation group with SFC_TRIG and expects the SFC
+hardware to walk the group's remaining CDT entries (WREN 0x06 -> PROGRAM
+LOAD 0x32/0x84 (+descriptor data) -> PROGRAM EXECUTE 0x10, and WREN ->
+BLOCK ERASE 0xd8) with the same row/col/descriptor setup. The model ran
+only the first entry, so every flash program and erase was silently lost:
+mkvol's VTBL writes, ubiattach's EC init sweep and every UBIFS write
+vanished while the guest reported success.
+
+- x1600_sfc_start: walk the CDT group (WREN and PROGRAM LOAD chain to
+  the next entry; standalone ops end the group), with SFC-T start/exec
+  traces.
+- page/erase/program ops take ROW_ADDR (0x84), not the GET FEATURE
+  address operand (0x88): the BBT/EC/page addressing was off.
+- PAGE READ DMA data phase: walk the full descriptor chain with the
+  SFC-D walk trace and SFC-R serve dumps; program load keeps a 0xff
+  cache tail so short programs read back as erased.
+- GET FEATURE status polls trace as SFC-P; SFC_TRIG writes lost their
+  per-write LOG_UNIMP spam.
+---
+ hw/mips/x1600.c | 114 +++++++++++++++++++++++++++++++++++++++---------
+ 1 file changed, 93 insertions(+), 21 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 1e8678c..af1f3a4 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -1266,10 +1266,13 @@ static void x1600_sfc_fifo_load(X1600Sfc *s, const uint8_t *data, int len)
+ 
+ static void x1600_sfc_dma(X1600Sfc *s, uint8_t opcode, bool out);
+ 
+-/* execute one SPI-NAND command; opcode from the CDT entry */
++/* execute one SPI-NAND command; opcode from the CDT entry.
++ * ROW_ADDR (0x84) addresses the flash for page/erase/program ops;
++ * 0x88 holds the feature-address operand of GET/SET FEATURE. */
+ static void x1600_sfc_exec(X1600Sfc *s, uint8_t opcode)
+ {
+     uint32_t addr = s->regs[0x88 / 4];
++    uint32_t row = s->regs[0x84 / 4];
+     uint64_t off;
+ 
+     switch (opcode) {
+@@ -1290,14 +1293,22 @@ static void x1600_sfc_exec(X1600Sfc *s, uint8_t opcode)
+     case 0x0f: {                                /* GET FEATURE */
+         uint8_t v = s->feature[addr & 0xff];
+ 
++        fprintf(stderr, "SFC-P poll addr=%#x -> %#x\n", addr & 0xff, v);
+         x1600_sfc_fifo_load(s, &v, 1);
+         break;
+     }
++    case 0x06:                                  /* WRITE ENABLE: the write
++                                                 * latch has no modelled
++                                                 * effect (synchronous); the
++                                                 * chained PROGRAM LOAD/
++                                                 * BLOCK ERASE entry follows */
++        x1600_sfc_irq_raise(s, SFC_ST_DONE);
++        break;
+     case 0x13:                                  /* PAGE READ -> cache */
+         /* ROW_ADDR = 0x84, COL_ADDR = 0x80 (vendor dump register names;
+          * v0.27: swapped them and the BBT scan read page 2048's OOB for
+          * every block -> all 1024 blocks marked bad). */
+-        off = (uint64_t)s->regs[0x84 / 4] * X1600_NAND_STRIDE;
++        off = (uint64_t)row * X1600_NAND_STRIDE;
+         if (off + X1600_NAND_PAGE <= X1600_NAND_BYTES) {
+             memcpy(s->cache, s->nand + off, X1600_NAND_STRIDE);
+         } else {
+@@ -1312,7 +1323,7 @@ static void x1600_sfc_exec(X1600Sfc *s, uint8_t opcode)
+         }
+         break;
+     case 0xd8:                                  /* BLOCK ERASE */
+-        off = (uint64_t)(addr & ~(X1600_NAND_PAGES_PER_BLOCK - 1)) *
++        off = (uint64_t)(row & ~(X1600_NAND_PAGES_PER_BLOCK - 1)) *
+               X1600_NAND_STRIDE;
+         if (off < X1600_NAND_BYTES) {
+             memset(s->nand + off, 0xff,
+@@ -1322,7 +1333,7 @@ static void x1600_sfc_exec(X1600Sfc *s, uint8_t opcode)
+         x1600_sfc_irq_raise(s, SFC_ST_DONE);
+         break;
+     case 0x10:                                  /* PROGRAM EXECUTE */
+-        off = (uint64_t)addr * X1600_NAND_STRIDE;
++        off = (uint64_t)row * X1600_NAND_STRIDE;
+         if (off + X1600_NAND_PAGE <= X1600_NAND_BYTES) {
+             uint32_t i;
+ 
+@@ -1383,9 +1394,11 @@ static void x1600_sfc_dma(X1600Sfc *s, uint8_t opcode, bool out)
+     uint32_t desc = x1600_sfc_desc_base(s);
+     uint32_t col = s->regs[0x80 / 4];   /* COL_ADDR; OOB cols (>= 2048)
+                                          * are legal — bad-block markers */
++    uint32_t col0 = col;
+     int guard = 0;
+     static int dbg = 12;
+ 
++
+     if (dbg > 0) {
+         uint32_t d[4] = {0};
+ 
+@@ -1407,9 +1420,14 @@ static void x1600_sfc_dma(X1600Sfc *s, uint8_t opcode, bool out)
+     while (desc && guard++ < 64) {
+         uint32_t d[4], len;
+         uint64_t addr;
+-
+-        if (dma_memory_read(&address_space_memory, desc, d, sizeof(d),
+-                            MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
++        int dret;
++
++        dret = dma_memory_read(&address_space_memory, desc, d, sizeof(d),
++                               MEMTXATTRS_UNSPECIFIED);
++        fprintf(stderr, "SFC-D walk op=%#x out=%d desc=%#x ret=%d "
++                "{next=%#x mem=%#x len=%#x more=%#x}\n",
++                opcode, out, desc, dret, d[0], d[1], d[2], d[3]);
++        if (dret != MEMTX_OK) {
+             break;
+         }
+         len = d[2];
+@@ -1438,6 +1456,39 @@ static void x1600_sfc_dma(X1600Sfc *s, uint8_t opcode, bool out)
+                 }
+             }
+         }
++        if (!out && guard == 1) {
++            fprintf(stderr, "SFC-R in done row=%#x col=%#x len=%#x first="
++                    "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
++                    s->regs[0x84 / 4], col0, len,
++                    s->cache[col0], s->cache[col0 + 1], s->cache[col0 + 2],
++                    s->cache[col0 + 3], s->cache[col0 + 4], s->cache[col0 + 5],
++                    s->cache[col0 + 6], s->cache[col0 + 7], s->cache[col0 + 8],
++                    s->cache[col0 + 9], s->cache[col0 + 10], s->cache[col0 + 11],
++                    s->cache[col0 + 12], s->cache[col0 + 13], s->cache[col0 + 14],
++                    s->cache[col0 + 15]);
++        }
++        if (out) {
++            fprintf(stderr, "SFC-D out done op=%#x copied=%u first="
++                    "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
++                    "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
++                    "%02x%02x%02x%02x%02x%02x%02x%02x\n",
++                    opcode, col, s->cache[0], s->cache[1], s->cache[2],
++                    s->cache[3], s->cache[4], s->cache[5], s->cache[6],
++                    s->cache[7], s->cache[8], s->cache[9], s->cache[10],
++                    s->cache[11], s->cache[12], s->cache[13], s->cache[14],
++                    s->cache[15], s->cache[16], s->cache[17], s->cache[18],
++                    s->cache[19], s->cache[20], s->cache[21], s->cache[22],
++                    s->cache[23], s->cache[24], s->cache[25], s->cache[26],
++                    s->cache[27], s->cache[28], s->cache[29], s->cache[30],
++                    s->cache[31]);
++        }
++        if (out && col < X1600_NAND_STRIDE) {
++            /* the rest of the page cache was not loaded by this program
++             * op; it must read back as erased, not as stale data from a
++             * previous page read */
++            memset(s->cache + col, 0xff, X1600_NAND_STRIDE - col);
++            col = X1600_NAND_STRIDE;
++        }
+         if (!d[0]) {
+             break;
+         }
+@@ -1469,18 +1520,41 @@ static bool x1600_sfc_opcode_is_out(uint8_t opcode)
+ static void x1600_sfc_start(X1600Sfc *s)
+ {
+     uint32_t idx = s->regs[0x7c / 4] & 0x3f;
+-    uint8_t opcode = s->cdt[idx * 4 + 1] & 0xff;
+-
+-    qemu_log_mask(LOG_UNIMP,
+-                  "x1600-sfc: START cdt=%u opcode=%#x p80=%#x p84=%#x "
+-                  "p88=%#x p8c=%#x len=%#x dma=%d\n",
+-                  idx, opcode, s->regs[0x80 / 4], s->regs[0x84 / 4],
+-                  s->regs[0x88 / 4], s->regs[0x8c / 4], s->regs[0x2c / 4],
+-                  !!(s->regs[0] & 0x40));
+-    if (x1600_sfc_opcode_is_dma(opcode)) {
+-        x1600_sfc_dma(s, opcode, x1600_sfc_opcode_is_out(opcode));
+-    } else {
+-        x1600_sfc_exec(s, opcode);
++    int guard;
++
++    /* The driver fires the first CDT entry of an operation group with
++     * 0x7c[5:0]; the SFC hardware walks the group's remaining entries
++     * with the same row/col/descriptor setup:
++     *   WREN(0x06) -> PROGRAM LOAD(+descriptor data) -> PROGRAM EXECUTE
++     *   WREN(0x06) -> BLOCK ERASE
++     * PAGE READ (0x13) already carries its descriptor data phase, and
++     * standalone ops (GET/SET FEATURE, READ ID, polls) end the group. */
++    for (guard = 0; guard < 4 && idx < 32; guard++) {
++        uint8_t opcode = s->cdt[idx * 4 + 1] & 0xff;
++        bool chain;
++
++        fprintf(stderr, "SFC-T start idx=%u op=%#x col=%#x row=%#x len=%#x dma=%d desc=%#x\n",
++                idx, opcode, s->regs[0x80 / 4], s->regs[0x84 / 4],
++                s->regs[0x2c / 4], !!(s->regs[0] & 0x40), s->regs[0x90 / 4]);
++        if (x1600_sfc_opcode_is_dma(opcode)) {
++            x1600_sfc_dma(s, opcode, x1600_sfc_opcode_is_out(opcode));
++        } else {
++            x1600_sfc_exec(s, opcode);
++        }
++        if (opcode == 0x10 || opcode == 0xd8) {
++            fprintf(stderr, "SFC-T exec op=%#x row=%#x\n", opcode, s->regs[0x84 / 4]);
++        }
++
++        if (opcode == 0x06 || opcode == 0x02 || opcode == 0x84 ||
++            opcode == 0x32 || opcode == 0x34) {
++            chain = true;       /* WREN and PROGRAM LOAD continue */
++        } else {
++            chain = false;
++        }
++        if (!chain) {
++            break;
++        }
++        idx++;
+     }
+ }
+ 
+@@ -1518,8 +1592,6 @@ static void x1600_sfc_write(void *opaque, hwaddr addr,
+ {
+     X1600Sfc *s = opaque;
+ 
+-    qemu_log_mask(LOG_UNIMP, "x1600-sfc write %#llx = %#llx\n",
+-                  (unsigned long long)addr, (unsigned long long)val);
+     if (addr == 0x64) {
+         /* SFC_TRIG: bit0 START self-clears when the transfer completes;
+          * our execution is synchronous so bit0 never reads back set.
+-- 
+2.53.0
+

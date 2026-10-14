@@ -1,0 +1,78 @@
+From ad53dfb74a057ffeba4f32dd6256b70caab58ceb Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Wed, 14 Oct 2026 16:57:12 +0900
+Subject: [PATCH 121/121] x1600: SFC DMA descriptor window + PAGE READ PIO data
+ phase
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The fresh-mount LPT path (ubifs_lpt_init read_ltab) reads the LTAB at
+an unaligned offset (LEB 1209, 11 bytes) — the first non-page-aligned,
+non-4-multiple read of the boot. The vendor SFC driver splits it into a
+4-aligned 8-byte DMA prefix plus a 3-byte PIO tail:
+
+- The DMA descriptor's mem field carries the driver's get_paddr output,
+  which passes uncached (0x20000000-window) buffer aliases through
+  unchanged; the SFC's DMA master resolves that window to DRAM
+  (mem - 0x20000000), the same property the descriptor-BASE register
+  normalization already implements. The model treated it as a raw
+  physical address beyond RAM and dropped the write, so the LTAB prefix
+  never reached the bounce buffer and check_lpt_type saw type 0.
+- The 3-byte PIO tail read issues PAGE READ with the DMA bit cleared
+  and fetches the data through the RX FIFO (the same handshake as GET
+  FEATURE: fifo_load raises SFC_ST_RX, the driver pops, done>=total
+  raises DONE). The model only raised DONE, so the tail stayed stale
+  and check_lpt_crc failed once the prefix arrived.
+
+With both, the fresh create_default_filesystem LPT reads pass and
+/userdata mounts: ubiattach -m 6 + ubimkvol + mount succeeds, and the
+full stock boot mounts /usr/data (theme_id, radio.db, user.ini appear).
+---
+ hw/mips/x1600.c | 23 ++++++++++++++++++++++-
+ 1 file changed, 22 insertions(+), 1 deletion(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index af1f3a4..11794d1 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -1319,7 +1319,21 @@ static void x1600_sfc_exec(X1600Sfc *s, uint8_t opcode)
+                                                  * cache read in one op */
+             x1600_sfc_dma(s, opcode, false);
+         } else {
+-            x1600_sfc_irq_raise(s, SFC_ST_DONE);
++            /* PIO mode: the read data lands in the RX FIFO; the driver
++             * pops it the same way as GET FEATURE results (the unaligned
++             * sub-page tail read of the fresh-mount LPT path relies on
++             * this). */
++            uint32_t plen = s->regs[0x2c / 4];
++            uint32_t colp = s->regs[0x80 / 4];
++
++            if (!plen) {
++                plen = 1;
++            }
++            if (colp < X1600_NAND_STRIDE &&
++                plen > X1600_NAND_STRIDE - colp) {
++                plen = X1600_NAND_STRIDE - colp;
++            }
++            x1600_sfc_fifo_load(s, s->cache + colp, plen);
+         }
+         break;
+     case 0xd8:                                  /* BLOCK ERASE */
+@@ -1434,6 +1448,13 @@ static void x1600_sfc_dma(X1600Sfc *s, uint8_t opcode, bool out)
+         if (len > X1600_NAND_STRIDE) {
+             len = X1600_NAND_STRIDE;
+         }
++        /* Descriptor data addresses carry the driver's get_paddr output,
++         * which passes uncached (0x20000000-window) buffer aliases through
++         * unchanged; the SFC's DMA master resolves that window to DRAM
++         * (same property as the descriptor-base register above). */
++        if (d[1] >= 0x20000000 && d[1] < 0x40000000) {
++            d[1] -= 0x20000000;
++        }
+         for (addr = 0; addr < len; addr++) {
+             if (out) {
+                 uint8_t b;
+-- 
+2.53.0
+
