@@ -1,0 +1,90 @@
+From d8644b9bf6038d09bf0a20ad1238d91cbc319e51 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Tue, 13 Oct 2026 17:20:43 +0900
+Subject: [PATCH 102/104] =?UTF-8?q?x1600:=20CGU=20SPL-shape=20seed=20?=
+ =?UTF-8?q?=E2=80=94=20div=5Fahb2=20computes=20200=20MHz?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The CGU reset state was all-zero, so the vendor clock framework
+computed ext-fallback rates (~24 MHz) for every PLL-derived clock.
+That broke soc_efuse's insmod BEFORE any efuse MMIO: jz_efuse_init
+(.init.text 0xd4-0x184) computes rd_adj/rd_strobe/wr_strobe from
+clk_get_rate("gate_efuse") (= div_ahb2's rate) and validates the
+period p = 1e9/rate ns:
+  (floor(7/p)+1)*p >= 8,
+  (q1+5+max(floor(35/p)-4-q1,0))*p >= 36,
+  9000 <= (q1+1666+max(floor(10000/p)-1666-q1,0)+1)*p < 11001
+with q1 = floor(7/p). Valid p = {1,2,3,5,6} ns; at ~24 MHz (p=41)
+the wr check fails => 'EFUSE: failed to get efuse cfg wr_strobe' +
+initcall -1 (the observed v0.63-v0.65 boots). The real h2clk is
+200 MHz (p=5, all checks pass).
+
+Seeds (machine-model reset state, not guest writes):
+- APCR/MPCR/EPCR (+0x10/+0x14/+0x18) = the ingenic-v2 PLL 1.2 GHz
+  config: rate = ext/(sel*m)/n*p with sel=2, m=3, n=4, p=1200 from
+  the 24 MHz ext clock (ingenic_v2_pll_recalc_rate, vmlinux.bin
+  0x80400298; the hwdesc carries sel [10:8], m [13:11], n [19:14],
+  p [31:20] and the register offset in hwdesc[0]: 0x10/0x14/0x18).
+  All three PLL configs seeded so the mux selection is immaterial;
+  the 'x1600 Clock Power Management Unit init!' banner now prints
+  apll = mpll = 1200000000 instead of zeros (boot-verified).
+- CPCCR (+0x00) = 0x02005000:
+  - ahb2 divider field [15:12] = 5 -> div 6 (div_ahb2 is a table-less
+    CGU divider: div = field + 1; the div_ahb2 table entry pins
+    reg 0x0 = CPCCR, shift 12, width 4, flags 0).
+  - mux_ahb2 SEL [25:24] = 2 -> parent 'mpll' (the mux_ahb2 table
+    entry pins SEL = CPCCR[25:24]; its parent list is
+    {<zero-rate entry>, sclka, mpll} — SEL 0 selects a garbage
+    parent: the first seeded boot (CPCCR = 0x5000, SEL=0) still
+    failed wr_strobe with the rate <= 142 MHz).
+=> div_ahb2 = 1.2 GHz / 6 = 200 MHz.
+---
+ hw/mips/x1600.c | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 8e75493..68eac23 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -1587,6 +1587,36 @@ static void x1600_mach_init(MachineState *ms)
+     memory_region_init_io(&x1600_cgu_dev.mmio, NULL, &x1600_cgu_ops,
+                           &x1600_cgu_dev, "x1600.cgu", 0x100);
+     memory_region_add_subregion(sysmem, X1600_CGU_BASE, &x1600_cgu_dev.mmio);
++    /* SPL-shaped CGU reset state (v0.66): the stock SPL leaves the PLLs
++     * configured before the kernel runs; our all-zero reset state made
++     * the vendor clock framework compute ext-fallback rates (~24 MHz)
++     * for every PLL-derived clock. That broke soc_efuse's insmod: its
++     * strobe math (init_module .init.text 0xd4-0x184) requires
++     * div_ahb2 = 200 MHz (period p = 5 ns: the wr check needs
++     * (q1+1666+max(floor(10000/p)-1666-q1,0)+1)*p in [9000,11001);
++     * at ~24 MHz it fails => "EFUSE: failed to get efuse cfg
++     * wr_strobe" + initcall -1). Seeds:
++     *   APCR/MPCR/EPCR (+0x10/+0x14/+0x18) = the v2-PLL 1.2 GHz config:
++     *     rate = ext/(sel*m)/n*p with sel=2, m=3, n=4, p=1200 from the
++     *     24 MHz ext clock (ingenic_v2_pll_recalc_rate, vmlinux.bin
++     *     0x80400298; hwdesc byte fields @+4..+11: sel [10:8],
++     *     m [13:11], n [19:14], p [31:20], reg = hwdesc[0] — 0x10/0x14/
++     *     0x18). All three PLLs seeded so the mux selection is
++     *     immaterial.
++     *   CPCCR (+0x00) = 0x02005000:
++     *     - ahb2 divider field [15:12] = 5 -> div 6 (div_ahb2 is a
++     *       table-less CGU divider: div = field + 1; the div_ahb2 table
++     *       entry pins reg 0x0 = CPCCR, shift 12, width 4, flags 0).
++     *     - mux_ahb2 SEL [25:24] = 2 -> parent 'mpll' (the mux_ahb2
++     *       entry pins SEL = CPCCR[25:24]; its parent list is
++     *       {<broken entry>, sclka, mpll} — SEL 0 is a zero-rate
++     *       garbage parent, which is exactly what the first seeded
++     *       boot (CPCCR = 0x5000) computed and still failed wr_strobe).
++     * div_ahb2 = 1.2 GHz / 6 = 200 MHz. */
++    x1600_cgu_dev.regs[0x00 / 4] = 0x02005000;
++    x1600_cgu_dev.regs[0x10 / 4] = 0x4b011a00;
++    x1600_cgu_dev.regs[0x14 / 4] = 0x4b011a00;
++    x1600_cgu_dev.regs[0x18 / 4] = 0x4b011a00;
+     x1600_add_stub(sysmem, "x1600-tcu",      X1600_TCU_BASE,     0x1000);
+     memory_region_init_io(&x1600_rtc_dev.mmio, NULL, &x1600_rtc_ops,
+                           &x1600_rtc_dev, "x1600.rtc", X1600_RTC_SIZE);
+-- 
+2.53.0
+

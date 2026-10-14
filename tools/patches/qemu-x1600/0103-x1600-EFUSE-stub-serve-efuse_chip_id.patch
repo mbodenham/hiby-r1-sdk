@@ -1,0 +1,166 @@
+From 5fe1ed3f9e0b020c10d07a0a81b071993e4e79f3 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Tue, 13 Oct 2026 17:20:48 +0900
+Subject: [PATCH 103/104] =?UTF-8?q?x1600:=20EFUSE=20stub=20=E2=80=94=20ser?=
+ =?UTF-8?q?ve=20efuse=5Fchip=5Fid?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+soc_efuse.ko (hard-coded KSEG1 0xb3540000 = phys 0x13540000, stock
+DTB /ahb2/efuse@0x13540000 size 0x10000, status okay) failed insmod
+twice per boot since v0.63: 'EFUSE: failed to get efuse cfg
+wr_strobe!' -> initcall -1, so /proc/jz/efuse/* (on the player's
+probe list; also consumed by S43wifi getmac) never existed. Two
+independent causes, both fixed: the CGU div_ahb2 rate (previous
+commit) and the missing block itself.
+
+Read protocol decoded from soc_efuse_read @0x16c (per <=32-byte
+chunk): +0x00 = 0; +0x08 = 0; +0x00 = (byte_off<<21)|((n-1)<<16);
++0x00 |= 1 (start); poll +0x08 bit0 until 1; copy the data window
++0x0c..+0x2b (the driver loads WORDS at +0x0c+4i and memcpy's the
+chunk out of them -> the model composes the window little-endian
+from the latched array offset).
+
+Segments (9-entry table {byte_off, size, name} at .rodata+0xd8):
+CHIP_ID@0x00 16 B (/proc/jz/efuse/efuse_chip_id prints 'CHIP_ID: '
++ 32 hex chars), CUSTOMER_ID@0x10 11 B, TRIM_DATA@0x1b 16 B,
+SOC_INFO@0x2b 2 B, HIDE_BLK@0x2d 1 B, PROGRAM_PROTECT@0x2e 2 B,
+CHIP_KEY@0x30 32 B, USER_KEY@0x50 32 B, NKU@0x70 16 B.
+Write support not needed: gpio_efuse_vddq=-1 (the rcS insmod
+parameter) makes soc_efuse_write bail before any MMIO.
+
+CHIP_ID = stable non-zero bytes; the first six give getmac a
+plausible Ingenic MAC (d0:31:10:16:04:c2).
+
+Verified by boot: soc_efuse loads twice with return 0 (the
+'wr_strobe' prints are gone).
+---
+ hw/mips/x1600.c | 97 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 97 insertions(+)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 68eac23..94fceef 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -123,6 +123,14 @@
+ #define X1600_LCD_BASE     0x13050000
+ #define X1600_LCD_SIZE     0x10000
+ #define X1600_LCD_IRQ_LINE 31
++/* EFUSE (0x13540000): /ahb2/efuse@0x13540000 in the stock DTB (status
++ * okay, size 0x10000); soc_efuse.ko hard-codes KSEG1 0xb3540000 and
++ * serves /proc/jz/efuse/efuse_chip_id (on the player's probe list).
++ * insmod ALSO requires div_ahb2 = 200 MHz from the CGU (the strobe
++ * computation fails at the old ~24 MHz fallback -- "EFUSE: failed to
++ * get efuse cfg wr_strobe"); see the CGU seed in x1600_mach_init. */
++#define X1600_EFUSE_BASE   0x13540000
++#define X1600_EFUSE_SIZE   0x10000
+ #define X1600_SFC_BASE     0x13440000            /* /ahb2/sfc (ingenic,x1600-sfc):
+                             * SPI flash controller; v0.21 bus error in
+                             * sfc_clk_set_init RMW of +4 (clock divider). */
+@@ -994,6 +1002,86 @@ static const MemoryRegionOps x1600_sadc_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* ----------------------------------------------------------------- */
++/* EFUSE (0x13540000) — read-protocol model (v0.66). soc_efuse.ko      */
++/* hard-codes KSEG1 0xb3540000 and reads the efuse array in <=32-byte  */
++/* chunks (soc_efuse_read @0x16c):                                     */
++/*   +0x00 = 0; +0x08 = 0; +0x00 = (byte_off<<21)|((n-1)<<16);         */
++/*   +0x00 |= 1 (start); poll +0x08 bit0 until 1; copy the data        */
++/*   window +0x0c..+0x2b (consecutive word reads, ceil(n/4) words).    */
++/* The 9 segments {byte_off, size} (from the module's table):          */
++/* CHIP_ID@0x00 16 B (the /proc/jz/efuse/efuse_chip_id source),        */
++/* CUSTOMER_ID@0x10 11 B, TRIM_DATA@0x1b 16 B, SOC_INFO@0x2b 2 B,      */
++/* HIDE_BLK@0x2d 1 B, PROGRAM_PROTECT@0x2e 2 B, CHIP_KEY@0x30 32 B,    */
++/* USER_KEY@0x50 32 B, NKU@0x70 16 B. Write support is not needed:     */
++/* gpio_efuse_vddq=-1 makes soc_efuse_write bail before any MMIO.      */
++/* The init also needs div_ahb2 = 200 MHz from the CGU (see the seed   */
++/* in x1600_mach_init) or the strobe computation fails insmod.         */
++/* ----------------------------------------------------------------- */
++
++typedef struct X1600Efuse {
++    MemoryRegion mmio;
++    uint32_t regs[0x100 / 4];               /* +0x00 cmd, +0x04 cfg,
++                                             * +0x08 status, +0x0c.. data */
++    unsigned off;                           /* latched trigger byte offset */
++    uint8_t array[0x80];                    /* 9 segments, 0x80 total */
++} X1600Efuse;
++
++static X1600Efuse x1600_efuse_dev;
++
++/* CHIP_ID: stable non-zero; the first 6 bytes give S43wifi's getmac a
++ * plausible Ingenic MAC (d0:31:10:16:04:c2) */
++static const uint8_t x1600_efuse_chip_id[16] = {
++    0xd0, 0x31, 0x10, 0x16, 0x04, 0xc2,
++    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
++};
++
++static uint64_t x1600_efuse_read(void *opaque, hwaddr addr, unsigned size)
++{
++    X1600Efuse *s = opaque;
++    uint64_t ret = 0;
++
++    if (addr >= 0x0c && addr < 0x2c) {
++        /* data window: the driver loads words at +0x0c+4i and memcpy's
++         * the chunk out of them; serve the latched array bytes LE */
++        unsigned byte = (addr - 0x0c) + s->off;
++        unsigned i;
++
++        for (i = 0; i < 4; i++) {
++            if (byte + i < sizeof(s->array)) {
++                ret |= (uint64_t)s->array[byte + i] << (8 * i);
++            }
++        }
++    } else if (addr < 0x100) {
++        ret = s->regs[addr / 4];
++    }
++    return ret;
++}
++
++static void x1600_efuse_write(void *opaque, hwaddr addr,
++                              uint64_t val, unsigned size)
++{
++    X1600Efuse *s = opaque;
++
++    if (addr >= 0x100) {
++        return;
++    }
++    s->regs[addr / 4] = val;
++    if (addr == 0x00 && (val & 1)) {
++        /* start: latch {byte_off[31:21], count[20:16]}, set read-done */
++        s->off = (val >> 21) & 0x7f;
++        s->regs[0x08 / 4] |= 1u;        /* read-done */
++    }
++}
++
++static const MemoryRegionOps x1600_efuse_ops = {
++    .read = x1600_efuse_read,
++    .write = x1600_efuse_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
+ /* ----------------------------------------------------------------- */
+ /* LCD controller (0x13050000, size 0x10000) — minimal model (v0.66).  */
+ /* Persistent regfile (the jzfb RMW surface: dense 0x00-0xfc cfg/      */
+@@ -1656,6 +1744,15 @@ static void x1600_mach_init(MachineState *ms)
+                           &x1600_lcd_dev, "x1600.lcd", X1600_LCD_SIZE);
+     memory_region_add_subregion(sysmem, X1600_LCD_BASE, &x1600_lcd_dev.mmio);
+ 
++    /* EFUSE 0x13540000: read-protocol model; serves the CHIP_ID segment
++     * for /proc/jz/efuse/efuse_chip_id (soc_efuse insmod needs the CGU
++     * div_ahb2 seed above first). */
++    memcpy(x1600_efuse_dev.array, x1600_efuse_chip_id,
++           sizeof(x1600_efuse_chip_id));
++    memory_region_init_io(&x1600_efuse_dev.mmio, NULL, &x1600_efuse_ops,
++                          &x1600_efuse_dev, "x1600.efuse", X1600_EFUSE_SIZE);
++    memory_region_add_subregion(sysmem, X1600_EFUSE_BASE, &x1600_efuse_dev.mmio);
++
+     /* SFC + SPI-NAND (M2): command engine backed by the raw page+OOB
+      * image next to the kernel (built by tools/tierc/make_nand_image.py);
+      * IRQ on INTC line 7 (stock DTB). */
+-- 
+2.53.0
+
