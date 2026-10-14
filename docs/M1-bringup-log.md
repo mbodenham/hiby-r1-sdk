@@ -2169,3 +2169,59 @@ idle-blank wake (entries appended as decode/verify progresses).
   the backlight write only and stay interactive), and decide the
   model-level lever. TEMP-UI2-DIAG instrumentation (if any) is in
   /tmp/kilo/ui2/ only; nothing to strip from the tree yet.
+- **Guest-side strace (the rootfs ships /usr/bin/strace) of the tap
+  path, player swapped under strace via the console shell** (the strace
+  also settles the v0.78 shim-vs-strace ambiguity about the player's
+  own blank): the strace'd player's idle blank writes ONLY the
+  backlight sysfs — NO FB-range ioctl appears anywhere in its trace
+  (FBIOBLANK is sys_server's, as v0.78 concluded from the shim). The
+  input plumbing is PROVEN correct end-to-end on this build:
+  - the GUI's touch poller (the main thread 1143) polls
+    {fd4=/dev/input/event1, fd3=timerfd} every 33 ms exactly as the
+    v0.77 decode predicted, and fd4 DOES return POLLIN and 16-byte
+    evdev reads on every tap: the full MT-A stream
+    (ABS_MT_TRACKING_ID=0, PRESSURE=63, TOUCH_MAJOR=9,
+    POSITION_X=240 (0xf0), POSITION_Y=403 (0x193), SYN_MT_REPORT,
+    SYN_REPORT) — the model's inversion + the QMP recipe land the tap
+    at the right panel coords (the v0.77 recipe's "(240,398)" is a
+    SCREEN position: QMP abs values are VNC-normalized 0..0x7fff, so
+    16384/16282 = screen (240,398); sending raw 240 scales to
+    240*480>>15 = 3 and misses — caught and fixed this round).
+  - a second reader (thread 1166, the lg_event_source key scanner)
+    polls {event3,2,1,0} = fds 18-21 with a 25 ms timeout and ALSO
+    receives the touch frames on fd20 (evdev is per-client; nobody
+    starves anybody; no EVIOCGRAB anywhere in the trace).
+  - the player creates the "com_input" uinput device at startup
+    (UI_SET_EVBIT/UI_SET_KEYBIT 0x74 0xa4 0xa3 0xa5 0x73 0x72,
+    UI_DEV_CREATE — the input5/6/7/8 re-registrations seen at every
+    player start).
+  - after the reads: NO fb ioctl and NO redraw — screendumps byte-
+    identical before/after the tap. The events are consumed and then
+    DISCARDED inside litegui, before the widget/draw layer.
+- **The discard point (now pinned precisely)**: the GUI's blanked state.
+  v0.78's "the litegui layer gates processing on the screen state" is
+  real and it sits in the event DISPATCH (the wake/dispatch path
+  0x4ed1xx: can-handle 0x4ecf80 = setting(6)==0 && screen-flag
+  0x8b47a4==0; the wake itself 0x414820 = setting(93)!=0 && app-state
+  in {3,4,5}). At the first-boot wizard the wake gates fail (my live
+  retest: POWER via QMP Esc = the PC31 gpio-keys, 100 ms hold, on the
+  blanked picker — brightness stays 0, no reaction), so blanked =
+  bricked for ALL input until the ~5-min power-save shutdown reboots
+  (the stock firmware's own escape; v0.78's post-shutdown boots took
+  the no-fb_blank variant and were interactive).
+- **The v0.78 "post-shutdown interactive variant" did NOT reproduce on
+  a single-cycle userdata** (my boot 2, userdata formatted once by
+  boot 1: blanked WITH fb_blank(4) at t=58 s, same as pristine boots).
+  The variant trigger needs more cycles than one (v0.78's interactive
+  boots were 7/8/10). The wake-gate settings decode stays parked as a
+  userspace item (user.ini is a binary fixed-width record blob, not
+  text).
+- **New operational hazard (cost: three wasted player swaps)**: kill -9
+  of hiby_player while its GUI is actively blitting leaks the hgl DMA
+  pool in rmem_manager for the REST OF THE BOOT — every later player
+  start fails "sahd_open: malloc hgl memory error" (the GUI never
+  starts); rmmod/insmod of sa_hgl_dma does NOT recover it (the pool
+  lives in rmem_manager, shared with soc_fb — unloading rmem would
+  take the display down). Recovery = full guest reboot. Player swaps
+  are safe only when the GUI is idle (no pending blits), and even then
+  prefer letting the guest reboot.
