@@ -124,6 +124,7 @@ built to match the DTB, not just mainline dtsi.
 | i2c2 / spi0 | 0x10052000 / 0x10043000 | all present in DTB aliases, matches mainline |
 | cpu | `ingenic,xburst-fpu1.0-mxu1.1` | **`ingenic,xburst`** (generic on board) |
 | aliases | 3 x serial, 2 x i2c | **4 x serial** (`/apb/serial@0x10030000/31000/32000/33000` aliases uart0-3), 2 x i2c |
+| uart irqs | 51/50/49/48 (uart0-3) | **47/46/45/44** (`/apb/serial@0x10030000/31000/32000/33000` interrupts 0x2f/0x2e/0x2d/0x2c; uart1/uart3 disabled; the boot agrees — "ttyS0 ... irq = 55", "ttyS2 ... irq = 53" with the hwirq+8 arithmetic, cf. SADC 11→19, LCD 31→39) |
 | msc0/1 | 0x13450000/0x13460000 0x1000 | DTB uses size 0x10000 cells (`ahb2/msc@0x13450000`), **msc2 0x13470000 exists** |
 
 Table notes: sizes come from the DTB reg cells read straight from the
