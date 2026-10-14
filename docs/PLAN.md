@@ -196,18 +196,42 @@ qemu-wifi-srom; supersedes the earlier headers for the wifi item —
   event1 carries the MT-A report stream; the litegui list reacts to
   the touch stream. Boot gate unchanged: x1600-boot-test.sh PASSes
   against boot-baseline-v0.75.txt byte-for-byte.
-- **Remaining to M3 done:** 1. tap->select calibration: the hyn
-  driver reports only from the second read of a held touch and the
-  fb-blank notifier disable_irq's the panel within seconds of the
-  picker appearing (power-key toggle re-enables it via
-  hyn_resume_work — the same UX as hardware); the litegui gesture
-  thresholds on top of the now-delivered MT-A stream decide when a
-  VNC click selects a language row. 2. the audio path (AIC + PDMA
-  PCM channels now COMPLETE — the AIC register model itself is still
-  the stub "open codec dev error!" path). 3. confirm the first-boot
-  flow advances to the main UI after a language choice. The
-  ifup/firmware-download wifi flow stays optional (the player does
-  not block on it).
+- **Status (M3 touch round, v0.77, worktree qemu-touch-cal):** the
+  tap->select chain WORKS. Decoded litegui's touch path in the stock
+  player (the hgl_ts poller 0x4728a0 + event processor 0x472988: the
+  mapping is screen = (480 - raw_x, 800 - raw_y), a fixed inversion
+  with no scaling/axis swap; MOVE = the ABS_MT record frames, touch-up
+  = BTN_TOUCH 0; the press is inferred from the first MOVE) and the
+  cst8xx_touch.ko hyn_irq_handler (full/suppressed record alternation
+  via a per-record counter whose reset lives in a branch delay slot;
+  the lift frame needs event code 2 in byte3 bits7:6). The model now:
+  reports the inverted frame (screen latch kept separate from the
+  frame coords), keeps the last position + lift code in the lift
+  frame, re-asserts the panel INT at 20 ms (~50 Hz) while held, and
+  answers the resume work's reg-0xaa wake check (armed by the sleep
+  cmd write 0xa5) with 0x00 so enable_irq survives the fb blank.
+  Vendored qemu c4eafc7 = tools/patches/qemu-x1600/
+  0116-x1600-calibrate-cst8xx-touch-stream-for-litegui-gest.patch.
+  Verified: QMP tap at the English row (240,398) of the first-boot
+  language picker selects English — the picker advances and the
+  resulting wizard screen renders English strings (twice: the true
+  first boot and a re-selection on the persisted state); the model
+  trail shows press = 8 held-frame reads + one lift frame (count=0,
+  b3=0x80). Boot gate PASS on the factory-state nand image (297
+  distinct / 158 structural; the nand user_data volume must be in the
+  erased factory state for the rcS UBIFS-format marker the gate keys
+  on — demo-session writes move the boot into the journal-replay
+  window and the gate keys off a different message set).
+- **Remaining to M3 done:** 1. list scroll-follow: the drag moves
+  register (the vertical scroll machinery invalidates, horizontal
+  drags are correctly ignored) but the language list does not follow
+  the finger in the drag shapes tried; a fast fling or a top-row tap
+  drops the list into a re-rendered state with per-row radio marks
+  (the pull-down/overscroll zone is the likely trigger) — parked.
+  2. the audio path (AIC + PDMA PCM channels now COMPLETE — the AIC
+  register model itself is still the stub "open codec dev error!"
+  path). The wifi flow stays optional (the player does not block on
+  it).
 - Boot evidence lives in docs/M1-bringup-log.md (v0.1–v0.75),
   docs/M2-stubs-log.md (v0.66–v0.67), and
   docs/research-brief-stubs-player-launch.md.

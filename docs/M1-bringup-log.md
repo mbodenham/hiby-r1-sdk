@@ -1766,3 +1766,162 @@ evdev stack through faithful hardware models. Vendored qemu commit
   input models touch no pre-gate flow except the SADC sample word
   and the i2c1 completion IRQs, both of which produce no boot-window
   messages.
+
+## v0.77 (2026-10-14, M3 round, worktree qemu-touch-cal) - the litegui
+gesture decode + the cst8xx calibration: the tap->select round.
+
+- **litegui touch decode** (hiby_player 4.6M stripped, musl objdump; the
+  litegui sources are compiled into the player, no separate .so):
+  - The touch source: `lg_event_x1000`/"hgl_ts" layer (strings
+    "(hgl_ts: E) event0 init fail", "(hgl_ts: I) ts is ready"). The
+    fd setup (0x472560) scans /dev/input/event*, EVIOCGBIT(0) per node
+    and keeps the FIRST device with EV_ABS (event1, the cst8xx), then
+    0x472b60 pairs it with a timerfd at ~32 ms and the poller 0x4728a0
+    polls {ts_fd, timerfd}. There is also a generic "lg_event_source"
+    scanner (0x466920, handler 0x467160) but it is the KEY path
+    (code 105/106 -> 0x44cc00); the touch path is hgl_ts.
+  - **The coordinate mapping is the load-bearing fact** (event
+    processor 0x472988 + the emitters at 0x472aec/0x472b10): the
+    handler accumulates ABS_MT_POSITION_X (code 53, also ABS_X 0) into
+    a global and ABS_MT_POSITION_Y (54/1) into another, and emits its
+    events as
+        screen_x = 480 - raw_x;  screen_y = 800 - raw_y
+    — a fixed INVERSION, no scaling, no axis swap. It never reads the
+    driver's abs_params (no EVIOCGABS anywhere in the path), so the
+    driver's advertised 0..720 x 0..1280 native frame (decoded below)
+    is dead config as far as litegui is concerned: the real panel's
+    firmware must report a 480x800 frame rotated 180 deg vs the LCD.
+  - Event shapes (struct {type, elapsed_ms, x, y} at event+0/4/8/12):
+    - type 2 = MOVE: emitted on EV_SYN (SYN_REPORT **or
+      SYN_MT_REPORT**) when the coord-count global > 0, position =
+      (480-x, 800-y), count then reset.
+    - type 3 = UP: emitted on EV_KEY BTN_TOUCH **value 0 only**
+      (BTN_TOUCH 1 is explicitly ignored), position = (480-lastX,
+      800-lastY).
+    - type 1 = the timerfd tick (just refreshes the timestamp gate
+      0x472780, which returns elapsed-ms-since-last-touch-event and
+      rejects >24h stale deltas).
+  - There is NO DOWN event: the press is inferred upstream from the
+    first MOVE (the list stores event x/y as the press position at
+    state+292/296 in the case-4/8 handler at 0x434314).
+  - The pump (0x435600, two copies) runs poller -> 0x47c9c0 ->
+    0x47caa0 per event. 0x47caa0 is the **monkey-test monitor**: it
+    counts in-bounds UP events (region globals 0x8b61e0-0x8b61ec, set
+    from the active view rect at 0x4e9188) and after 5 UPs checks
+    access("/data/mnt/sd_0/hiby_linux_auto_test") — if present it
+    latches 0x8b61f4 and the pump switches to the rand()-driven
+    auto-test tap generator (strings "MONKEY",
+    "HGL_EV_TOUCH_END time:%02d:%02d:%02d", "Tap\n", "Slip %s\n").
+    0x47c9c0 with the latch set processes only UP events >=2 s apart
+    and resets the latch (a one-shot). This whole pump gate is the
+    auto-test/monkey lane, NOT the UI path — the UI path is the
+    activity/list dispatch below (and empirically MOVEs reach the
+    picker, v0.76).
+  - The list view (hglview) handler: event type switch (jump table at
+    0x75c2a0, types 4..10), type 10 -> 0x4335c0(list, event, 6) =
+    touch-up; mode 6 logic: |abs(state+324) - abs(state+288)| != 0 ->
+    the list scrolled during the press -> scroll settle (0x43389c), no
+    tap; else |state+284| < 5 gates the tap path -> item hit-test
+    (0x4326e0) -> the select callbacks (state+664/668 vtables). The
+    5-px constant is the first decoded gesture threshold.
+  - The cst8xx **driver abs_params** (init_module+0x274, config struct
+    set at init+0x118): ABS_MT_TRACKING_ID 0..15,
+    ABS_MT_POSITION_X 0..720, ABS_MT_POSITION_Y 0..1280,
+    ABS_MT_TOUCH_MAJOR 0..255, ABS_MT_PRESSURE 0..255; +88 = 1 in the
+    config (unused in the report path). The handler applies NO
+    transform: raw frame coords go straight to input_event.
+- **cst8xx_touch.ko hyn_irq_handler fully decoded** (relocations pin
+  s1/s3 to input_event; the per-record 28-byte layout is
+  {x, y, buf[7], buf[3]>>6, buf[5]>>4, buf[8]>>4, counter}):
+  - Per INT dispatch: read the 9-byte frame, count = buf[2]&0xf,
+    parse records while buf[5] (y_hi) < 32, then per record:
+    - if (buf[3]>>6) & ~1 != 0 (event code 2/3 = lift) -> no contact
+      report, and the record counter resets to 0 (the reset lives in
+      the branch delay slot at 0xa60);
+    - else if the record counter == 0 -> the FULL MT-A block:
+      ABS_MT_TRACKING_ID (value buf[5]>>4, i.e. 0 for sane y),
+      ABS_MT_PRESSURE (buf[7], clamped to 63 when <=0),
+      ABS_MT_TOUCH_MAJOR (buf[8]>>4, clamped to 9), POSITION_X,
+      POSITION_Y, then SYN_MT_REPORT; counter -> 1;
+    - else (counter != 0) -> no ABS data, counter -> 0 (delay-slot
+      reset), so full/skip ALTERNATE per dispatch and every press
+      dispatch after any skip/lift is a full one;
+    - then BTN_TOUCH = (count != 0) and SYN_REPORT (the count==0 path
+      adds an extra SYN_MT_REPORT between BTN_TOUCH 0 and SYN_REPORT).
+  - Consequence for taps: press dispatch = full record -> litegui
+    MOVE at (480-x, 800-y); lift dispatch (byte3 = 0x80|x_hi) =
+    BTN_TOUCH 0 only -> litegui UP at the last accumulated position;
+    the lift dispatch also leaves the counter at 0 so the NEXT tap's
+    press is a full record again.
+- **The calibration applied** (vendored qemu hw/mips/x1600.c, the cst8xx
+  i2c1 slave + the VNC input path):
+  1. **Coordinate inversion**: x1600_i2c_touch_report now reports
+     panel = (480 - screen_x, 800 - screen_y) into the touch frame,
+     matching litegui's fixed screen = (480 - raw, 800 - raw) mapping.
+     The screen latch and the frame coords are separate fields (the
+     release event must invert the SAME screen coords the press used;
+     storing the inverted press coords back into the latch double-
+     inverted the lift frame — caught by the TEMP-TOUCH-DIAG trail).
+  2. **Lift frame**: the frame bytes now always carry the last known
+     position, and the lift dispatch sets event code 2 in byte3
+     bits7:6 (0x80|x_hi) — the hyn handler's (buf[3]>>6)&~1 test
+     suppresses the contact record and reports BTN_TOUCH 0 only, so
+     litegui's touch-up lands at the press position and the driver's
+     per-record counter is left at 0 (the next press dispatch is a
+     full contact record again — the counter reset lives in a branch
+     delay slot at 0xa60, decoded above).
+  3. **Report rate**: the INT re-assertion while touched moved from
+     40 ms to 20 ms (~50 Hz, the real panel's 40-60 Hz band). The
+     press INT fires immediately on the VNC button edge, so a tap
+     delivers: press dispatch = full MT-A record (litegui MOVE at the
+     press position) -> 20 ms ticks while held -> lift dispatch =
+     BTN_TOUCH 0 (litegui touch-up at the same position).
+  4. **The suspended-panel wake check**: the fb-blank wall (v0.76
+     wall 1) silences the touch for the REST of the boot, because
+     hyn_resume_work (the fb-unblank resume) gates enable_irq behind
+     a wake check: hyn_read(reg 0xaa) retried 5x vs the config byte
+     at ts+40, which the module never writes (bss 0 -> expects 0x00).
+     The model now arms a wake-check path when the driver writes the
+     sleep command (reg 0xa5 — the "set TP to sleep mode fail" write,
+     which stays incomplete exactly as recorded) and answers the
+     armed reg-0xaa read with one 0x00 byte, so the resume completes
+     and re-enables the touch INT. Every other register access still
+     stalls like the baseline (the boot window is untouched).
+- **Verification** (the demo VM pattern, VNC 127.0.0.1:0, QMP
+  input-send-event; screendumps in /tmp/kilo/touch/):
+  - The tap->select chain WORKS: QMP abs-move + left press at the
+    English row's coordinates (240, 398; the picker rows render at
+    y = 129/256/384/508/635/762 = 简体中文/繁體中文/English/日本語/
+    한국어/Français — identified by glyph-run width against the 13
+    names in usr/resource/str/*/language.ini), 140 ms hold, release.
+  - The model-side trail (TEMP-TOUCH-DIAG, since stripped): press ->
+    8 held-frame reads (count=1, x/y at the inverted panel coords) ->
+    ONE lift frame (count=0, b3=0x80) — exactly the decoded driver
+    contract.
+  - **The selection registers**: on the true first boot the picker
+    (titled "Select Language" per the persisted English config)
+    transitions on the tap and the wizard advances; the next screen
+    renders its strings in ENGLISH (latin letterforms at full
+    resolution), i.e. the tapped row's language took effect. On a
+    later boot (the language already persisted as English by the
+    first run) the same tap re-renders the language screen with the
+    English item labels ("Simplified ...") and the settings title —
+    the selection again visible in the screendump. Evidence:
+    /tmp/kilo/touch/gate_before.ppm|png (the picker) and
+    gate_after.ppm|png (after the tap), plus the earlier
+    w_b/w_a pair (the first-boot advance).
+  - **Drag/scroll**: the press and the move stream reach the list
+    (the move events trigger the list's scroll invalidation — a
+    solid black invalidated band appears at the screen bottom while
+    the gesture is active) and a horizontal drag is correctly ignored
+    (no invalidation at all — the vertical axis is the scroll axis),
+    but the language list does not FOLLOW the finger in any of the
+    drag shapes tried (slow dwell-then-move, continuous no-dwell,
+    fast fling; a fast fling and a top-row tap both drop the list
+    into a re-rendered state with per-row radio/box marks — the
+    pull-down/overscroll zone at the list top is the likely
+    trigger). The scroll-follow calibration is parked as the next
+    touch item; the tap->select gate does not depend on it.
+  - The VNC key events must use the QMP string enums ("x"/"y"/"left");
+    integer enum values are accepted by input-send-event but silently
+    never reach the input handler (found while wiring the tap).
