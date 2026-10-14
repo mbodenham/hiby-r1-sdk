@@ -2099,3 +2099,73 @@ picker still rendered).
   within ~20 s (a watchdog/PM path) — player swaps must be atomic
   single-command-line kills+launches. The 5-minute idle shutdown
   will reboot the demo VM by itself when nobody interacts.
+
+## v0.79 (2026-10-15, M3 round, worktree qemu-listview-plane) - the
+"not listview plane then listview refresh fail" decode: it is a BENIGN
+ordering artifact, not the freeze; the picker wall is the v0.78
+idle-blank wake (entries appended as decode/verify progresses).
+
+- **Symptom re-confirmed on the merged v0.78 build** (fresh nand image
+  ae41e974..., /tmp/kilo/ui2/): boot -> rcS -> player -> the exact
+  recorded signature at t=56 s (GUI:E level, not (GUI:D) as recorded):
+  `(GUI:E)lg_listview_create: not listview plane then listview refresh
+  fail` right after `lg_activity_mng: running activity
+  lg_activity_main`, then event_input, bluez abort loop, and at t=86 s
+  `i2c1 write timeout(136 ms)` + `hyn_ts_suspend ... ret=-145` and
+  console silence (the v0.78 idle blank; the t=119 s in the task notes
+  is the same idle-blank moment with timer variance 54-119 s).
+- **The Hiby player binary (4.6M stripped, musl) decode** — the print's
+  three emission sites all reduce to ONE check. The debug print helper
+  is 0x465fa0(tag, msg); tag "lg_listview_create" = 0x77bec0, msg
+  "not listview plane then listview refresh fail" = 0x77bed4 (file
+  offsets 0x37bec0/0x37bed4, vaddr = file + 0x400000):
+  - The lookup primitive 0x4f13a0(reg, name, &out): takes the object's
+    registry list (circular list head at reg+700, sentinel = &reg->700;
+    lock/unlock virtual methods at vtable+712/+716), walks nodes, and
+    strcmp's *(node+8) against `name`; *out = the matched name pointer,
+    NULL when absent. For widget lookups the registry nodes are the
+    registered child widgets themselves (node+8 = the widget pointer;
+    strcmp(p, p) == 0 makes the match a pointer-identity search).
+  - Site 1 (0x495400, called from the listview create/refresh flow
+    0x49e200 at 0x49e468 and from 0x51c1a0): lookup(widget->parent /
+    layout tree at +216, widget) -> if the widget is NOT yet registered
+    under its plane/parent, out == NULL -> the print. The success path
+    then builds "canvas_%s" (0x77bf04) from *(widget->208) and resolves
+    the widget's canvas through 0x47bc20 — i.e. the check is literally
+    "is the listview on a plane yet" ("not listview plane"), and the
+    refresh bails when the widget has not been attached. The item
+    refresh sites 2/3 (0x4957e0 called at 0x4959f4-fail and 0x499840 at
+    0x499878-fail) test the same registration with per-item names
+    ("vg_item_%d" 0x77bd78, "%s##%d" 0x77beb8, e.g. the literal
+    "vg_listview_tidal_item##3" strings).
+  - The registry object is the parsed litegui layout: its constructor
+    0x4f0bd0 sprintfs the path "z:\layout\%stheme%d\main.json"
+    (0x786f60) and registers the file node via 0x432300; the tree lives
+    in /usr/resource/layout/theme1/main.json on the rootfs (present;
+    theme1 selected via the mtd5 ota "theme:1" record).
+- **WHY IT IS NOT THE FREEZE — the kill shot (prior-round evidence)**:
+  the v0.78 worktree console (/tmp/kilo/wake/console.txt) contains this
+  EXACT print TEN times — once per player GUI start across that round's
+  kill/swap/restart cycles — and those are the boots where the tap->
+  select chain was VERIFIED working (v0.78 items (b/c), /tmp/kilo/wake/
+  sel_before.png vs sel_after.png). The v0.75 first-picker-render runs
+  (/tmp/kilo/ui/run8/serial.log) contain it too. The print is the
+  listview's own create-time refresh running BEFORE the widget is
+  attached to its plane; the picker renders and processes taps anyway.
+- **Live confirmation of the real wall on this build** (the fresh-boot
+  run): screendump at t≈60 s shows the picker fully rendered (title
+  band y=34-49 + the six rows at y=131/256/390/513/635/768 — the
+  v0.77 row grid); a QMP tap at the English row (240,398) at t≈87 s —
+  after the 86 s blank — is ignored (screendump identical, zero console
+  reaction) because the idle blank already ran fb_blank(4) and the
+  cst8xx IRQ is disabled (v0.78's decoded wall), while the v0.77/0.78
+  rounds' successful taps all happened BEFORE the blank (the picker is
+  interactive from render until the ~25-30 s idle timer fires).
+- **Working decode thesis for the fix**: the VM is faithful; the
+  user-facing freeze = idle-blank + no wake at the wizard state (the
+  v0.78 gates). Remaining work this round: verify tap-before-blank
+  advances the wizard on this build, decode the fb_blank(4)-variant
+  trigger in sys_server (boots after a full shutdown cycle blank with
+  the backlight write only and stay interactive), and decide the
+  model-level lever. TEMP-UI2-DIAG instrumentation (if any) is in
+  /tmp/kilo/ui2/ only; nothing to strip from the tree yet.
