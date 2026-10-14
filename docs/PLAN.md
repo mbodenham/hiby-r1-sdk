@@ -107,12 +107,25 @@ qemu-dhd-backplane; supersedes the v0.67 header below for the wifi item):
   itself, then polls STAT bit12 (read) / bit13 (write).
 - **Parked blocker:** the DHD spins re-reading GCI+0x29e0..8 and
   PMU+0x4..0x18 (~1.09M requests/60 s boot); the model returns zeros —
-  some PMU/GCI register must report a specific value to break the wait.
-  Decode of that cywdhd wait loop is the next round's first task; after
-  it: firmware download (SOCSRAM core 0x80e @0x18004000),
-  dhdsdio_download_firmware → then the success cascade.
-- **Next (M2 exit):** 1. the wifi session continues from the GCI/PMU
-  wait (see above); success = cywdhd returns 0, cascade oopses #1–#6
+  decode of that wait loop is DONE (M1 log v0.69): it is not a GCI/PMU
+  poll but the DHD's RAM size walk inside si_doattach - a linear
+  word-by-word backplane scan from 0x0 that stops at the first nonzero
+  word. Patch 0009 models the real decode (backplane [0x80000,
+  0x18000000) reads 0xffffffff, before the chunk-cache lookup) so the
+  walk breaks at exactly 0x80000 (512KB SOCSRAM) in ~1.1 s instead of
+  walking the 32-bit space for ~4.7 h.
+- **Wifi state after 0009 (M1 log v0.69):** walk breaks correctly, but
+  si_doattach still rejects the attach (~1.2 s per attempt, no further
+  SDIO reads after the walk - local check, cause not yet identified;
+  break position makes no difference), and the 512-byte CIS reads hang
+  in the soc_msc DMA path ("timeout 3000ms op:53 r sz:512 state:0" -
+  the request never reaches the MSC; the model has no SoC DMAC
+  device). Next wifi round: identify the si_doattach post-walk check
+  (dump-guided) and implement the Ingenic DMAC (descriptor chain +
+  completion IRQ, pattern like x1600_sfc_dma) - the firmware download
+  will ride the same path.
+- **Next (M2 exit):** 1. the wifi session continues from the si_doattach
+  failure above; success = cywdhd returns 0, cascade oopses #1–#6
   gone, rcS proceeds. 2. then theme → `S92_03_start_music_player`
   **= M2 EXIT**. 3. Player-launch followups (research brief): BT
   console pollution (move the console to ttyS2 0x10032000 — the sibling
