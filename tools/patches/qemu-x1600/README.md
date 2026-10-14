@@ -1,7 +1,7 @@
 # qemu-x1600 patch series
 
 Durable copy of the X1600E machine model developed in-tree in
-`tools/vendors/qemu` (gitignored — large tree, ~500MB). Five patches on
+`tools/vendors/qemu` (gitignored — large tree, ~500MB). Six patches on
 top of upstream QEMU rev `615ece3`
 (<https://gitlab.com/qemu-project/qemu.git>, master as of 2026-09).
 
