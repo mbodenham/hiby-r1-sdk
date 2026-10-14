@@ -1,0 +1,227 @@
+From c4eafc7b92d108951bc4017b5556b9b1289fb360 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Wed, 14 Oct 2026 23:23:51 +0900
+Subject: [PATCH] x1600: calibrate cst8xx touch stream for litegui gesture
+ layer
+
+Decode of the litegui touch path in the stock player (hiby_player,
+hgl_ts poller + event processor at 0x472988) and the cst8xx_touch.ko
+hyn_irq_handler establishes the contract the panel must meet:
+
+- litegui maps the panel stream with screen = (480 - raw_x, 800 - raw_y)
+  (fixed inversion, no scaling, no axis swap; it never reads the
+  driver's abs_params). The model now reports the inverted frame and
+  keeps the screen latch separate from the frame coords so the lift
+  event inverts the same screen coords the press used.
+- the hyn handler alternates full MT-A contact records with
+  BTN_TOUCH-only frames (its per-record counter resets in a branch
+  delay slot on every suppressed dispatch) and needs a dispatch after
+  the finger lifts: the lift frame keeps the last position and sets
+  lift event code 2 in byte3 bits7:6 so the handler emits BTN_TOUCH 0
+  (litegui touch-up at the press position) and leaves the counter at
+  0 for the next press.
+- the touch INT re-assertion while held moves 40 ms -> 20 ms (~50 Hz,
+  the real panel's 40-60 Hz band).
+- the fb-blank wall: hyn_resume_work gates enable_irq behind a wake
+  check (hyn_read reg 0xaa vs the never-written config byte at ts+40,
+  i.e. 0x00). When the driver writes the sleep command (reg 0xa5,
+  which stays incomplete exactly as recorded) the model arms the
+  wake-check and answers reg 0xaa with one 0x00 byte, so the resume
+  completes and re-enables the touch INT. All other register accesses
+  still stall like the baseline (boot window unchanged; gate PASS
+  297 distinct / 158 structural).
+
+Verified on the demo VM pattern: QMP tap at the English row of the
+first-boot language picker selects English (the picker advances, the
+resulting UI renders English strings); the model-side trail shows
+press = 8 held-frame reads + one lift frame (count=0, b3=0x80).
+---
+ hw/mips/x1600.c | 100 +++++++++++++++++++++++++++++++++++-------------
+ 1 file changed, 74 insertions(+), 26 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index e93e806..5e1e9d5 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -2064,6 +2064,8 @@ void x1600_gpio_inject(unsigned bank, unsigned pin, bool level)
+     } else {
+         s->level[bank] &= ~bit;
+     }
++    if (bank == 0 && pin == 16) {
++    }
+     if (s->irq_en[bank] & bit) {
+         /* gated on the IRQ enable only: the guest's effective dispatch
+          * mask (its +0x20 read) is always 0 in this model, and the
+@@ -2109,8 +2111,13 @@ typedef struct X1600I2c {
+     uint8_t rx_buf[X1600_I2C_TOUCH_FRAME];
+     unsigned rx_len, rx_pos;
+     unsigned slave_reg;
++    bool sleep_armed;       /* the driver wrote the sleep cmd (0xa5): the
++                             * panel is suspended — its wake-check read
++                             * (reg 0xaa -> 0x00) now completes so the
++                             * resume work can re-enable the INT */
+     bool touched;
+-    unsigned x, y;
++    unsigned x, y;      /* screen latch: the VNC pointer position */
++    unsigned fx, fy;    /* panel-frame coords reported to the driver */
+     QEMUTimer *int_timer;   /* the panel INT re-assertion while touched */
+     bool int_level;         /* the current synthetic INT level */
+ } X1600I2c;
+@@ -2123,11 +2130,22 @@ static void x1600_i2c_build_frame(X1600I2c *s)
+ {
+     memset(s->rx_buf, 0, sizeof(s->rx_buf));
+     s->rx_buf[2] = s->touched ? 1 : 0;
++    /* the record bytes always carry the last known position: the real
++     * panel keeps the last contact coordinates in the lift frame, and
++     * the hyn handler parses one record even for count=0 (its
++     * buf[5]<32 check passes), so the lift dispatch still has the
++     * position that litegui's touch-up event must land at */
++    s->rx_buf[4] = s->fx & 0xff;
++    s->rx_buf[6] = s->fy & 0xff;
+     if (s->touched) {
+-        s->rx_buf[3] = (s->x >> 8) & 0xf;
+-        s->rx_buf[4] = s->x & 0xff;
+-        s->rx_buf[5] = (s->y >> 8) & 0xf;
+-        s->rx_buf[6] = s->y & 0xff;
++        s->rx_buf[3] = (s->fx >> 8) & 0xf;
++        s->rx_buf[5] = (s->fy >> 8) & 0xf;
++    } else {
++        /* lift event code 2 in byte3 bits7:6 (the hyn record field it
++         * tests as (buf[3]>>6)&~1 != 0): the lift dispatch reports
++         * BTN_TOUCH 0 without re-emitting the contact record */
++        s->rx_buf[3] = 0x80 | ((s->fx >> 8) & 0xf);
++        s->rx_buf[5] = (s->fy >> 8) & 0xf;
+     }
+ }
+ 
+@@ -2146,13 +2164,26 @@ static void x1600_i2c_start(X1600I2c *s, uint32_t cmd)
+         /* read transaction (the real flag: the hyn read txn runs with
+          * CMD=0x254 = bit2|bit6|bit9 and NO staged tx bytes) */
+         s->tx_len = 0;
+-        if (s->slave_reg != 0x00) {
++        if (s->slave_reg != 0x00 && s->slave_reg != 0xaa) {
+             /* reads outside the touch frame register stay incomplete:
+              * the driver's 1 s completion timeout fails them exactly
+              * like the dead-stub baseline (the fw-update path must
+              * bail the same way it does on the recorded boots) */
+             return;
+         }
++        if (s->slave_reg == 0xaa) {
++            /* the resume work's wake check: hyn_resume_work reads reg
++             * 0xaa and compares against the config byte at ts+40,
++             * which the module never writes (bss 0); on the real panel
++             * the suspended IC answers the wake-check read. Answer 0
++             * so the resume completes and re-enables the touch INT. */
++            memset(s->rx_buf, 0, sizeof(s->rx_buf));
++            s->rx_len = 1;
++            s->rx_pos = 0;
++            s->regs[0x78 / 4] = s->rx_len;
++            x1600_i2c_raise(s, 0x204);
++            return;
++        }
+         x1600_i2c_build_frame(s);
+         s->rx_len = X1600_I2C_TOUCH_FRAME;
+         s->rx_pos = 0;
+@@ -2161,12 +2192,23 @@ static void x1600_i2c_start(X1600I2c *s, uint32_t cmd)
+         return;
+     }
+     s->tx_len = 0;
+-    if (s->slave_reg != 0x00) {
+-        /* the slave answers only the touch-frame register; every other
+-         * register access stalls (the driver's 1 s completion timeout,
+-         * silently, as on the recorded stub-era boots — completing
+-         * those txns instead would let the fw-update flow issue reads
+-         * the baseline never reached, changing the boot window) */
++    if (s->slave_reg == 0xa5) {
++        /* the hyn suspend wrote the sleep command: on the real panel
++         * the IC accepts it and the driver just logs its result; our
++         * txn stays incomplete (the recorded "set TP to sleep mode
++         * fail" message) but it ARMS the wake-check: the resume work's
++         * reg 0xaa read now completes like the real IC's */
++        s->sleep_armed = true;
++    }
++    if (s->slave_reg != 0x00 &&
++        !(s->sleep_armed && s->slave_reg == 0xaa)) {
++        /* the slave answers only the touch-frame register (plus the
++         * wake-check register once the panel is suspended); every
++         * other register access stalls (the driver's 1 s completion
++         * timeout, silently, as on the recorded stub-era boots —
++         * completing those txns instead would let the fw-update flow
++         * issue reads the baseline never reached, changing the boot
++         * window) */
+         return;
+     }
+     x1600_i2c_raise(s, 0x40);               /* write txn: done */
+@@ -2249,11 +2291,12 @@ static const MemoryRegionOps x1600_i2c_ops = {
+ 
+ /* the VNC touch path: latch the panel position (0..479 x 0..799) and
+  * drive the panel INT (PA16, gpa pin 16). The hyn driver's report
+- * logic only emits input events from the SECOND read of a held touch
+- * (its per-slot frame counter gates the first), so — like the real
+- * panel, which holds the INT and reports at its native rate — the
+- * model re-asserts the INT every 40 ms while the finger is down. */
+-#define X1600_TOUCH_INT_PERIOD_NS (40 * 1000 * 1000)
++ * logic alternates full contact records with BTN_TOUCH-only frames
++ * (its per-slot frame counter resets on every suppressed dispatch), so
++ * — like the real panel, which holds the INT and reports at its native
++ * rate — the model re-asserts the INT every 20 ms (~50 Hz, the real
++ * panel's 40-60 Hz band) while the finger is down. */
++#define X1600_TOUCH_INT_PERIOD_NS (20 * 1000 * 1000)
+ 
+ static void x1600_i2c_int_pulse(X1600I2c *s, bool level)
+ {
+@@ -2267,9 +2310,9 @@ static void x1600_i2c_int_tick(void *opaque)
+     if (!s->touched) {
+         return;
+     }
+-    /* the panel keeps reporting while the finger is down; alternate
+-     * the INT level so each tick is one fresh edge for the
+-     * edge-triggered guest handler */
++    /* the panel keeps reporting while the finger is down; each tick is
++     * one fresh INT for the guest's dispatch chain (the inject sets a
++     * fresh INTP pending per call) */
+     s->int_level = !s->int_level;
+     x1600_i2c_int_pulse(s, s->int_level);
+     timer_mod(s->int_timer,
+@@ -2288,9 +2331,18 @@ void x1600_i2c_touch_report(bool touched, unsigned x, unsigned y)
+         y = 799;
+     }
+     edge = (s->touched != touched);
++    /* litegui's touch layer (hiby_player hgl_ts handler, decoded from
++     * the 0x472988 event processor) maps the panel stream with
++     * screen = (480 - raw_x, 800 - raw_y) — a fixed inversion, no
++     * scaling and no axis swap (it never reads the driver's
++     * abs_params, which advertise the unrelated 720x1280 native
++     * frame). Report the inverted frame so a VNC tap at (sx,sy)
++     * surfaces at (sx,sy) on the guest display. The screen latch
++     * (x/y) stays untouched: the release event reads it back and
++     * inverts the SAME screen coords, not the press's frame coords. */
+     s->touched = touched;
+-    s->x = x;
+-    s->y = y;
++    s->fx = 480 - x;
++    s->fy = 800 - y;
+     if (edge) {
+         s->int_level = touched;
+         x1600_i2c_int_pulse(s, touched);
+@@ -2393,9 +2445,6 @@ static const QemuInputHandler x1600_input_handler = {
+ 
+ static QemuInputHandlerState *x1600_input_handler_state;
+ 
+-
+-
+-
+ /* ----------------------------------------------------------------- */
+ /* EFUSE (0x13540000) — read-protocol model (v0.66). soc_efuse.ko      */
+ /* hard-codes KSEG1 0xb3540000 and reads the efuse array in <=32-byte  */
+@@ -2924,7 +2973,6 @@ static void x1600_sfc_dma(X1600Sfc *s, uint8_t opcode, bool out)
+     int guard = 0;
+     static int dbg = 12;
+ 
+-
+     if (dbg > 0) {
+         uint32_t d[4] = {0};
+ 
+-- 
+2.53.0
+
