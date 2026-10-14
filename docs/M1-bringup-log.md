@@ -1627,3 +1627,142 @@ memory-to-memory descriptor chains (the hgl blit path)
   serialized one VM at a time. Recovery = re-run
   tools/x1600/make_nand_image.py (deterministic: md5 ae41e974…,
   matching the baseline header).
+
+## v0.76 (2026-10-14, M3 round, worktree qemu-vnc-input) - the emulated
+R1 is INTERACTIVE: QEMU's VNC keyboard/mouse is wired into the guest's
+evdev stack through faithful hardware models. Vendored qemu commit
+621701f, exported as tools/patches/qemu-x1600/
+0115-vnc-input-gpio-keys-cst8xx-sadc.patch.
+
+- **Decoded guest input contract** (module params + module/vmlinux
+  disassembly + the run8 stub trail):
+  - `keyboard_gpio_add.ko` registers gpio-keys on GPIO PC31 = KEY_POWER
+    116 (active_level=0) and PC28 = KEY_NEXTSONG 163 (active_level=1);
+    irq-driven (gpio_keys_gpio_isr -> work -> input_event).
+  - `keyboard_adc_multifunc.ko` polls the SADC channel 0 every ~100 ms:
+    voltage = raw*3300>>12, key window = [value-100, value+100) mV.
+    key1=0 mV -> 164 KEY_PLAYPAUSE, key2=1000 -> 114 KEY_VOLUMEDOWN,
+    key3=1650 -> 115 KEY_VOLUMEUP. Idle raw 0xfff = ~3300 mV = no key.
+    KEY_PREVIOUSSONG 165 has no source (key1's reuse code needs
+    multifunc_enable=1).
+  - `cst8xx_touch.ko` (hyn_ts) on i2c bus 1 @0x15: the INT is PA16
+    (gpio 16, virq 100, IRQF_FALLING|ONESHOT); the touch frame is read
+    from register 0x00 as 9 bytes (max_touch*6+3): buf[2]&0xf = the
+    touch count, x = ((buf[3]&0xf)<<8)|buf[4], y = ((buf[5]&0xf)<<8)|
+    buf[6] (hyn_irq_handler parse; buf[5]=y_hi <= 3 passes its <32
+    record check). The driver reports MT-A (SYN_MT_REPORT/SYN_REPORT)
+    + BTN_TOUCH and only emits events from the second read of a held
+    touch (a per-slot frame counter gates the first).
+  - `soc_i2c.ko` (jz i2c block at 0x10051000) drives the controller via
+    MMIO and waits on INTC 60 per message. Empirical txn shapes from
+    the stub trail + a diag boot: CTRL/CMD +0x30 bit6 = START, read
+    flag = bit2 (read txns run CMD=0x254 with no staged tx bytes,
+    writes 0x50/0x250 with the tx bytes staged at DATA +0x10, bit9 =
+    stop-after-last); INT status +0x2c is READ-TO-CLEAR and the
+    threaded handler branches on it (bit6 = txn done, bit2 = rx:
+    pops *(+0x78) bytes via +0x10, bit9 = done); +0x9c bit0 = busy
+    (the enable path spins until it reads 0). The hyn probe's
+    chip-id reads (reg 0xaa) and the fw-update register accesses must
+    keep failing with the driver's own timeouts or the boot window
+    changes (the v0.76 run let them complete once and insmod oopsed
+    in hyn_ctpm_fw_upgrade_with_i_file on a null ops pointer).
+- **Models added** (hw/mips/x1600.c, +550 lines):
+  - Pinctrl/GPIO 0x10010000 replaces the plain stub. Per bank of
+    0x100 (gpa/gpb/gpc/gpd chained to INTC 17/16/15/14 per the stock
+    DTB): IRQ enable +0x14/+0x18, mask +0x24/+0x28, PAT0 drive
+    +0x44/+0x48 (drive low/high), INTP pending +0x50 (read) /
+    +0x58 (W1C, the genirq irq_ack), PIN level +0x00 (read). The
+    +0x700..+0x7ef staging window commits to the bank written to
+    +0x7f0 (the hyn PA16 registration trail: 0x714/0x728/0x734/0x748
+    = bit16, 0x7f0 = 0, then direct +0x78/+0x58/+0x28). Register
+    semantics decoded from the built-in driver (tingenic_gpio_*,
+    0x8040f440-0x80411da8 in vmlinux) and cross-checked against the
+    run8 unimp trail. The level word is model-driven ONLY: the
+    baseline guest read 0 at +0x00 for every bank (the msc
+    card-detect print "card inserted, state=0" depends on it), and
+    the gpio GET path never touched the stub in the recorded boots.
+  - I2C1 0x10051000 replaces its stub with the controller semantics
+    above plus the cst8xx slave: register 0x00 = the 9-byte touch
+    frame {0,0,count,x_hi,x_lo,y_hi,y_lo,0,0}; every other register
+    access stays incomplete so the driver's 1 s completion timeout
+    reproduces the dead-stub baseline exactly (messages AND oops
+    avoidance). While touched the model re-asserts the PA16 INT every
+    40 ms (alternating edge) like the real panel's report rate.
+  - SADC: per-channel commanded 12-bit samples (idle 0xfff).
+  - An unbound QemuInputHandler (KEY|BTN|ABS) consumes the VNC
+    keyboard/mouse; unbound = it matches every console, which is what
+    we want (the machine's only console is the LCD graphic console
+    the VNC server attaches to). ABS 0..0x7fff scales onto 480x800;
+    left button = touch down/up.
+- **VNC key mapping** (documented in x1600.c; the codes the guest
+  firmware actually consumes):
+  | VNC key | linux code | guest path | guest EV_KEY |
+  |---|---|---|---|
+  | Up | 103 | SADC ch0 = 1650 mV | 115 KEY_VOLUMEUP |
+  | Down | 108 | SADC ch0 = 1000 mV | 114 KEY_VOLUMEDOWN |
+  | Enter | 28 | SADC ch0 = 0 mV | 164 KEY_PLAYPAUSE |
+  | Right | 106 | GPIO PC28 (active high) | 163 KEY_NEXTSONG |
+  | Esc | 1 | GPIO PC31 (active low) | 116 KEY_POWER |
+  | Left | 105 | unmapped | 165 has no source |
+- **Verification evidence** (this round's VM, VNC 127.0.0.1:1, HMP
+  monitor + QMP sockets in /tmp/kilo/input/):
+  - (a) evdev injection: HMP `sendkey down 600` while
+    `cat /dev/input/event2 | od -An -tx2` runs on the console shell:
+    event2 (jz adc keyboard) received
+    `EV_KEY(0x0001) code=0x0072(114 KEY_VOLUMEDOWN) value=1` +
+    `EV_SYN`. HMP `sendkey right 600` on event0 (md-gpio-keys):
+    `EV_KEY code=0x00a3(163 KEY_NEXTSONG) value=1` + EV_SYN. The
+    full VNC -> QEMU handler -> SADC-ladder/GPIO-INTC -> guest
+    driver -> evdev chain works.
+  - (b) touch: QMP input-send-event (abs move + left button) at the
+    language picker: /proc/interrupts `100: N GPIO 16 hyn_ts`
+    counts the injected INTs (up to 246 dispatches during a held
+    touch); the model's i2c1 trail shows the driver's write {0x00} +
+    read 0x254 pairs reading the touch frame; `cat
+    /dev/input/event1` during a held touch shows the driver's MT-A
+    report stream (`EV_SYN code=2 SYN_MT_REPORT` + `EV_SYN
+    SYN_REPORT`). The litegui UI reacts to the touch stream (the
+    language list scroll/overscroll state changes, screendumps in
+    /tmp/kilo/input/). tap->select calibration (the litegui gesture
+    thresholds on top of the MT-A stream) is the one remaining step
+    and is parked below.
+  - (c) boot gate: tools/x1600-boot-test.sh PASS on the stripped
+    build (297 distinct messages, 158 structural lines, identical to
+    docs/traces/boot-baseline-v0.75.txt; no re-record needed).
+- **Two walls found (decoded, not guessed):**
+  1. The fb-blank notifier disables the touch: fb_notifier_callback
+     calls disable_irq_nosync(100) when the panel blanks (the GUI
+     idle does this within ~seconds of the picker appearing) and
+     hyn_resume_work re-enables it on the fb unblank. The panel
+     powers down but the framebuffer keeps the picker, so the VNC
+     feed looks alive while the touch INT is swallowed (the
+     handle_edge_irq disabled path acks INTP via +0x58 and latches
+     the event as genirq pending-replay instead of running the
+     action). User-visible workaround on the emulated device, same
+     as on the hardware: power-key toggle (VNC Esc) -> the resume
+     work -> enable_irq -> the touch chain works again.
+  2. The hyn driver registers the touch IRQ with IRQF_ONESHOT and no
+     thread handler (no irq/100-hyn_ts kthread exists on the running
+     system), so the genirq ONESHOT mask is never finalized after
+     the first dispatched edge: exactly one INT dispatch per
+     enable_irq cycle reaches the driver. The 40 ms INT re-assertion
+     still gets the driver reading the held-touch frame continuously
+     once the resume path has re-enabled the line (246 dispatches /
+     123 frame reads observed in one hold), and the events flow,
+     but a one-shot tap only ever delivers its first (eventless)
+     frame. True tap->select needs either the litegui gesture
+     calibration against the delivered stream or a kernel-side
+     decode of the vendor ONESHOT handling; parked for the next
+     round with all the decoded addresses in this entry.
+- **Trap for the next session:** the guest's effective IRQ dispatch
+  mask (the chained handler reads *(+0x20)) is always 0 in this
+  model, while the guest's own +0x24/+0x28 bookkeeping (pinconf
+  func-config and genirq masking) accumulates an unrelated mask
+  word (observed 0xc1020303 for bank A). x1600_gpio_inject gates on
+  the enable (+0x14/+0x18) only, NOT on that bookkeeping word, and
+  that is deliberate.
+- **Gate:** tools/x1600-boot-test.sh PASS (297 distinct messages,
+  158 structural lines vs docs/traces/boot-baseline-v0.75.txt). The
+  input models touch no pre-gate flow except the SADC sample word
+  and the i2c1 completion IRQs, both of which produce no boot-window
+  messages.

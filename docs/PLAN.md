@@ -182,16 +182,32 @@ qemu-wifi-srom; supersedes the earlier headers for the wifi item —
   rebuild the image with tools/x1600/make_nand_image.py before gate
   runs (the "default file-system created" marker only exists on a
   fresh volume).
-- **Next (M3 continuation):** 1. input events into the running GUI
-  (the adc_key/hyn_ts devices load; the GPIO/cst8xx event delivery is
-  the next model gap if interaction is wanted — the power-saving
-  blank path now completes cleanly, watch whether the idle timer
-  blanks the screen and whether a synthetic event wakes it). 2. the
-  audio path (AIC + PDMA PCM channels now COMPLETE — the AIC
-  register model itself is still the stub "open codec dev error!"
-  path). 3. optionally exercise a language choice to confirm the
-  first-boot flow advances to the main UI. The ifup/firmware-download
-  wifi flow stays optional (the player does not block on it).
+- **Status (M3 input round, v0.76, worktree qemu-vnc-input):**
+  **the input chain is wired**: QEMU's VNC keyboard/mouse now drives
+  the guest's real evdev devices through faithful hardware models
+  (pinctrl/GPIO with bank IRQs chained to INTC 14-17, I2C1 with the
+  cst8xx touch slave, SADC commanded key ladder; vendored qemu
+  621701f = tools/patches/qemu-x1600/
+  0115-vnc-input-gpio-keys-cst8xx-sadc.patch). Verified guest-side:
+  HMP sendkey lands EV_KEY 114 (VOLUMEDOWN) in event2 and EV_KEY 163
+  (NEXTSONG) in event0; the injected panel INT wakes hyn_ts and the
+  driver reads the 9-byte touch frame over i2c1 continuously while
+  the pointer is held (246 dispatches / 123 reads in one hold) and
+  event1 carries the MT-A report stream; the litegui list reacts to
+  the touch stream. Boot gate unchanged: x1600-boot-test.sh PASSes
+  against boot-baseline-v0.75.txt byte-for-byte.
+- **Remaining to M3 done:** 1. tap->select calibration: the hyn
+  driver reports only from the second read of a held touch and the
+  fb-blank notifier disable_irq's the panel within seconds of the
+  picker appearing (power-key toggle re-enables it via
+  hyn_resume_work — the same UX as hardware); the litegui gesture
+  thresholds on top of the now-delivered MT-A stream decide when a
+  VNC click selects a language row. 2. the audio path (AIC + PDMA
+  PCM channels now COMPLETE — the AIC register model itself is still
+  the stub "open codec dev error!" path). 3. confirm the first-boot
+  flow advances to the main UI after a language choice. The
+  ifup/firmware-download wifi flow stays optional (the player does
+  not block on it).
 - Boot evidence lives in docs/M1-bringup-log.md (v0.1–v0.75),
   docs/M2-stubs-log.md (v0.66–v0.67), and
   docs/research-brief-stubs-player-launch.md.

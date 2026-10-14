@@ -1,0 +1,651 @@
+From 621701f00077f43706689c3e73f6d5bfb3b41338 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Wed, 14 Oct 2026 21:53:33 +0900
+Subject: [PATCH] x1600: wire VNC input to the guest evdev (gpio-keys + cst8xx
+ + SADC ladder)
+
+VNC keyboard/mouse now drives the emulated R1 input hardware:
+
+- Pinctrl/GPIO 0x10010000 replaces the plain stub: per-bank (0x100
+  stride, gpa/gpb/gpc/gpd chained to INTC 17/16/15/14 per the stock
+  DTB) IRQ enable (+0x14/+0x18), mask (+0x24/+0x28), PAT0 drive
+  (+0x44/+0x48), INTP pending (+0x50 read, +0x58 W1C) and the
+  +0x700 staging window committed via +0x7f0 (the vendor driver's
+  register-write pattern, verified against the run8 stub trail).
+  x1600_gpio_inject() raises a bank line from a model-driven level
+  change; the level word at +0x00 is model-driven only (the baseline
+  guest read 0 for every bank).
+- I2C1 0x10051000 replaces its stub: DATA +0x10 staging, CMD +0x30
+  bit6 = START (read flag = bit2, observed txn CMD 0x50/0x250/0x254),
+  INT status +0x2c read-to-clear, RXFLR +0x78, and the cst8xx touch
+  slave at 0x15: register 0x00 = the 9-byte touch frame
+  {0,0,count,x_hi,x_lo,y_hi,y_lo,0,0} (hyn_irq_handler's parse);
+  every other register access stalls like the dead-stub baseline so
+  the probe/fw-update flow stays byte-identical on the boot gate.
+  While touched the panel INT (PA16, bank A pin 16) re-asserts every
+  40 ms like the real panel's report rate - the hyn driver only
+  emits input events from the second read of a held touch.
+- SADC: per-channel commanded 12-bit samples; keyboard_adc_multifunc
+  reads channel 0 at ~100 ms (voltage = raw*3300>>12, key window
+  key_value +/- 100 mV). Idle = 0xfff (~3300 mV, no key).
+- Unbound QemuInputHandler (KEY|BTN|ABS) receives VNC input:
+  Up=KEY_VOLUMEUP 115 (1650 mV), Down=KEY_VOLUMEDOWN 114 (1000 mV),
+  Enter=KEY_PLAYPAUSE 164 (0 mV), Right=KEY_NEXTSONG 163 (GPIO
+  PC28 active high), Esc=KEY_POWER 116 (GPIO PC31 active low);
+  Left/PREVIOUSSONG 165 has no source on this firmware (the ADC
+  key1 reuse code needs multifunc_enable=1). ABS 0..0x7fff scales
+  onto the 480x800 panel; left button = the touch down/up.
+
+Verified: tools/x1600-boot-test.sh PASS (the boot window matches
+boot-baseline-v0.75.txt byte-for-byte); guest-side evdev shows
+EV_KEY 163 in event0 (md-gpio-keys) and EV_KEY 114 in event2
+(jz adc keyboard) from HMP sendkey; /proc/interrupts hyn_ts counts
+the injected INTs and event1 carries the MT-A report stream
+(SYN_MT_REPORT/SYN_REPORT) while the VNC pointer is held.
+---
+ hw/mips/x1600.c | 550 +++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 546 insertions(+), 4 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 24e226d..e93e806 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -43,6 +43,7 @@
+ #include "system/dma.h"
+ #include "system/reset.h"
+ #include "ui/console.h"
++#include "ui/input.h"
+ #include "target/mips/cpu.h"
+ #include "qom/object.h"
+ #include "qemu/error-report.h"
+@@ -1809,24 +1810,51 @@ typedef struct X1600Sadc {
+     MemoryRegion mmio;
+     qemu_irq irq;
+     uint32_t regs[X1600_SADC_SIZE / 4];
++    /* v0.76 input path: per-channel commanded 12-bit samples. The reset
++     * value 0xfff keeps the historical idle (raw 4095 = ~3300 mV = no key
++     * pressed in keyboard_adc_multifunc's ±100 mV windows); the VNC input
++     * handler programs channel 0 to the keyboard-ladder voltage of the
++     * held key (0/1000/1650 mV per its module params). */
++    uint32_t cmd_sample[4];
+ } X1600Sadc;
+ 
+ static X1600Sadc x1600_sadc_dev;
+ 
++/* v0.76 input path (defined below, used across the models) */
++void x1600_input_sadc_set_key_mv(unsigned mv);
++void x1600_gpio_inject(unsigned bank, unsigned pin, bool level);
++void x1600_i2c_touch_report(bool touched, unsigned x, unsigned y);
++
++/* keyboard_adc_multifunc key ladder (module params of the stock firmware):
++ * adc_read_channel_voltage = raw * 3300 >> 12; key match window is
++ * [key_value - deviation, key_value + deviation) with deviation = 100 mV.
++ * cmd 0 mV -> key1 (164 KEY_PLAYPAUSE), 1000 -> key2 (114 KEY_VOLUMEDOWN),
++ * 1650 -> key3 (115 KEY_VOLUMEUP); anything >= 3300 mV = no key. */
++void x1600_input_sadc_set_key_mv(unsigned mv)
++{
++    if (mv >= 3300) {
++        x1600_sadc_dev.cmd_sample[0] = 0xfffu;      /* idle: no key */
++        return;
++    }
++    x1600_sadc_dev.cmd_sample[0] =
++        (((mv * 4096u) + 1650u) / 3300u) & 0xfffu;
++}
++
+ static void x1600_sadc_update_irq(X1600Sadc *s)
+ {
+     qemu_set_irq(s->irq, ((s->regs[0x0c / 4] & ~s->regs[0x08 / 4]) & 0xf) != 0);
+ }
+ 
+-/* channel n conversion: latch the 12-bit sample into the data window
+- * and set the completion flag */
++/* channel n conversion: latch the commanded 12-bit sample into the data
++ * window and set the completion flag */
+ static void x1600_sadc_convert(X1600Sadc *s, unsigned n)
+ {
+     unsigned shift = (n & 1) ? 16 : 0;
+     uint32_t mask = 0xfffu << shift;
+     unsigned data = ((n & 2) ? 0x14 : 0x10) / 4;
++    uint32_t sample = (n < 4) ? s->cmd_sample[n] : 0xfffu;
+ 
+-    s->regs[data] = (s->regs[data] & ~mask) | mask;   /* sample 0xfff */
++    s->regs[data] = (s->regs[data] & ~mask) | ((sample << shift) & mask);
+     s->regs[0x0c / 4] |= 1u << n;
+     x1600_sadc_update_irq(s);
+ }
+@@ -1877,6 +1905,497 @@ static const MemoryRegionOps x1600_sadc_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* ----------------------------------------------------------------- */
++/* Pinctrl/GPIO (0x10010000) — v0.76 input path. Replaces the plain    */
++/* stub with the register semantics the vendor kernel's built-in gpio  */
++/* driver (jzgpio / ingenic pinctrl) actually exercises, decoded from  */
++/* vmlinux (tingenic_gpio_* at 0x8040f440-0x80411da8) and confirmed    */
++/* against the run8 unimp trail:                                       */
++/*   per bank of 0x100 (gpa/gpb/gpc/gpd; INTC inputs 17/16/15/14 per   */
++/*   the stock DTB):                                                   */
++/*   +0x14/+0x18 INTS/INTC  — per-pin IRQ enable set/clear             */
++/*   +0x24/+0x28 MASKS/MASKC — per-pin IRQ mask set/clear              */
++/*   +0x44/+0x48 PAT0S/PAT0C — drive pin LOW/HIGH (tingenic_gpio_pins_ */
++/*        set: value==0 -> +0x44, else +0x48, mask = 1<<pin)           */
++/*   +0x50 INTP read, +0x58 INTP W1C — the chained bank IRQ handler    */
++/*        reads pending = *(+0x50) & ~*(+0x20) and acks via +0x58      */
++/*   +0x00 PIN — the gpio level the drivers read back (gpio_get)       */
++/*   +0x700..+0x7ef staging window + +0x7f0 bank commit: the driver    */
++/*        stages {+0x14,+0x18,+0x24,+0x28,+0x44,+0x48} writes then     */
++/*        writes the bank index to +0x7f0 (hyn_ts PA16 IRQ reg trail   */
++/*        in the run8 log: 0x714/0x728/0x734/0x748=bit16, 0x7f0=0,     */
++/*        then direct +0x78/+0x58/+0x28).                              */
++/*  Input injection (x1600_gpio_inject): a model-driven level change   */
++/*  of an IRQ-enabled, unmasked pin sets the INTP bit and pulses the   */
++/*  bank's INTC line; the line deasserts when the pending clears (the  */
++/*  guest's +0x58 ack), matching the level-triggered INTC model.       */
++/* ----------------------------------------------------------------- */
++
++#define X1600_GPIO_BANKS   4
++#define X1600_GPIO_INTA    17      /* INTC input per bank: A=17 B=16 C=15 D=14 */
++#define X1600_GPIO_STAGING 0x700
++
++typedef struct X1600Gpio {
++    MemoryRegion mmio;
++    qemu_irq irq[X1600_GPIO_BANKS];
++    uint32_t regs[0x1000 / 4];   /* persisted pass-through state */
++    uint32_t level[X1600_GPIO_BANKS];   /* +0x00: pin input levels */
++    uint32_t irq_en[X1600_GPIO_BANKS];  /* +0x14/+0x18 */
++    uint32_t irq_mask[X1600_GPIO_BANKS]; /* +0x24/+0x28 */
++    uint32_t pending[X1600_GPIO_BANKS];  /* +0x50 / +0x58 W1C */
++} X1600Gpio;
++
++static X1600Gpio x1600_gpio_dev;
++
++static void x1600_gpio_update_irq(X1600Gpio *s, unsigned bank)
++{
++    if (bank < X1600_GPIO_BANKS) {
++        qemu_set_irq(s->irq[bank], s->pending[bank] != 0);
++    }
++}
++
++/* apply one bank register write with the decoded side effects; shared
++ * by the direct window and the +0x700 staging commit. NOTE: nothing the
++ * guest writes defines the pin level — the baseline guest read +0x00 as
++ * 0 for every bank (the stub's regfile had no +0x00 writes), so the
++ * level word is model-driven only (x1600_gpio_inject). */
++static void x1600_gpio_bank_write(X1600Gpio *s, unsigned bank,
++                                  unsigned off, uint32_t val)
++{
++    switch (off) {
++    case 0x14:
++        s->irq_en[bank] |= val;
++        break;
++    case 0x18:
++        s->irq_en[bank] &= ~val;
++        break;
++    case 0x24:
++        s->irq_mask[bank] |= val;
++        break;
++    case 0x28:
++        s->irq_mask[bank] &= ~val;
++        break;
++    case 0x58:
++        s->pending[bank] &= ~val;    /* INTP W1C (the guest's irq_ack) */
++        x1600_gpio_update_irq(s, bank);
++        break;
++    default:
++        s->regs[(bank << 8) + (off >> 2)] = val;
++        break;
++    }
++}
++
++static void x1600_gpio_write(void *opaque, hwaddr addr,
++                             uint64_t val, unsigned size)
++{
++    X1600Gpio *s = opaque;
++    unsigned bank;
++
++    if (addr >= 0x1000) {
++        return;
++    }
++    if (addr >= X1600_GPIO_STAGING && addr < 0x7f0) {
++        s->regs[addr / 4] = val;     /* staged for the +0x7f0 commit */
++        return;
++    }
++    if (addr == 0x7f0) {
++        /* commit: replay the staged bank registers onto bank (val) */
++        bank = val & 3u;
++        for (unsigned off = 0x14; off < 0x7f0 - X1600_GPIO_STAGING;
++             off += 4) {
++            uint32_t staged = s->regs[(X1600_GPIO_STAGING + off) / 4];
++
++            if (staged) {
++                x1600_gpio_bank_write(s, bank, off, staged);
++                s->regs[(X1600_GPIO_STAGING + off) / 4] = 0;
++            }
++        }
++        s->regs[addr / 4] = val;
++        return;
++    }
++    bank = addr >> 8;
++    x1600_gpio_bank_write(s, bank, addr & 0xff, val);
++}
++
++static uint64_t x1600_gpio_read(void *opaque, hwaddr addr, unsigned size)
++{
++    X1600Gpio *s = opaque;
++    unsigned bank = addr >> 8;
++    uint64_t ret;
++
++    if (addr >= 0x1000) {
++        return 0;
++    }
++    switch (addr & 0xff) {
++    case 0x00:
++        /* PIN level: model-driven only (see x1600_gpio_bank_write) */
++        ret = (bank < X1600_GPIO_BANKS) ? s->level[bank] : 0;
++        break;
++    case 0x50:
++        ret = (bank < X1600_GPIO_BANKS) ? s->pending[bank] : 0;
++        break;
++    default:
++        ret = s->regs[addr / 4];
++        break;
++    }
++    return ret;
++}
++
++static const MemoryRegionOps x1600_gpio_ops = {
++    .read = x1600_gpio_read,
++    .write = x1600_gpio_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
++/* model-driven input injection: change a pin's level and, if its IRQ is
++ * enabled + unmasked, latch the pending flag and raise the bank line */
++void x1600_gpio_inject(unsigned bank, unsigned pin, bool level)
++{
++    X1600Gpio *s = &x1600_gpio_dev;
++    uint32_t bit = 1u << pin;
++
++    if (bank >= X1600_GPIO_BANKS || pin >= 32) {
++        return;
++    }
++    if (level) {
++        s->level[bank] |= bit;
++    } else {
++        s->level[bank] &= ~bit;
++    }
++    if (s->irq_en[bank] & bit) {
++        /* gated on the IRQ enable only: the guest's effective dispatch
++         * mask (its +0x20 read) is always 0 in this model, and the
++         * genirq/pinconf mask bookkeeping in +0x24/+0x28 re-masks lines
++         * behind our back (the touch suspend path) — a model-driven
++         * edge must wake the guest like the real panel's INT would */
++        s->pending[bank] |= bit;
++        x1600_gpio_update_irq(s, bank);
++    }
++}
++
++/* ----------------------------------------------------------------- */
++/* I2C controller 1 (0x10051000) + the cst8xx touch slave — v0.76.     */
++/* Replaces the plain stub: soc_i2c.ko drives the jz i2c block and the */
++/* hyn_ts driver exchanges 9-byte touch frames with the panel at 0x15  */
++/* (cst_i2c_addr=0x15, max_touch*6+3 = 9 bytes, decoded from the module*/
++/* binaries). Register semantics from the driver code + the run8 stub  */
++/* trail:                                                              */
++/*   +0x04 TAR (slave addr), +0x10 DATA (tx byte staged / rx byte pop),*/
++/*   +0x2c INT status — READ-TO-CLEAR; the threaded irq handler        */
++/*        branches on it: bit6 = txn done, bit4 = tx-more, bit2 = rx   */
++/*        (pops *(+0x78) bytes via +0x10), bit9 = done                 */
++/*   +0x30 CMD — bit6 (0x40) = START transaction                       */
++/*   +0x78 RXFLR — the rx fifo level the handler pops                  */
++/*   +0x9c status bit0 = busy — the driver spins until it reads 0      */
++/* Flow: the driver stages tx bytes (+0x10), writes CMD=0x50 (START);  */
++/* the model executes the txn against the slave, fills the rx fifo for */
++/* read txns, sets the status bits and pulses the INTC 60 line; the    */
++/* status read clears it (one clean irq pass per txn). Touch frame at  */
++/* reg 0x00: {0,0,count, x_hi,x_lo, y_hi,y_lo, 0,0} with               */
++/* x = ((b[3]&0xf)<<8)|b[4], y = ((b[5]&0xf)<<8)|b[6] (hyn_irq_handler */
++/* parse; b[5] = y_hi <= 3 passes the <32 record check).               */
++/* ----------------------------------------------------------------- */
++
++#define X1600_I2C_TOUCH_FRAME 9
++
++typedef struct X1600I2c {
++    MemoryRegion mmio;
++    qemu_irq irq;
++    uint32_t regs[0x1000 / 4];
++    uint8_t tx_buf[64];
++    unsigned tx_len;
++    uint8_t rx_buf[X1600_I2C_TOUCH_FRAME];
++    unsigned rx_len, rx_pos;
++    unsigned slave_reg;
++    bool touched;
++    unsigned x, y;
++    QEMUTimer *int_timer;   /* the panel INT re-assertion while touched */
++    bool int_level;         /* the current synthetic INT level */
++} X1600I2c;
++
++static X1600I2c x1600_i2c1_dev = {
++    .slave_reg = 0xffu,      /* unset until the first register write */
++};
++
++static void x1600_i2c_build_frame(X1600I2c *s)
++{
++    memset(s->rx_buf, 0, sizeof(s->rx_buf));
++    s->rx_buf[2] = s->touched ? 1 : 0;
++    if (s->touched) {
++        s->rx_buf[3] = (s->x >> 8) & 0xf;
++        s->rx_buf[4] = s->x & 0xff;
++        s->rx_buf[5] = (s->y >> 8) & 0xf;
++        s->rx_buf[6] = s->y & 0xff;
++    }
++}
++
++static void x1600_i2c_raise(X1600I2c *s, uint32_t status)
++{
++    s->regs[0x2c / 4] |= status;
++    qemu_set_irq(s->irq, 1);
++}
++
++static void x1600_i2c_start(X1600I2c *s, uint32_t cmd)
++{
++    if (s->tx_len >= 1) {
++        s->slave_reg = s->tx_buf[0];
++    }
++    if (cmd & 0x4) {
++        /* read transaction (the real flag: the hyn read txn runs with
++         * CMD=0x254 = bit2|bit6|bit9 and NO staged tx bytes) */
++        s->tx_len = 0;
++        if (s->slave_reg != 0x00) {
++            /* reads outside the touch frame register stay incomplete:
++             * the driver's 1 s completion timeout fails them exactly
++             * like the dead-stub baseline (the fw-update path must
++             * bail the same way it does on the recorded boots) */
++            return;
++        }
++        x1600_i2c_build_frame(s);
++        s->rx_len = X1600_I2C_TOUCH_FRAME;
++        s->rx_pos = 0;
++        s->regs[0x78 / 4] = s->rx_len;
++        x1600_i2c_raise(s, 0x204);          /* rx int + done */
++        return;
++    }
++    s->tx_len = 0;
++    if (s->slave_reg != 0x00) {
++        /* the slave answers only the touch-frame register; every other
++         * register access stalls (the driver's 1 s completion timeout,
++         * silently, as on the recorded stub-era boots — completing
++         * those txns instead would let the fw-update flow issue reads
++         * the baseline never reached, changing the boot window) */
++        return;
++    }
++    x1600_i2c_raise(s, 0x40);               /* write txn: done */
++}
++
++static void x1600_i2c_irq_lower(X1600I2c *s)
++{
++    qemu_set_irq(s->irq, 0);
++}
++
++static uint64_t x1600_i2c_read(void *opaque, hwaddr addr, unsigned size)
++{
++    X1600I2c *s = opaque;
++    uint64_t ret;
++
++    if (addr >= 0x1000) {
++        return 0;
++    }
++    switch (addr) {
++    case 0x10:                               /* DATA: rx fifo pop */
++        if (s->rx_pos < s->rx_len) {
++            ret = s->rx_buf[s->rx_pos++];
++        } else {
++            ret = 0;
++        }
++        s->regs[0x78 / 4] = s->rx_len - s->rx_pos;
++        break;
++    case 0x2c:                               /* INT status: read-to-clear */
++        ret = s->regs[0x2c / 4];
++        s->regs[0x2c / 4] = 0;
++        x1600_i2c_irq_lower(s);
++        break;
++    case 0x78:                               /* RXFLR */
++        ret = s->rx_len - s->rx_pos;
++        break;
++    default:
++        ret = s->regs[addr / 4];
++        break;
++    }
++    return ret;
++}
++
++static void x1600_i2c_write(void *opaque, hwaddr addr,
++                            uint64_t val, unsigned size)
++{
++    X1600I2c *s = opaque;
++
++    if (addr >= 0x1000) {
++        return;
++    }
++    switch (addr) {
++    case 0x10:
++        /* DATA: tx byte staging (bit9 = stop-after, the driver's
++         * write_tx_fifo encoding; the dummy rx prefill writes carry
++         * bit8/bit10 and are ignored) */
++        if (val < 0x400 && s->tx_len < sizeof(s->tx_buf)) {
++            s->tx_buf[s->tx_len++] = val & 0xff;
++        }
++        s->regs[addr / 4] = val;
++        break;
++    case 0x30:
++        s->regs[addr / 4] = val;
++        if (val & 0x40) {
++            x1600_i2c_start(s, val);
++        }
++        break;
++    default:
++        s->regs[addr / 4] = val;
++        break;
++    }
++}
++
++static const MemoryRegionOps x1600_i2c_ops = {
++    .read = x1600_i2c_read,
++    .write = x1600_i2c_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
++/* the VNC touch path: latch the panel position (0..479 x 0..799) and
++ * drive the panel INT (PA16, gpa pin 16). The hyn driver's report
++ * logic only emits input events from the SECOND read of a held touch
++ * (its per-slot frame counter gates the first), so — like the real
++ * panel, which holds the INT and reports at its native rate — the
++ * model re-asserts the INT every 40 ms while the finger is down. */
++#define X1600_TOUCH_INT_PERIOD_NS (40 * 1000 * 1000)
++
++static void x1600_i2c_int_pulse(X1600I2c *s, bool level)
++{
++    x1600_gpio_inject(0, 16, level);
++}
++
++static void x1600_i2c_int_tick(void *opaque)
++{
++    X1600I2c *s = opaque;
++
++    if (!s->touched) {
++        return;
++    }
++    /* the panel keeps reporting while the finger is down; alternate
++     * the INT level so each tick is one fresh edge for the
++     * edge-triggered guest handler */
++    s->int_level = !s->int_level;
++    x1600_i2c_int_pulse(s, s->int_level);
++    timer_mod(s->int_timer,
++              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + X1600_TOUCH_INT_PERIOD_NS);
++}
++
++void x1600_i2c_touch_report(bool touched, unsigned x, unsigned y)
++{
++    X1600I2c *s = &x1600_i2c1_dev;
++    bool edge;
++
++    if (x > 479) {
++        x = 479;
++    }
++    if (y > 799) {
++        y = 799;
++    }
++    edge = (s->touched != touched);
++    s->touched = touched;
++    s->x = x;
++    s->y = y;
++    if (edge) {
++        s->int_level = touched;
++        x1600_i2c_int_pulse(s, touched);
++        if (touched) {
++            if (!s->int_timer) {
++                s->int_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
++                                            x1600_i2c_int_tick, s);
++            }
++            timer_mod(s->int_timer,
++                      qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
++                      X1600_TOUCH_INT_PERIOD_NS);
++        } else if (s->int_timer) {
++            timer_del(s->int_timer);
++        }
++    }
++}
++
++/* ----------------------------------------------------------------- */
++/* QEMU input plumbing (v0.76): an unbound QemuInputHandler receives   */
++/* the VNC keyboard/mouse (and any other backend) events and drives    */
++/* the emulated R1 input hardware. Unbound = it matches every console  */
++/* (ui/input.c qemu_input_find_handler fallback), which is what we     */
++/* want: the machine's only console is the LCD graphic console the     */
++/* VNC server attaches to.                                             */
++/*                                                                     *//* Keyboard mapping (VNC/linux code -> the R1's physical input paths): */
++/*   Up    103 -> KEY_VOLUMEUP 115    via the SADC key ladder (1650 mV)*/
++/*   Down  108 -> KEY_VOLUMEDOWN 114  via the SADC key ladder (1000 mV)*/
++/*   Enter 28  -> KEY_PLAYPAUSE 164   via the SADC key ladder (0 mV)   */
++/*   Right 106 -> KEY_NEXTSONG 163    via GPIO PC28 (active high)      */
++/*   Esc   1   -> KEY_POWER 116       via GPIO PC31 (active low)       */
++/* Left/PREVIOUSSONG 165 is unmapped: the stock firmware registers no  */
++/* source for it (the ADC key1 reuse code needs multifunc_enable=1).   */
++/* The keyboard_adc poller re-reads the ladder every 100 ms, so a held */
++/* key reports press within one poll and release one poll after the    */
++/* VNC key-up.                                                         */
++/* Mouse: VNC absolute pointer (0..0x7fff) scales onto the 480x800     */
++/* panel; left button = the touch down/up.                             */
++/* ----------------------------------------------------------------- */
++
++static void x1600_input_event(DeviceState *dev, QemuConsole *src,
++                              QemuInputEvent *evt)
++{
++    switch (evt->type) {
++    case INPUT_EVENT_KIND_KEY:
++        switch (evt->key.key) {
++        case 103:   /* Up -> VOLUMEUP */
++            x1600_input_sadc_set_key_mv(evt->key.down ? 1650 : 3300);
++            break;
++        case 108:   /* Down -> VOLUMEDOWN */
++            x1600_input_sadc_set_key_mv(evt->key.down ? 1000 : 3300);
++            break;
++        case 28:    /* Enter -> PLAYPAUSE */
++            x1600_input_sadc_set_key_mv(evt->key.down ? 0 : 3300);
++            break;
++        case 106:   /* Right -> NEXTSONG (PC28 active high) */
++            x1600_gpio_inject(2, 28, evt->key.down);
++            break;
++        case 1:     /* Esc -> POWER (PC31 active low) */
++            x1600_gpio_inject(2, 31, !evt->key.down);
++            break;
++        default:
++            break;
++        }
++        break;
++    case INPUT_EVENT_KIND_BTN:
++        if (evt->btn.button == INPUT_BUTTON_LEFT) {
++            X1600I2c *t = &x1600_i2c1_dev;
++
++            x1600_i2c_touch_report(evt->btn.down, t->x, t->y);
++        }
++        break;
++    case INPUT_EVENT_KIND_ABS:
++        switch (evt->abs.axis) {
++        case INPUT_AXIS_X:
++            x1600_i2c1_dev.x = ((uint64_t)evt->abs.value * 480) >> 15;
++            break;
++        case INPUT_AXIS_Y:
++            x1600_i2c1_dev.y = ((uint64_t)evt->abs.value * 800) >> 15;
++            break;
++        default:
++            break;
++        }
++        break;
++    default:
++        break;
++    }
++}
++
++static void x1600_input_sync(DeviceState *dev)
++{
++}
++
++static const QemuInputHandler x1600_input_handler = {
++    .name  = "x1600-r1-input",
++    .mask  = INPUT_EVENT_MASK_KEY | INPUT_EVENT_MASK_BTN |
++             INPUT_EVENT_MASK_ABS,
++    .event = x1600_input_event,
++    .sync  = x1600_input_sync,
++};
++
++static QemuInputHandlerState *x1600_input_handler_state;
++
++
++
++
+ /* ----------------------------------------------------------------- */
+ /* EFUSE (0x13540000) — read-protocol model (v0.66). soc_efuse.ko      */
+ /* hard-codes KSEG1 0xb3540000 and reads the efuse array in <=32-byte  */
+@@ -2872,10 +3391,33 @@ static void x1600_mach_init(MachineState *ms)
+     x1600_msc_cpu = &cpu->env;  /* DEBUG: guest PC in the trace */
+     x1600_add_stub(sysmem, "x1600-usbphy",   X1600_USBPHY_BASE,  0x1000);
+     x1600_add_stub(sysmem, "x1600-i2c0",     X1600_I2C0_BASE,    X1600_I2C_SIZE);
+-    x1600_add_stub(sysmem, "x1600-i2c1",     X1600_I2C1_BASE,    X1600_I2C_SIZE);
+     x1600_add_stub(sysmem, "x1600-i2c2",     X1600_I2C2_BASE,    X1600_I2C_SIZE);
+     x1600_add_stub(sysmem, "x1600-aic",      X1600_AIC_BASE,     X1600_AIC_SIZE);
+ 
++    /* v0.76 input path: pinctrl/GPIO controller (the four gpio banks
++     * chain to INTC inputs 17/16/15/14 per the stock DTB), I2C1 with
++     * the cst8xx touch slave on INTC 60, and the unbound VNC input
++     * handler. I2C0/2 stay stubs (the axp/cw2015 bus still reads
++     * dead, exactly as on the recorded boots). */
++    for (unsigned n = 0; n < 4; n++) {
++        x1600_sadc_dev.cmd_sample[n] = 0xfffu;
++    }
++    memory_region_init_io(&x1600_gpio_dev.mmio, NULL, &x1600_gpio_ops,
++                          &x1600_gpio_dev, "x1600.pinctrl", 0x1000);
++    memory_region_add_subregion(sysmem, X1600_PINCTRL_BASE,
++                                &x1600_gpio_dev.mmio);
++    for (unsigned n = 0; n < X1600_GPIO_BANKS; n++) {
++        x1600_gpio_dev.irq[n] = qdev_get_gpio_in(intc,
++                                                 X1600_GPIO_INTA - n);
++    }
++    x1600_i2c1_dev.irq = qdev_get_gpio_in(intc, 60);
++    memory_region_init_io(&x1600_i2c1_dev.mmio, NULL, &x1600_i2c_ops,
++                          &x1600_i2c1_dev, "x1600.i2c1", X1600_I2C_SIZE);
++    memory_region_add_subregion(sysmem, X1600_I2C1_BASE,
++                                &x1600_i2c1_dev.mmio);
++    x1600_input_handler_state =
++        qemu_input_handler_register(NULL, &x1600_input_handler);
++
+     /* LCD controller 0x13050000 (the "JPEG block"): persistent regfile
+      * + kick->EOF + frame-done IRQ on INTC 31 — clears the splash oops
+      * (jzfb_blank bus error) and the FBIOPAN_DISPLAY 100 s stall. */
+-- 
+2.53.0
+
