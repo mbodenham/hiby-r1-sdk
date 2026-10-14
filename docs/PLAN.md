@@ -531,3 +531,57 @@ predates velocity data; SFC (hardest model so far) took ~1 day.
     blocking).
 
 -- recorded so the plan document is actionable, not aspirational.
+
+- **Status (M3 listview-plane round, v0.79, worktree
+  qemu-listview-plane):** the "not listview plane then listview
+  refresh fail" console line DECODED and reclassified: it is a benign
+  create-ordering artifact of the stock litegui, NOT the M3 freeze.
+  The print's three emission sites (hiby_player 0x495588/0x4959fc/
+  0x499bb0, print helper 0x465fa0 with the tag "lg_listview_create")
+  all reduce to one check: the registry lookup 0x4f13a0 (list at
+  object+700, lock/unlock vtable+712/+716, strcmp on *(node+8)) fails
+  to find the listview widget under its parent plane/layout tree —
+  the widget's create-time refresh runs BEFORE the widget is attached
+  ("not [on] listview plane"), the refresh bails, and the widget
+  refreshes normally once attached. Registry objects are the parsed
+  litegui layout nodes (constructor 0x4f0bd0 loads
+  "z:\layout\%stheme%d\main.json" -> /usr/resource/layout/theme1/).
+  Kill-shot evidence: the SAME print appears TEN times in the v0.78
+  round's boots (console.txt) where the QMP tap->select chain was
+  verified working, and in the v0.75 first-render runs; it is present
+  in every boot of the stock firmware, working or not. No model
+  capability is missing; nothing to fix without firmware
+  modification (forbidden). The REAL interactivity wall remains the
+  v0.78 blanked-state gate, and this round PINNED it precisely with
+  guest strace: the player's touch poller (main thread, poll
+  {event1, timerfd} 33 ms, exactly the v0.77 structure) READS every
+  tap's full MT-A frame (X=240/Y=403 for a screen-(240,398) tap) and
+  litegui then DISCARDS them before any draw while the GUI is in its
+  blanked state (no fb ioctl, screendumps identical); the wake path
+  is settings-gated at the wizard (POWER via PC31 retested — no
+  reaction). **The recipe correction that unblocked the tap: QMP
+  input-send-event abs values are VNC-normalized 0..0x7fff, not panel
+  coords — the English row at screen (240,398) is abs (16384,16282);
+  raw 240 scales to 240*480>>15 = 3 and misses the list entirely
+  (this is what the earlier "(240,398) never processed" attempts
+  actually hit).** With the corrected recipe and a tap INSIDE the
+  pre-blank window (the picker renders at ~t+20-25 s, the idle blank
+  fires ~30 s later), the wizard ADVANCES on this build: i_before
+  (the 6-row picker) -> i_after (title + rows re-laid + the bottom
+  third dark = the next page rendering) -> i_settled, plus the
+  language-applied GUI re-init (lg_guimain: lg_activity_mng_init +
+  lg_ial_init) in the console. Evidence: /tmp/kilo/ui2/i_before.png,
+  i_after.png, i_settled.png. M3 verdict: the stock picker IS
+  interactive on the emulated device (as on the real device: a real
+  user taps within the idle window); the blanked-state freeze is
+  faithful device behavior whose only escape is the stock 5-min
+  power-save shutdown reboot. No model change required this round
+  (the vendored qemu diff is empty; no 0117 patch).
+  - New operational hazards recorded: kill -9 of hiby_player during
+    active blits leaks the hgl DMA pool in rmem_manager for the rest
+    of the boot (every later player start fails "sahd_open: malloc
+    hgl memory error"; rmmod/insmod of sa_hgl_dma does NOT recover —
+    the pool lives in rmem_manager shared with soc_fb; recovery =
+    guest reboot), and the guest has no fb_blank(4)-free shortcut:
+    `reboot -f` from the console halts a -no-reboot VM (restart the
+    qemu process instead).
