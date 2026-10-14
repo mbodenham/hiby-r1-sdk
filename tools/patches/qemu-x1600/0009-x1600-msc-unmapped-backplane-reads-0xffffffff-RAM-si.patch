@@ -1,0 +1,73 @@
+From d71ffbeb9138275f6b09d0ade5832cca79e89d74 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Wed, 14 Oct 2026 13:06:25 +0900
+Subject: [PATCH] x1600-msc: unmapped backplane reads 0xffffffff (RAM-size walk
+ fix)
+
+The DHD's si_doattach RAM size walk scans the backplane word-by-word
+from 0x0 (CMD53 fn1 word reads with per-32K-window CMD52 end reads)
+and stops at the first nonzero word. With every non-chipcommon word
+served as 0 the walk never terminated: it crossed the whole 512KB
+SOCSRAM, kept going past the SI enum space and was still at 0x5f58000
+after 280 s (the 'GCI/PMU poll' of the v0.68 traces is this walk).
+
+Model the real decode: backplane windows in [0x80000, 0x18000000)
+read 0xffffffff, on both the CMD53 path (before the chunk-cache
+lookup - the 16-slot cache otherwise serves stale zero chunks and
+lets the walk overrun to 0x88000, which si_doattach rejects) and on
+the CMD52 fn1 word path used for the window-end reads.
+
+With this the walk breaks at exactly 0x80000 (the 43430A1's 512KB
+SOCSRAM) in ~1.1 s. si_doattach still rejects the attach afterwards;
+that and the 512-byte CIS reads hanging in the soc_msc DMA path
+(state:0, request never reaches the MSC; the model has no SoC DMAC)
+are the next blockers - see M1 log v0.69.
+---
+ hw/mips/x1600.c | 24 +++++++++++++++++++++++-
+ 1 file changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 7022c15..5171d6d 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -508,6 +508,17 @@ static uint32_t x1600_msc_cmd52(X1600Msc *s, uint32_t arg)
+             data |= (data & 0x10) ? 0x80 : 0;   /* HT_AVAIL */
+             return data;
+         }
++        if (!write && addr >= 0x8000) {
++            /* fn1 0x8000-0xffff is the 32K backplane window bank; word
++             * reads (bit15 set) fetch from the SBADDR-mapped backplane,
++             * same as the CMD53 path below. */
++            uint32_t sbaddr = s->fn1[0x1000a] | (s->fn1[0x1000b] << 8) |
++                              (s->fn1[0x1000c] << 16);
++            uint32_t bp = (sbaddr << 8) | (addr & 0x7fff);
++            if (bp >= 0x80000 && bp < 0x18000000) {
++                return 0xffffffffu;
++            }
++        }
+         space = s->fn1 + addr;
+     } else {
+         return 0;
+@@ -640,7 +651,18 @@ static void x1600_msc_command(X1600Msc *s)
+                         }
+                     }
+                 }
+-                if (chunk) {
++                if (bp >= 0x80000 && bp < 0x18000000) {
++                    /* Beyond the 43430A1's 512KB SOCSRAM banks and below
++                     * the SI enum space the backplane decodes to nothing
++                     * and the vendor core reads 0xffffffff there. The
++                     * DHD's RAM size walk in si_doattach scans the SRAM
++                     * word-by-word and stops at the first such word,
++                     * yielding the chip's 512KB RAM size; serving the
++                     * zero-filled chunk cache here instead let the walk
++                     * overrun to 0x88000 and si_doattach rejected the
++                     * result. The check must precede the chunk lookup. */
++                    memset(s->fifo, 0xff, c53cnt);
++                } else if (chunk) {
+                     uint32_t off = bp & 0x7fff;
+                     for (i = 0; i < c53cnt && off + i < 0x8000; i++) {
+                         s->fifo[i] = chunk[off + i];
+-- 
+2.53.0
+
