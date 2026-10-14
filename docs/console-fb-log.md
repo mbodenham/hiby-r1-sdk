@@ -176,3 +176,32 @@ filename must be quoted.)
   BT-uart binary stream lands on serial1 and the capture stays clean.
 - M3 next: the same tap + fb-dump.py give the player's first UI frame
   (open /dev/fb0 → pan → pmemsave → PNG).
+
+## v0.71 (2026-10-14, manager round): the splash is device-correct; the blue frame was the player's fallback
+
+Device ground truth (user): the real R1's boot splash is BLACK with WHITE
+text — that is `/etc/logo1.jpeg` (black bg, white-grey HIBY wordmark), the
+`theme:1` branch. Verified by viewing both jpegs: logo.jpeg = pale blue,
+logo1.jpeg = black+white.
+
+The VM's theme read is CORRECT: in the real boot (init=`console::respawn:-/bin/sh`
+shell from the inittab) `nanddump -q -s 0x20000 -l 7 /dev/mtd5 -a` returns
+exactly `theme:1` (ECC clean, no bad blocks). The S11 splash drew logo1
+(black) at the ~50 s pan. The earlier "pale blue" frames captured at
+100-150 s were **the player's fallback draw**, not the splash:
+
+- S92 ran — hiby_player launched (its lg_dlna threads spam the console).
+- `/usr/data` did NOT mount: `mount: mounting /dev/ubi1_0 on /usr/data/
+  failed: Invalid argument` (twice — mount_ubifs.sh erased + retried).
+- With /data missing, the player's `nanddump ... > /data/theme_id` failed
+  (its wrapper prints the stale-errno `[ERROR] nanddump failed:
+  Address family not supported by protocol`) and its GUI fell back to
+  drawing the default logo (logo.jpeg, blue) over the splash.
+
+OPEN FAULT: UBIFS mount returns EINVAL after "UBIFS (ubiX:Y): default
+file-system created" — reproduced in a diagnostic shell (init=/bin/sh:
+ubiattach -m 6, ubimkvol -m, mount -t ubifs ubi0_0 → format message then
+EINVAL, with and without -o sync; no ubifs_err printed). Decode target:
+ubifs_fill_super's silent -EINVAL paths after the created-fs message in
+vmlinux.bin; suspect a geometry check on the UBI layout the model's NAND
+reports (VID hdr offset 2048, data offset 4096, LEB 126976, PEB 131072).
