@@ -1,0 +1,170 @@
+From 1f062d663e0b0674278031ff198d51ea31ecef67 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Wed, 14 Oct 2026 10:02:49 +0900
+Subject: [PATCH] x1600: UART2 real serial backend; stock
+ console=ttyS2,3000000n8
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Serial0 now carries the ttyS2 console (UART2 at 0x10032000, modelled
+like uart0: 16550 serial_mm regshift 2, SCR seed 0xa9, ext stub over
+[0x20,0x100)); the ttyS0 BT uart gets the second, discardable backend
+(serial1) so S80_bt_init's brcm_patchram_plus writes binary into it,
+never into the console capture. The earlycon (stock DTB stdout-path)
+stays on ttyS0: pre-handoff output lands on serial1, and the capture
+starts at the ttyS2 handoff ("console [ttyS2] enabled") — 4.4.94 does
+not replay the pre-handoff printk buffer.
+
+IRQ correction (stock-DTB authority over mainline x1000.dtsi, same
+method as the regmap deltas table): /apb/serial@0x10030000 interrupts
+= 0x2f = 47, @0x10032000 = 0x2d = 45 (uart1/3 disabled: 46/44). The
+old uart0 51 came from the mainline dtsi and never fired; the boot
+agrees with the decode, printing "ttyS0 ... irq = 55" / "ttyS2 ...
+irq = 53" (hwirq + 8, cf. SADC 11 -> 19, LCD 31 -> 39). With uart0 at
+47 and uart2 at 45 the tty-layer TX interrupts finally drain — the
+rcS userland echoes (mdev/splash/insmod) now reach the console for
+the first time (v0.67 stalled them in the ttyS0 tty buffer).
+
+Machine cmdline: console=ttyS2,3000000n8 (stock-faithful), mem/mtdparts
+/root unchanged. Verified by boot: full post-handoff dmesg on serial0
+via ttyS2, earlycon on serial1, gate re-recorded as
+docs/traces/boot-baseline-v0.68.txt and PASSing.
+---
+ hw/mips/x1600.c | 75 ++++++++++++++++++++++++++++++++++---------------
+ 1 file changed, 53 insertions(+), 22 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 4f7265e..f3b644a 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -265,8 +265,15 @@ static const MemoryRegionOps x1600_ost_ops = {
+ #define X1600_TCSM0_BASE   0x134F0000
+ #define X1600_TCSM0_SIZE   0x40000
+ 
+-/* uart0 irq line inside the intc (x1000.dtsi: uart0 irq 51, uart1 50, uart2 49) */
+-#define X1600_UART0_IRQ    51
++/* uart irq lines inside the intc = the stock DTB interrupt numbers
++ * (v0.68 correction: the old uart0 51 came from the MAINLINE x1000.dtsi;
++ * the stock DTB in vmlinux.bin @0x7bdf80 says /apb/serial@0x10030000
++ * interrupts = 0x2f = 47, @0x10032000 = 0x2d = 45 — and the boot itself
++ * agrees, printing "ttyS0 ... irq = 55" / "ttyS2 ... irq = 53" with the
++ * verified hwirq+8 arithmetic, cf. SADC 11 -> virq 19, LCD 31 -> 39).
++ * uart1/uart3 are disabled in the DTB (46/44). */
++#define X1600_UART0_IRQ    47
++#define X1600_UART2_IRQ    45
+ /* early uart scan probe reads +0x1c expecting 0xa9 (SCR; see regmap §3).
+  * QEMU serial resets SCR to 0 — the stock SPL leaves 0xa9 there before the
+  * kernel runs, and the scan falls back to putchar_dummy (silent boot) if it
+@@ -1626,14 +1633,16 @@ static void x1600_mach_init(MachineState *ms)
+     CPUMIPSState *env;
+     Clock *cpuclk;
+     DeviceState *intc;
+-    qemu_irq uart0_irq;
++    qemu_irq uart0_irq, uart2_irq;
+ 
+     if (!ms->kernel_filename) {
+         error_report("x1600 machine needs -kernel (unpacked/1.6/vmlinux.bin)");
+         exit(1);
+     }
+-    if (!serial_hd(0)) {
+-        error_report("x1600 machine needs -serial stdio (or similar)");
++    if (!serial_hd(0) || !serial_hd(1)) {
++        error_report("x1600 machine needs two -serial backends: "
++                     "serial0 = ttyS2 console (the captured port), "
++                     "serial1 = ttyS0 BT/earlycon uart (discardable)");
+         exit(1);
+     }
+ 
+@@ -1656,27 +1665,47 @@ static void x1600_mach_init(MachineState *ms)
+     sysbus_mmio_map(SYS_BUS_DEVICE(intc), 0, X1600_INTC_BASE);
+     qdev_connect_gpio_out(intc, 0, cpu->env.irq[2]);
+     uart0_irq = qdev_get_gpio_in(intc, X1600_UART0_IRQ);
+-
+-    /* UART0: regshift 2 puts LSR at +0x14 per the stock early-print scan.
+-     * SCR seed handler registered AFTER the serial device so it wins the
+-     * reset ordering (serial reset zeroes scr; we re-plant 0xa9). */
++    uart2_irq = qdev_get_gpio_in(intc, X1600_UART2_IRQ);
++
++    /* UART0 + UART2 (v0.68): regshift 2 puts LSR at +0x14 per the stock
++     * early-print scan. SCR seed handler registered AFTER the serial
++     * devices so it wins the reset ordering (serial reset zeroes scr; we
++     * re-plant 0xa9). Backend wiring matches the stock console port:
++     * serial0 = UART2 (0x10032000) carries the ttyS2 console
++     * (console=ttyS2,3000000n8, the live device's cmdline — this is the
++     * captured port); serial1 = UART0 (0x10030000), the BT uart, gets the
++     * SECOND, discardable backend so S80_bt_init's brcm_patchram_plus
++     * writes binary into it, never into the console capture. The earlycon
++     * is the stock DTB stdout-path (ttyS0) and stays there: pre-handoff
++     * earlycon output lands on serial1, and the ttyS2 console replays the
++     * whole buffered log when it registers (CON_PRINTBUFFER), so the
++     * capture still holds the full dmesg. */
+     {
+         SerialMM *uart0 = serial_mm_init(sysmem, X1600_UART0_BASE, 2,
+-                                         uart0_irq, 230400, serial_hd(0),
++                                         uart0_irq, 230400, serial_hd(1),
++                                         DEVICE_LITTLE_ENDIAN);
++        SerialMM *uart2 = serial_mm_init(sysmem, X1600_UART2_BASE, 2,
++                                         uart2_irq, 230400, serial_hd(0),
+                                          DEVICE_LITTLE_ENDIAN);
+-        X1600Stub *ext = x1600_stub_new("x1600-uart0-ext", X1600_UART_SIZE);
++        X1600Stub *ext0 = x1600_stub_new("x1600-uart0-ext", X1600_UART_SIZE);
++        X1600Stub *ext2 = x1600_stub_new("x1600-uart2-ext", X1600_UART_SIZE);
+ 
+         qemu_register_reset(x1600_uart_scr_seed, uart0);
++        qemu_register_reset(x1600_uart_scr_seed, uart2);
+         /* The vendor serial_ingenic driver touches extension registers
+          * beyond the 16550's 8<<2 window (+0x24/+0x28 RMWs in
+          * serial_ingenic_set_termios, v0.22 bus error). Back the rest of
+-         * UART0's 0x100 with a persistent stub at LOWER priority than the
+-         * real device: serial_mm keeps [0x00,0x20), the stub takes the
++         * each UART's 0x100 with a persistent stub at LOWER priority than
++         * the real device: serial_mm keeps [0x00,0x20), the stub takes the
+          * remainder. */
+-        memory_region_init_io(&ext->mr, NULL, &x1600_stub_ops, ext,
++        memory_region_init_io(&ext0->mr, NULL, &x1600_stub_ops, ext0,
+                               "x1600-uart0-ext", X1600_UART_SIZE);
+         memory_region_add_subregion_overlap(sysmem, X1600_UART0_BASE,
+-                                            &ext->mr, -1);
++                                            &ext0->mr, -1);
++        memory_region_init_io(&ext2->mr, NULL, &x1600_stub_ops, ext2,
++                              "x1600-uart2-ext", X1600_UART_SIZE);
++        memory_region_add_subregion_overlap(sysmem, X1600_UART2_BASE,
++                                            &ext2->mr, -1);
+     }
+ 
+     /* SoC blocks the stock kernel probes at boot (stubbed reads-as-zero,
+@@ -1721,7 +1750,6 @@ static void x1600_mach_init(MachineState *ms)
+     memory_region_add_subregion(sysmem, X1600_RTC_BASE, &x1600_rtc_dev.mmio);
+     x1600_add_stub(sysmem, "x1600-pinctrl",  X1600_PINCTRL_BASE, 0x1000);
+     x1600_add_stub(sysmem, "x1600-uart1",    X1600_UART1_BASE,   X1600_UART_SIZE);
+-    x1600_add_stub(sysmem, "x1600-uart2",    X1600_UART2_BASE,   X1600_UART_SIZE);
+     x1600_add_stub(sysmem, "x1600-uart3",    X1600_UART3_BASE,   X1600_UART_SIZE);
+     x1600_add_stub(sysmem, "x1600-pdma",     X1600_PDMA_BASE,    0x10000);
+     /* SADC (v0.66): minimal conversion model — completes conversions and
+@@ -1821,13 +1849,16 @@ static void x1600_mach_init(MachineState *ms)
+      *   envp must point at a NULL-terminated table, not be NULL itself. */
+     {
+         static const char argv_name[] = "linux";
+-        /* M2 cmdline: mtdparts (layout from the live device's /proc/mtd,
+-         * libra BACKLOG RP3: uboot/kernel/rootfs/kernel2/rootfs2/ota/
+-         * userdata; kernel slot 5 MiB + ota 512 KiB confirmed there) and
+-         * the stock root device. Stock uses console=ttyS2,3000000n8 —
+-         * we keep ttyS0 until the console-port swap (see M1 log). */
++        /* Stock-faithful console (v0.68): console=ttyS2,3000000n8 as on the
++         * live device — ttyS2 (0x10032000) is the real serial0 backend; the
++         * ttyS0 BT uart gets the discardable serial1 (S80's
++         * brcm_patchram_plus binary writes land there, not in the console
++         * capture). The earlycon (stock DTB stdout-path) stays on ttyS0:
++         * pre-handoff output goes to serial1, and the ttyS2 console
++         * replays the buffered log at handoff, so the capture keeps the
++         * full dmesg. */
+         static const char bootargs[] =
+-            "console=ttyS0,115200 mem=64M initcall_debug ignore_loglevel "
++            "console=ttyS2,3000000n8 mem=64M initcall_debug ignore_loglevel "
+             "mtdparts=sfc_nand:2M(uboot),5M(kernel),40M(rootfs),"
+             "5M(kernel2),40M(rootfs2),512K(ota),-(userdata) "
+             "root=/dev/mtdblock_bbt_ro2 rootfstype=squashfs ro";
+-- 
+2.53.0
+
