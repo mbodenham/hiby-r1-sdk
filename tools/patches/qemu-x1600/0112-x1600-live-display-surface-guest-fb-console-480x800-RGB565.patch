@@ -1,0 +1,232 @@
+From e4865d1b62e59eebd2289f41d4b40a10a658f91b Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Wed, 14 Oct 2026 11:25:10 +0900
+Subject: [PATCH 112/112] x1600: live display surface on the guest framebuffer
+ (480x800 RGB565)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The LCD model gets a QEMU graphic console bound to the guest
+framebuffer. The LAST descriptor stored at +0x1000 names the visible
+frame (frame_num=2 double-buffering — the same newest-kick-wins rule
+tools/fb-dump.py applies): each +0x1004 kick and a 25 Hz
+QEMU_CLOCK_VIRTUAL timer resolve desc+4 from guest RAM (strip the
+0x80000000 flag bit -> yoff*stride + fb_phys), copy the 768000 B
+RGB565 frame into the display surface (qemu_create_displaysurface_from,
+PIXMAN_r5g6b5, stride 960 over a lazily allocated host frame copy) and
+push a full 480x800 update (qemu_console_update_full). The timer
+re-resolves desc+4 every tick so progressive guest writes appear live
+between kicks; it arms at the FIRST backend poll (gfx_update), so
+-display none boots never run it — no timer, no copy, no wakeups: the
+boot-gate path is byte-for-byte the v0.69 model. The +0x1000 stderr
+tap is unchanged (fb-dump.py still works) and the machine still
+requires both -serial backends (ttyS2 console + ttyS0 BT uart).
+
+Verification (stock firmware, ~75 s wall to the splash taps):
+
+- -vnc 127.0.0.1:0 serves the console; a raw RFB 3.8 client (raw
+  encoding) negotiates 480x800 and receives the full frame in one rect
+  (1,536,000 B) — the stock HiBy R1 splash (#bddfef dominant, 47%).
+- HMP 'screendump' (default graphic console, no device arg needed)
+  equals fb-dump.py's extraction from pmemsave 0 0x4000000 taken at
+  the same moment: 0 differing pixels (ImageMagick AE, fuzz 2%) on
+  three separate boots.
+- Timer proof: a red/green RGB565 pattern written into the visible
+  fb's bottom 24 rows via the gdbstub (no kick — tap count unchanged),
+  verified in guest RAM by pmemsave while the VM was paused, shows up
+  in the screendump within a second of resume (25 Hz re-resolve).
+- Boot gate PASS against docs/traces/boot-baseline-v0.68.txt (332
+  distinct messages, 154 structural lines). With the 768000 B frame
+  copy as a static struct member the ttyS2 flush seam deterministically
+  glued "Finish display..." to its neighbour and the gate failed; the
+  lazy allocation at the first backend poll restores v0.69 timing
+  exactly (the unmodified v0.69 build re-verified PASS in between).
+---
+ hw/mips/x1600.c | 132 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 132 insertions(+)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 1e8678c..4b96114 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -42,10 +42,12 @@
+ #include "system/address-spaces.h"
+ #include "system/dma.h"
+ #include "system/reset.h"
++#include "ui/console.h"
+ #include "target/mips/cpu.h"
+ #include "qom/object.h"
+ #include "qemu/error-report.h"
+ #include "qemu/log.h"
++#include "qemu/memalign.h"
+ #include <fcntl.h>
+ #include <sys/mman.h>
+ #include <sys/stat.h>
+@@ -1116,12 +1118,34 @@ static const MemoryRegionOps x1600_efuse_ops = {
+ /*        — pan_display_sync=1 makes FBIOPAN_DISPLAY wait on state==2, */
+ /*        so without the IRQ every frame stalls ~100 s then errors.    */
+ /* IRQ = INTC input 31 (request_threaded_irq(39) - 8).                 */
++/* v0.70 live display: the last descriptor stored at +0x1000 names the  */
++/* visible frame; each kick (and a 25 Hz QEMU_CLOCK_VIRTUAL timer)      */
++/* resolves desc+4 from guest RAM (bit31 flag stripped -> yoff*stride + */
++/* fb_phys), copies the 768000 B RGB565 frame into the display surface  */
++/* and pushes a full 480x800 update. The timer arms at the FIRST        */
++/* backend poll (gfx_update), so with -display none no timer, no copy   */
++/* and no wakeups ever run — the boot-gate path is byte-for-byte the    */
++/* v0.69 model.                                                         */
+ /* ----------------------------------------------------------------- */
+ 
++#define X1600_FB_WIDTH     480
++#define X1600_FB_HEIGHT    800
++#define X1600_FB_STRIDE    960                  /* 480 px * 2 B (RGB565) */
++#define X1600_FB_BYTES     (X1600_FB_STRIDE * X1600_FB_HEIGHT)
++#define X1600_FB_PERIOD_NS (40 * 1000 * 1000)   /* 25 Hz refresh tick */
++
+ typedef struct X1600Lcd {
+     MemoryRegion mmio;
+     qemu_irq irq;
+     uint32_t regs[X1600_LCD_SIZE / 4];
++    /* live display surface (v0.70) — the frame copy is allocated on the
++     * FIRST backend poll, so -display none boots never touch it and the
++     * binary layout stays the v0.69 one on the boot-gate path. */
++    QemuConsole *con;
++    DisplaySurface *ds;
++    uint8_t *fb_copy;
++    QEMUTimer *fb_timer;
++    bool backend_seen;   /* a display backend / screendump polled the console */
+ } X1600Lcd;
+ 
+ static X1600Lcd x1600_lcd_dev;
+@@ -1131,6 +1155,100 @@ static void x1600_lcd_update_irq(X1600Lcd *s)
+     qemu_set_irq(s->irq, (s->regs[0x2010 / 4] & 0x20000u) != 0);
+ }
+ 
++/* Live display (v0.70): upload the frame the LAST descriptor stored at
++ * +0x1000 points to. frame_num=2 double-buffers: each pan_display stores
++ * one descriptor pointer then kicks, so the last write wins — the same
++ * rule tools/fb-dump.py applies to pmemsave dumps. */
++static void x1600_lcd_fb_draw(X1600Lcd *s)
++{
++    uint32_t desc = s->regs[0x1000 / 4];
++    uint32_t lineaddr;
++    DisplaySurface *surface;
++
++    if (!desc) {
++        return;
++    }
++    if (dma_memory_read(&address_space_memory, desc + 4, &lineaddr,
++                        sizeof(lineaddr), MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
++        return;
++    }
++    lineaddr &= ~0x80000000u;    /* desc+4: yoff*stride + fb_phys, bit31 flag */
++    if (lineaddr >= X1600_RAM_SIZE ||
++        X1600_FB_BYTES > X1600_RAM_SIZE - lineaddr) {
++        return;
++    }
++    if (!s->fb_copy) {
++        /* host frame copy the display surface wraps; 64-byte aligned for
++         * pixman (needs 4). Only ever allocated once a backend polls. */
++        s->fb_copy = qemu_memalign(64, X1600_FB_BYTES);
++        memset(s->fb_copy, 0, X1600_FB_BYTES);
++    }
++    if (dma_memory_read(&address_space_memory, lineaddr, s->fb_copy,
++                        X1600_FB_BYTES, MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
++        return;
++    }
++    if (!s->ds) {
++        /* 16 bpp RGB565 surface over the host copy; guest and host are
++         * both little-endian, so the upload above is a plain row copy. */
++        s->ds = qemu_create_displaysurface_from(X1600_FB_WIDTH,
++                                                X1600_FB_HEIGHT,
++                                                PIXMAN_r5g6b5,
++                                                X1600_FB_STRIDE,
++                                                s->fb_copy);
++        qemu_console_set_surface(s->con, s->ds);
++    }
++    surface = qemu_console_surface(s->con);
++    if (surface != s->ds) {
++        return;                  /* backend replaced the surface; leave it */
++    }
++    qemu_console_update_full(s->con);
++}
++
++static void x1600_lcd_fb_tick(void *opaque)
++{
++    X1600Lcd *s = opaque;
++
++    /* progressive guest writes between kicks: re-resolve desc+4 each tick */
++    x1600_lcd_fb_draw(s);
++    timer_mod(s->fb_timer,
++              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + X1600_FB_PERIOD_NS);
++}
++
++static void x1600_lcd_fb_timer_arm(X1600Lcd *s)
++{
++    if (!s->fb_timer) {
++        s->fb_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
++                                   x1600_lcd_fb_tick, s);
++    }
++    timer_mod(s->fb_timer,
++              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + X1600_FB_PERIOD_NS);
++}
++
++static void x1600_lcd_gfx_invalidate(void *opaque)
++{
++    /* full-frame repaint happens on the next gfx_update */
++}
++
++static bool x1600_lcd_gfx_update(void *opaque)
++{
++    X1600Lcd *s = opaque;
++
++    if (!s->backend_seen) {
++        /* first poll by a display backend (or an HMP screendump): start
++         * the 25 Hz progressive-refresh timer from here, so -display
++         * none boots never run it (zero timer wakeups on the gate path). */
++        s->backend_seen = true;
++        x1600_lcd_fb_timer_arm(s);
++    }
++    x1600_lcd_fb_draw(s);
++    return true;
++}
++
++static const GraphicHwOps x1600_lcd_gfx_ops = {
++    .invalidate = x1600_lcd_gfx_invalidate,
++    .gfx_update = x1600_lcd_gfx_update,
++};
++
+ static uint64_t x1600_lcd_read(void *opaque, hwaddr addr, unsigned size)
+ {
+     X1600Lcd *s = opaque;
+@@ -1167,6 +1285,14 @@ static void x1600_lcd_write(void *opaque, hwaddr addr,
+         /* frame kick: descriptor stored at +0x1000, EOF latches */
+         s->regs[0x2010 / 4] |= 0x20000u;
+         x1600_lcd_update_irq(s);
++        /* v0.70 live display: push the panned frame to the console and
++         * (re)arm the 25 Hz progressive-refresh timer — but only once a
++         * display backend exists; with -display none no timer, no copy,
++         * the guest-visible model stays byte-for-byte the v0.69 one. */
++        if (s->backend_seen) {
++            x1600_lcd_fb_draw(s);
++            x1600_lcd_fb_timer_arm(s);
++        }
+     } else if (addr == 0x2008) {
+         s->regs[0x2010 / 4] &= ~val;    /* W1C of STATE */
+         x1600_lcd_update_irq(s);
+@@ -1790,6 +1916,12 @@ static void x1600_mach_init(MachineState *ms)
+     memory_region_init_io(&x1600_lcd_dev.mmio, NULL, &x1600_lcd_ops,
+                           &x1600_lcd_dev, "x1600.lcd", X1600_LCD_SIZE);
+     memory_region_add_subregion(sysmem, X1600_LCD_BASE, &x1600_lcd_dev.mmio);
++    /* v0.70: graphic console bound to the guest framebuffer, registered
++     * unconditionally (-display none has no listeners and never renders;
++     * -vnc / -display gtk show the emulated screen). */
++    x1600_lcd_dev.con = qemu_graphic_console_create(NULL, 0,
++                                                    &x1600_lcd_gfx_ops,
++                                                    &x1600_lcd_dev);
+ 
+     /* EFUSE 0x13540000: read-protocol model; serves the CHIP_ID segment
+      * for /proc/jz/efuse/efuse_chip_id (soc_efuse insmod needs the CGU
+-- 
+2.53.0
+
