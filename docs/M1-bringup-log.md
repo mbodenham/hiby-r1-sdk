@@ -1105,3 +1105,213 @@ RAM-size walk; unmapped backplane now reads 0xffffffff (patch 0009)
   (run6/msc.log n_scan=20000 section), mscdec_stream.py /
   mscsum.py / mscsample.py / bpmax.py / stackscan*.py / bootdump.py.
   Patch 0009 exported; vendored qemu committed.
+
+## v0.70 (2026-10-14, pdma-dmac round, worktree qemu-pdma-dmac) - the SoC DMAC
+(PDMA) decoded end-to-end from the stock kernel binary + the first-boot trace
+
+- **Baseline re-check (merged state, patch 0009 in).** The boot no longer
+  hangs in the walk: it reaches the player GUI (~30 s) with the DHD
+  failing through 4 power-cycle rounds: per attempt "F1 signature read
+  @0x18000000=0x1000a9a6" -> ~5.2 s silence -> "dhdsdio_probe_attach:
+  si_attach failed!" -> "probe of mmc0:0001:N failed with error -12"
+  (-ENOMEM), 2 probes per round (fn1+fn2), dhd_module_init returns -62
+  after "try cnt 3..0". NO "timeout 3000ms" print in this state, and
+  oopses #1-#6 = __device_attach_driver BadVA c04060a8 at 107.7-108.2 s
+  (the module cascade the round has to clear). Gate baseline
+  docs/traces/boot-baseline-v0.70.txt matches this window.
+- **The DMA evidence (one boot, -d unimp, /tmp/kilo/pdma/run1/).** The
+  PDMA stub sees exactly 6 accesses in the whole boot: probe writes
+  0x13421000=1 and 0x13421030=1 (plus one read of 0x13421030), and ONE
+  channel programming at the first 512-byte transfer:
+  0x13420018=0x3af4000 (DDA: descriptor base, physical RAM), 0x1342100c=1
+  (IRQ enable, channel 0), 0x13420010=0x40000001 (CTL: start, bit0).
+  No MSC register writes follow it (the driver stalls right after
+  arming - the transfer never completes, so every later attempt's prep
+  fails and nothing re-arms). Everything else in the 24.1M-line trace is
+  OST/INTC polling plus the walk's MSC PIO windows.
+- **Driver decode: ingenic_dma (the stock kernel's SoC DMAC driver),
+  vmlinux.bin 0x80400600-0x80402550, kallsyms ingenic_dma_*.**
+  Register map (from the disassembly + the trace):
+  - per-channel regs at 0x13420000 + ch*0x40 (16 channels fit below the
+    IRQ block): +0x08 DTC (read: current count; tx_status progress),
+    +0x10 CTL (write bit0 = start; the IRQ handler writes 0 on
+    completion), +0x18 DDA (descriptor-chain base, physical).
+  - global/IRQ block at 0x13421000: +0x04 IRQ pending (1 bit per
+    channel; read = raw & enable; write-1-clear acks),
+    +0x0c IRQ enable (1 bit per channel). Probe writes +0x00=1 and
+    +0x30=1 are stored with no pinned semantics. use_external_trigger
+    also writes +0x60=0x90 for one path (not hit by the msc flow).
+  - IRQ: INTC line 3 ("pdma" per the DTB interrupts <3> <4> "pdma"
+    "pdmad"; line 4 = pdmad_int_handler reads +0x1010/+0x1014, line 5 =
+    the MCU node's pdmam, a no-op stub handler). The probe unmasks INTC
+    lines 3, 4, 5 (IMCR 0x8/0x10/0x20 in the trace).
+  - Descriptor: 16-byte records in guest RAM {cmd, sadr, dadr, dln},
+    laid out contiguously by prep_slave_sg; the engine walks them in
+    order; cmd bit0 = IRQ-enable per desc, cmd bit1 = LAST descriptor
+    (the driver ORs 2 into the final one). The msc path's cmd word =
+    chan[144]|0x80 = 0x80 (fifo-side width 4 -> 0). CTL register value
+    0x40000001 = swdesc[68] (0x40000000, set in prep) | 1.
+  - build_one_slave_desc: DLN = min(sg len, 512) & ~3 (capped to the
+    MSC block size), SADR/DTA from the sg address / the slave_config
+    FIFO address, DSCR = the next descriptor (in-chain).
+  - ingenic_dma_config: the vendor dma_slave_config puts the FIFO
+    address at +4 (RX src) / +8 (TX dst), the fifo-side width at
+    +12 (RX) / +16 (TX) in {1,2,4} (4 -> chan[144]=0), the burst at
+    +20/+24, and the dreq at +32 (byte) -> chan[0x78]. dreq numbers =
+    dt-bindings/dma/x1000-dma.h: MSC0_TX=0x1a, MSC0_RX=0x1b,
+    MSC1_TX=0x1c, MSC1_RX=0x1d. The DTB msc nodes have NO dmas cells -
+    the channels come through ingenic_dma_filter_fn (param bits
+    [15:8] = dreq, bit16 = "check reserved-chs", bits [20:19] = engine
+    type; the filter stores param[7:0] into the channel).
+  - Completion: pdma_int_handler reads +0x1004, acks (write-1-clear),
+    per channel: reads CTL, writes 0, completes the swdesc, frees the
+    descriptor block (dma pool free; ctrl[152] -= n), clears the
+    channel's active pointer, completes a completion embedded in the
+    channel struct, and re-calls start_trans for queued work.
+  - Quota: alloc_swdesc fails (NULL -> prep -> -ENOMEM) when
+    ctrl[156] - ctrl[152] < nsg; free_swdesc returns the descriptors.
+    With the transfer never completing, ctrl[152] stays at its first
+    allocation and every later prep fails: that is the boot's
+    "-ENOMEM" cascade (si_attach failed / probe error -12).
+- **MSC driver decode (module soc_msc.ko = the live "md_ingenic,mmc"
+  host; the built-in copy in vmlinux.bin 0x80403ff0+ is the same
+  source).** ingenic_mmc_request: blksz < 64 -> host[2372] |= 4 (the
+  PIO/word path: polling_status, no DMA); otherwise the CMD53 runs the
+  DMA path: sg entries staged into host[828+], MSC_DMAC (0x44) = 9 or
+  25 (bit0 = DMA mode, high bits = the burst encoding from the sg
+  alignment), regs[0x48] = a staged sg address, CTRL = 0x4 (START_OP),
+  then IMASK = (CMDAT mirror & ~0x8908) - for CMDAT 0x201 that unmasks
+  nearly everything incl. the data-done bits (the walk phase keeps
+  IMASK = 0xffffffff: the wifi host is fully poll-driven). Data-done
+  source = MSC IFLG bit15 (0x8000): ingenic_mmc_thread_handle's final
+  pending case wakes flag bit4 -> state 4 -> ingenic_mmc_data_done ->
+  mmc_request_done; the handler acks IFLG with write-1-clear and re-
+  masks. CMDAT bit0 = DMA enable flag (the CMDAT mirror |= flags|1).
+  IFLG bit7 = the SDIO irq callback path (not needed yet). The kernel
+  copy's request fn also references dev->dma_ops (+24/+28 =
+  sync_single_for_cpu/device) - the sg cache sync, not a request hook.
+- **Channel request mystery (parked, not blocking the model):** neither
+  the built-in msc driver nor soc_msc.ko imports any dmaengine API, and
+  no __dma_request_channel/dma_get_slave_channel call sites exist in
+  the kernel image; yet the trace shows a genuine ingenic_dma
+  start_trans (the 3 writes above) at the first 512-byte transfer, and
+  the msc driver stalls immediately after arming (no MSC writes, no
+  timeout print, no bus error). Candidates: a vendor hook reached
+  through dev->driver_data (+24/+28 in the module's request fn), or a
+  driver in the Modules list (soc_aic/soc_pwm import
+  __dma_request_channel). The model's descriptor engine is
+  driver-agnostic: the descriptor content (fifo side of SADR/DTA)
+  identifies the transfer; the first instrumented boot will name the
+  owner via the descriptor dump.
+- Model work (next entry): PDMA engine in hw/mips/x1600.c (channels,
+  DDA/CTL, descriptor walk, +0x1004 pending / +0x100c enable, INTC
+  line 3), MSC CMD53 generalization (fn-space byte reads/writes +
+  the armed-channel handshake + IFLG bit15 data-done).
+- Evidence: /tmp/kilo/pdma/run1/ (ttyS0.log = the console 41.7k lines,
+  unimp.log 1 GB), /tmp/kilo/pdma/ingenic_dma.dis + ingenic_mmc.dis +
+  kernel.dis (objdump -b binary), soc_msc_req.dis (module .ko with
+  relocs), /tmp/kilo/dtb-tree.txt (the pdma node), tools/toolchain
+  objdump for the .ko symbol tables.
+
+## v0.71 (2026-10-14, pdma-dmac round, worktree qemu-pdma-dmac) - the DMAC
+question answered: the wifi data path is the MSC's INTERNAL DMA, not the SoC
+PDMA; both engines decoded and modeled; blocker remains si_doattach's
+post-walk check (v0.69 blocker 1)
+
+- **Premise correction (the task's "512-byte transfers go through the SoC
+  DMAC" is wrong for the current state).** A full re-decode of the live
+  drivers shows: (a) the msc host driver ("md_ingenic,mmc" = soc_msc.ko,
+  loaded at 0xc017c000 per the trace PCs; the built-in copy in
+  vmlinux.bin is the same source) never imports any dmaengine symbol and
+  the kernel image has no __dma_request_channel/dma_get_slave_channel
+  call sites outside the serial driver (which fails: no dmas in the
+  DTB); (b) the SoC PDMA channel programming seen in the traces
+  (DDA/enable/CTL) happens at ~250 s guest time and its descriptor is
+  {cmd=0xc90706, sadr=0x1800020 (PCM/TCSM fifo, dreq 0x20 =
+  X1000_DMA_PCM0_TX), dadr=0x26bb800 (an audio buffer), dln=960} - it is
+  the AIC/audio path, not the wifi; (c) the wifi's 512-byte transfers
+  use the **MSC controller's internal DMA**: ingenic_mmc_request stages
+  the sg into the module's uncached descriptor ring (the probe allocates
+  a zeroed page, devm_ioremap_nocache's it, links 128 x 16-byte
+  descriptors at host[828+12i] virt / host[832+12i] phys), writes
+  MSC_DMADA (regs 0x48) = the first descriptor's physical address and
+  MSC_DMAC (regs 0x44) = 9 or 25 (bit0 = DMA enable, bits [4:3] = the
+  burst encoding from the sg alignment) right after MSC_CTRL = 4
+  (START_OP). The sdio core's io_rw_ext_helper issues one sg entry per
+  CMD53, so one descriptor carries the whole phase; the descriptor is
+  {dcmd(0), dat(phys), dln, flags} with flags bit0 = end-of-chain (the
+  driver writes 1). Completion = the MSC's own data-done source (IFLG
+  bit15 -> thread wake flag bit4 -> state 4 -> ingenic_mmc_data_done);
+  IMASK is unmasked for the DMA case (regs 0x24 = CMDAT mirror &
+  ~0x8908). The walk phase keeps IMASK = 0xffffffff (fully polled).
+- **SoC PDMA decode (vmlinux.bin 0x80400600-0x80402550, ingenic_dma_*
+  symbols + the run1 trace) - see v0.70 for the full register map.**
+  Channels at 0x13420000 + ch*0x40 (DTC +0x08 RO, CTL +0x10 bit0 start,
+  DDA +0x18 descriptor base), IRQ block at +0x1000 (pending +0x04 w1c,
+  enable +0x0c, one bit per channel, INTC line 3 per the DTB "pdma";
+  line 4 "pdmad" reads +0x1010/+0x1014, line 5 = the MCU node's pdmam,
+  a stub). Descriptors = 16-byte {cmd, sadr, dadr, dln} chains, cmd
+  bit0 = IRQ-enable, bit1 = last; the dreq arrives via
+  ingenic_dma_filter_fn (param [15:8] = dreq, bit16 = reserved-chs
+  check, [20:19] = engine type); dreq numbers = x1000-dma.h (MSC0_RX
+  0x1b, MSC0_TX 0x1a, MSC1 0x1c/0x1d, PCM0_TX 0x20). Completion frees
+  the descriptor block (dma pool, ctrl[152] -= n against the ctrl[156]
+  quota) and completes a completion embedded in the channel struct.
+- **Model work (tools/patches/qemu-x1600/0010, commit e897c22 in the
+  vendored qemu; gate boot-baseline-v0.70 PASS, boot window unchanged).**
+  1. X1600 PDMA device at 0x13420000 (replaces the stub): the register
+     map above; a channel arms on the CTL bit0 write (the driver's
+     issue_pending precedes the peripheral command) and logs the DDA.
+     Non-MSC targets (the audio PCM fifo) stay armed - the audio
+     completion is future work, the boot runs with it idle exactly as
+     before.
+  2. MSC internal DMA: the CMD53 handler stages the data phase (wr,
+     len, fn, addr, inc; multi-block phases > 512 stage without the
+     fifo); the MSC_DMAC write with bit0 kicks it: the model reads the
+     descriptor at MSC_DMADA, moves dln bytes between the fn space and
+     guest memory in 512-byte chunks (the byte reader/writer shared
+     with the CMD52 semantics), raises STAT XFER_DONE + IFLG bit15 +
+     the msc IRQ.
+  3. CMD53 fn-space generalization: x1600_msc_fn_read/fn_write cover
+     fn0 (CCCR 0x00-0xfff, CIS at 0x1000-0x13ff) and fn1 (the SBADDR
+     window regs, the ChipClkCSR ALP/HT mirrors, the 32K window bank
+     chunks with the [0x80000,0x18000000) unmapped 0xff rule). The walk
+     (fn1 window CMD53s) reads identical bytes through the new reader;
+     the PIO path (blksz < 64, the request-fn STAT poll + the RXFIFO
+     drain) is unchanged.
+- **Current blocker, pinned precisely (v0.69's "next blocker 1", still
+  standing): si_doattach fails immediately after the RAM-size walk.**
+  Evidence (run5, 300 s, /tmp/kilo/pdma/run5/ + run7): the F1 badge
+  read at 16.5 s, the walk's linear SRAM scan [0, 0x80000) (~5.2 s, 16
+  windows x 8192 word reads, breaks at the first unmapped word =
+  0x80000 with patch 0009), then "dhdsdio_probe_attach: si_attach
+  failed!" with ZERO further SDIO traffic before it - no SOCSRAM core
+  register reads, no CIS reads. The DHD's CIS reads are NOT 512-byte
+  CMD53s: sdioh_cis_read (cywdhd.ko 0x88120) loops
+  sdioh_sdmmc_card_regread(sd, fn=0, func_cis_ptr[fn]+i, 1, &b) - 512
+  CMD52 byte reads per function into fn0's CIS space, which the model
+  already serves; in run7's trace the fn0 0x1000 area gets only ~2
+  CMD52 reads before the flow stalls, i.e. the probe never reaches the
+  CIS loop at all - the walk itself (or the check on its result, in
+  si_doattach.isra.10, the walk loop reads through the si_t/sb_t
+  curmap indirection at +4/+44/+172/+1540 and the SOCSRAM bank loop at
+  0x2dd4c-0x2de60 reads/writes curmap+184 with bit0 |= 1) rejects the
+  state. Candidate next probes: dump the SRAM contents the walk saw
+  (all zeros in the model - if the DHD expects the SROM/OTP shadow or
+  a bank-valid bit set somewhere in [0,0x80000), the walk's break at
+  0x80000 is "no RAM found"); decode si_doattach's post-walk branches
+  (0x2d780-0x2e150) against the walk's result; or stop the VM mid-walk
+  and resolve the interrupted stack (the pt_regs on the exception
+  stack) against cywdhd.ko symbols - the module base for a boot can be
+  recovered from an oops print (bcmsdh_sdmmc_probe+0x12c @ c03c5a54 =>
+  base 0xc033d000 for run6).
+- Note: the /tmp quota was exhausted during this round by two foreign
+  qemu processes holding ~7.2 GB of deleted qemu.out (announced on the
+  board; untouched per the no-pkill rule). If a future round sees
+  "Disk quota exceeded" from compilers or the boot test, use
+  --out on the main fs and TMPDIR there.
+- Evidence: /tmp/kilo/pdma/run5 (console, timeline), run7 (mid-walk RAM
+  dump + registers via the monitor: the walk task registers t3=0xffffffff
+  = the unmapped read, sp 0x82005fc8), cywdhd_full.dis (module-wide
+  objdump with relocs), syms.txt, si_doattach.dis, ingenic_dma.dis,
+  soc_msc_req.dis; the gate pass with .cctmp/bt.

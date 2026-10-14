@@ -114,18 +114,32 @@ qemu-dhd-backplane; supersedes the v0.67 header below for the wifi item):
   0x18000000) reads 0xffffffff, before the chunk-cache lookup) so the
   walk breaks at exactly 0x80000 (512KB SOCSRAM) in ~1.1 s instead of
   walking the 32-bit space for ~4.7 h.
-- **Wifi state after 0009 (M1 log v0.69):** walk breaks correctly, but
-  si_doattach still rejects the attach (~1.2 s per attempt, no further
-  SDIO reads after the walk - local check, cause not yet identified;
-  break position makes no difference), and the 512-byte CIS reads hang
-  in the soc_msc DMA path ("timeout 3000ms op:53 r sz:512 state:0" -
-  the request never reaches the MSC; the model has no SoC DMAC
-  device). Next wifi round: identify the si_doattach post-walk check
-  (dump-guided) and implement the Ingenic DMAC (descriptor chain +
-  completion IRQ, pattern like x1600_sfc_dma) - the firmware download
-  will ride the same path.
+- **Wifi state after the pdma-dmac round (M1 log v0.70-v0.71):** the DMAC
+  question is answered - the 512-byte data path is the **MSC controller's
+  internal DMA** (MSC_DMAC 0x44 bit0 + MSC_DMADA 0x48 = the descriptor's
+  physical address; the descriptor = {dcmd, dat(phys), dln, flags-bit0=end};
+  completion = the msc's own IFLG bit15 data-done), NOT the SoC PDMA. The
+  SoC PDMA (0x13420000, 16 ch stride 0x40, IRQ block +0x1000, INTC line 3)
+  is decoded and modeled too (patch 0010) and is exercised by the AIC
+  audio path (PCM0_TX dreq 0x20, the ~250 s channel programming in the
+  traces); the audio completion is still future work. The model's CMD53
+  data path now stages the phase and completes it on the internal-DMA
+  kick, including multi-block phases and the fn-space byte semantics.
+  Gate boot-baseline-v0.70 still passes: the probe fails BEFORE any
+  512-byte CMD53 is issued, in si_doattach immediately after the RAM-size
+  walk (~5.2 s, breaks at 0x80000), with zero further SDIO traffic - the
+  DHD's CIS reads would be 512 CMD52 byte reads per fn into fn0's CIS
+  space (sdioh_cis_read loops sdioh_sdmmc_card_regread), which the model
+  already serves, so the walk (or the check on its result inside
+  si_doattach.isra.10 - see M1 log v0.71 for the disassembly pointers)
+  is the standing blocker.
 - **Next (M2 exit):** 1. the wifi session continues from the si_doattach
-  failure above; success = cywdhd returns 0, cascade oopses #1–#6
+  failure above (decode the walk's expectation: the SRAM contents the
+  walk sees are all zeros in the model - check for an SROM/OTP shadow or
+  a bank-valid bit the DHD expects in [0,0x80000), and decode
+  si_doattach's post-walk branches 0x2d780-0x2e150); the MSC internal-DMA
+  model is stage-ready for the 512-byte transfers the moment the probe
+  gets past it. Success = cywdhd returns 0, cascade oopses #1–#6
   gone, rcS proceeds. 2. then theme → `S92_03_start_music_player`
   **= M2 EXIT**. 3. Player-launch followups (research brief): BT
   console pollution (move the console to ttyS2 0x10032000 — the sibling

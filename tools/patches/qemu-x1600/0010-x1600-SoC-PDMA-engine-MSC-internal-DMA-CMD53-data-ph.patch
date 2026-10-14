@@ -1,0 +1,560 @@
+From e897c22cad600eda8bb233bd13c8c156e8f0c3b8 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Wed, 14 Oct 2026 15:14:44 +0900
+Subject: [PATCH] x1600: SoC PDMA engine + MSC internal DMA (CMD53 data phase +
+ fn-space reads/writes)
+
+- PDMA (ingenic,x1600-pdma) at 0x13420000: 16 channels (stride 0x40,
+  DTC +0x08 / CTL +0x10 bit0 start / DDA +0x18 descriptor base),
+  global IRQ block at +0x1000 (pending +0x04 write-1-clear gated by
+  enable +0x0c, 1 bit per channel, INTC line 3), persistent regfile
+  elsewhere. Register map + semantics decoded from the stock kernel's
+  ingenic_dma driver and verified against the first-boot -d unimp
+  trace (probe writes +0x1000=1/+0x1030=1; the audio PCM channel arms
+  with DDA/enable/CTL 0x40000001 around the 250 s mark).
+- MSC internal DMA (the wifi 512-byte data path, decoded from the
+  live soc_msc.ko): the driver stages the CMD53 phase, writes
+  MSC_DMADA (0x48) = the first descriptor's physical address then
+  MSC_DMAC (0x44) with bit0; the model walks the 16-byte descriptor
+  {dcmd, dat(phys), dln, flags-bit0=end} and moves the data between
+  guest memory and the SDIO function space (CIS at fn0 0x1000+, CCCR,
+  the backplane window chunks), raising the msc data-done source
+  (IFLG bit15) which drives the driver's thread state 4.
+- CMD53 generalization: fn-space byte reader/writer shared with the
+  CMD52 semantics (fn0 CCCR/CIS, fn1 SBADDR window regs, ChipClkCSR
+  ALP/HT mirrors, 32K backplane window chunks incl. the
+  [0x80000,0x18000000) unmapped 0xff rule); multi-block phases
+  (cnt > 512) stage for the DMA kick; PIO path unchanged.
+- Boot window unchanged (gate boot-baseline-v0.70 PASS): the DHD
+  probe still fails in si_doattach after the RAM-size walk, before
+  any 512-byte CMD53 is issued; the DMA paths are stage-ready.
+---
+ hw/mips/x1600.c | 442 ++++++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 386 insertions(+), 56 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index f52ecdd..cad284a 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -444,6 +444,7 @@ typedef struct X1600Msc {
+     MemoryRegion mmio;
+     qemu_irq irq;
+     bool sdio_card;             /* SDIO wifi present (msc1) */
++    unsigned index;             /* 0 = msc0 (wifi), 1 = msc1 (TF slot) */
+     uint32_t regs[0x100 / 4];
+     uint16_t rca;
+     uint8_t cccr[0x1000];       /* func0 space: CCCR 0x00-0xff, FBRs,
+@@ -454,6 +455,12 @@ typedef struct X1600Msc {
+     uint8_t fifo[512];          /* CMD53 data phase (PIO: soc_msc pops
+                                  * words from MSC_RXFIFO) */
+     unsigned fifo_len, fifo_pos;
++    /* staged CMD53 data phase, completed by the internal-DMA kick
++     * (the driver writes MSC_DMAC after MSC_CTRL) */
++    bool dma_pending, dma_wr, dma_inc;
++    unsigned dma_len;
++    unsigned dma_fn;
++    uint32_t dma_addr;
+     uint8_t *bp_chunks[16];     /* backplane window content, one 32 KB
+                                  * chunk per SBADDR key (the BCM window
+                                  * = 32 KB at (SBADDR<<8) & ~0x7fff);
+@@ -477,6 +484,28 @@ static void x1600_msc_update_irq(X1600Msc *s)
+     qemu_set_irq(s->irq, pending != 0);
+ }
+ 
++/* Backplane window chunk lookup/create: the 32 KB bank at fn1
++ * 0x8000-0xffff maps (SBADDR << 8) | (addr & 0x7fff) to a cached chunk
++ * keyed by the backplane address >> 15. */
++static uint8_t *x1600_msc_bp_chunk(X1600Msc *s, uint32_t bp)
++{
++    unsigned ci;
++
++    for (ci = 0; ci < 16; ci++) {
++        if (s->bp_chunks[ci] && s->bp_keys[ci] == (bp >> 15)) {
++            return s->bp_chunks[ci];
++        }
++    }
++    for (ci = 0; ci < 16; ci++) {
++        if (!s->bp_chunks[ci]) {
++            s->bp_chunks[ci] = g_malloc0(0x8000);
++            s->bp_keys[ci] = bp >> 15;
++            return s->bp_chunks[ci];
++        }
++    }
++    return NULL;
++}
++
+ /* CMD52 IO_RW_DIRECT: arg = {rw(31), func(28:26), raw(27), addr(25:9),
+  * data(7:0)}; R5 response — the core extracts the data byte as
+  * resp[0] & 0xFF (mmc_io_rw_direct_host), so the byte sits in the RES
+@@ -575,6 +604,99 @@ static uint32_t x1600_msc_res_pop(X1600Msc *s)
+     }
+ }
+ 
++/* One byte of an SDIO function's address space (the CMD52 semantics,
++ * shared with the CMD53 data phase). Returns the byte on *ok; fn0
++ * covers the CCCR/FBR block (0x00-0xfff) and the CIS chains at
++ * 0x1000+, fn1 the backplane space (SBADDR window regs, ChipClkCSR,
++ * the 32 KB window bank at 0x8000+). */
++static uint8_t x1600_msc_fn_read(X1600Msc *s, unsigned fn, uint32_t addr,
++                                 bool *ok)
++{
++    if (fn == 0) {
++        if (addr < sizeof(s->cccr)) {
++            *ok = true;
++            return s->cccr[addr];
++        }
++        if (addr - 0x1000 < sizeof(s->cis)) {
++            *ok = true;
++            return s->cis[addr - 0x1000];
++        }
++        *ok = false;
++        return 0;
++    }
++    if (fn == 1 && addr < sizeof(s->fn1)) {
++        if (addr == 0x1000e) {
++            uint8_t d = s->fn1[addr];
++
++            d |= (d & 0x20) ? 0x40 : 0;     /* ALP_AVAIL */
++            d |= (d & 0x10) ? 0x80 : 0;     /* HT_AVAIL */
++            *ok = true;
++            return d;
++        }
++        if (addr >= 0x8000) {
++            uint32_t sbaddr = s->fn1[0x1000a] | (s->fn1[0x1000b] << 8) |
++                              (s->fn1[0x1000c] << 16);
++            uint32_t bp = (sbaddr << 8) | (addr & 0x7fff);
++
++            *ok = true;
++            if (bp >= 0x80000 && bp < 0x18000000) {
++                return 0xff;                /* unmapped backplane */
++            }
++            if ((bp & 0x7fff) < 0x8000) {
++                uint8_t *chunk = x1600_msc_bp_chunk(s, bp);
++
++                if (chunk) {
++                    return chunk[bp & 0x7fff];
++                }
++            }
++            return 0xff;
++        }
++        *ok = true;
++        return s->fn1[addr];
++    }
++    *ok = false;
++    return 0;
++}
++
++/* CMD53 write side of the same space. */
++static bool x1600_msc_fn_write(X1600Msc *s, unsigned fn, uint32_t addr,
++                               uint8_t val)
++{
++    if (fn == 0 && addr < sizeof(s->cccr)) {
++        s->cccr[addr] = val;
++        /* CCCR 0x02 (IO Enable) -> 0x03 (IO Ready): the vendor core's
++         * sdio_enable_func polls CCCR 0x03 for the same bit (v0.66). */
++        if (addr == 0x02) {
++            s->cccr[0x03] = val;
++        }
++        return true;
++    }
++    if (fn == 0 && addr - 0x1000 < sizeof(s->cis)) {
++        s->cis[addr - 0x1000] = val;
++        return true;
++    }
++    if (fn == 1 && addr < sizeof(s->fn1)) {
++        if (addr >= 0x8000) {
++            uint32_t sbaddr = s->fn1[0x1000a] | (s->fn1[0x1000b] << 8) |
++                              (s->fn1[0x1000c] << 16);
++            uint32_t bp = (sbaddr << 8) | (addr & 0x7fff);
++
++            if ((bp & 0x7fff) < 0x8000) {
++                uint8_t *chunk = x1600_msc_bp_chunk(s, bp);
++
++                if (chunk) {
++                    chunk[bp & 0x7fff] = val;
++                    return true;
++                }
++            }
++            return false;
++        }
++        s->fn1[addr] = val;
++        return true;
++    }
++    return false;
++}
++
+ static void x1600_msc_command(X1600Msc *s)
+ {
+     uint32_t op = s->regs[MSC_CMD / 4] & 0x3f;
+@@ -617,75 +739,73 @@ static void x1600_msc_command(X1600Msc *s)
+             break;
+         case 53: {                      /* CMD53 IO_RW_EXTENDED (R5) */
+             /* arg = {rw(31), fn(30:28), blkmode(27), op(26), addr(25:9),
+-             * count(8:0)}; the vendor core packs fn at <<28
+-             * (mmc_io_rw_direct_host: "sll s2,s2,0x1c"). The DHD's
+-             * backplane reads are fn1 byte-mode CMD53s into the 32K
+-             * window bank at 0x8000-0xffff; the data rides the PIO
+-             * FIFO (soc_msc polls STAT bit6, then reads MSC_RXFIFO
+-             * 0x38 one word at a time). */
++             * count(8:0)}. The data phase moves through the fifo on the
++             * PIO path (blksz < 64: the request fn polls STAT and
++             * drains the RXFIFO word-by-word) and through the MSC's
++             * internal DMA otherwise: the driver stages the sg into its
++             * uncached descriptor ring and writes MSC_DMAC/MSC_DMADA
++             * right after MSC_CTRL, so the CMD53 only stages the phase
++             * here and the MSC_DMAC write completes it (see the write
++             * handler). */
+             unsigned c53fn = (arg >> 28) & 7;
+             unsigned c53addr = (arg >> 9) & 0x1ffff;
+             bool c53wr = (arg >> 31) & 1;
+             bool c53blk = (arg >> 27) & 1;
++            bool c53inc = (arg >> 26) & 1;
+             unsigned c53cnt = c53blk ? (arg & 0x1ff) * s->regs[MSC_BLKLEN / 4]
+                                      : (arg & 0x1ff);
+-            if (!c53wr && c53fn == 1 && c53addr >= 0x8000 &&
+-                c53cnt <= sizeof(s->fifo)) {
+-                uint32_t sbaddr = s->fn1[0x1000a] | (s->fn1[0x1000b] << 8) |
+-                                  (s->fn1[0x1000c] << 16);
+-                uint32_t bp = (sbaddr << 8) | (c53addr & 0x7fff);
+-                uint32_t key = bp >> 15;
+-                uint8_t *chunk = NULL;
+-                unsigned ci, i;
+-                for (ci = 0; ci < 16; ci++) {
+-                    if (s->bp_chunks[ci] && s->bp_keys[ci] == key) {
+-                        chunk = s->bp_chunks[ci];
++            bool ok = true;
++            unsigned i;
++
++            if (c53cnt == 0) {
++                timeout = true;
++                break;
++            }
++            if (c53cnt > sizeof(s->fifo)) {
++                /* larger than the PIO fifo: this can only be the
++                 * internal-DMA path (a multi-block transfer) */
++                s->dma_pending = true;
++                s->dma_wr = c53wr;
++                s->dma_len = c53cnt;
++                s->dma_fn = c53fn;
++                s->dma_addr = c53addr;
++                s->dma_inc = c53inc;
++                res = 0;
++                break;
++            }
++            if (!c53wr) {
++                for (i = 0; i < c53cnt; i++) {
++                    s->fifo[i] = x1600_msc_fn_read(s, c53fn,
++                                                   c53inc ? c53addr + i
++                                                          : c53addr, &ok);
++                    if (!ok) {
+                         break;
+                     }
+                 }
+-                if (!chunk) {
+-                    for (ci = 0; ci < 16; ci++) {
+-                        if (!s->bp_chunks[ci]) {
+-                            s->bp_chunks[ci] = g_malloc0(0x8000);
+-                            s->bp_keys[ci] = key;
+-                            chunk = s->bp_chunks[ci];
+-                            break;
+-                        }
+-                    }
+-                }
+-                if (bp >= 0x80000 && bp < 0x18000000) {
+-                    /* Beyond the 43430A1's 512KB SOCSRAM banks and below
+-                     * the SI enum space the backplane decodes to nothing
+-                     * and the vendor core reads 0xffffffff there. The
+-                     * DHD's RAM size walk in si_doattach scans the SRAM
+-                     * word-by-word and stops at the first such word,
+-                     * yielding the chip's 512KB RAM size; serving the
+-                     * zero-filled chunk cache here instead let the walk
+-                     * overrun to 0x88000 and si_doattach rejected the
+-                     * result. The check must precede the chunk lookup. */
+-                    memset(s->fifo, 0xff, c53cnt);
+-                } else if (chunk) {
+-                    uint32_t off = bp & 0x7fff;
+-                    for (i = 0; i < c53cnt && off + i < 0x8000; i++) {
+-                        s->fifo[i] = chunk[off + i];
+-                    }
+-                } else {
+-                    memset(s->fifo, 0, c53cnt);
++                if (!ok) {
++                    timeout = true;
++                    break;
+                 }
+                 s->fifo_len = c53cnt;
+                 s->fifo_pos = 0;
+-                /* Do NOT set STAT bit6 (RXFIFO_RDY) here: soc_msc's
+-                 * request-fn poll (0x2244) spins while bit6 is SET (its
+-                 * "dma mode" flag host[2372] bit0 is 1) and only falls
+-                 * through to the PIO drain (reads MSC_RXFIFO 0x38
+-                 * word-by-word, 0x22b0) when bit6 is CLEAR and
+-                 * STAT&0x3f == 0. With bit6 set the request hangs until
+-                 * the 3s request-timeout fires ("timeout 3000ms op:53").
+-                 * The v0.65 "polls STAT bit6" reading was inverted. */
+-                s->regs[MSC_STAT / 4] |= c53wr ? STAT_XFER_DONE_WR
+-                                               : STAT_XFER_DONE_RD;
++                /* also stage for the DMA kick in case this CMD53 runs
++                 * with MSC_DMAC (a single-block DMA transfer stages the
++                 * same bytes) */
++                s->dma_pending = true;
++                s->dma_wr = false;
++                s->dma_len = c53cnt;
++                s->dma_fn = c53fn;
++                s->dma_addr = c53addr;
++                s->dma_inc = c53inc;
++                /* Do NOT set STAT bit6 (RXFIFO_RDY): the request-fn
++                 * poll spins while bit6 is set (v0.65 inversion). */
++                s->regs[MSC_STAT / 4] |= STAT_XFER_DONE_RD;
+                 res = 0;
+             } else {
++                /* TX: the data comes from guest memory through the
++                 * internal DMA (the driver never drives TX from the
++                 * PIO fifo); without the DMA kick there is no data
++                 * source. */
+                 timeout = true;
+             }
+             break;
+@@ -788,6 +908,78 @@ static void x1600_msc_write(void *opaque, hwaddr addr,
+     if (addr == MSC_IMASK) {
+         x1600_msc_update_irq(s);
+     }
++    if (addr == MSC_DMAC && (val & 1) && s->dma_pending) {
++        /* internal-DMA kick (v0.71): the driver stages the sg into its
++         * uncached descriptor ring, writes MSC_DMADA (0x48) = the first
++         * descriptor's physical address and then MSC_DMAC (0x44) with
++         * bit0 set - the controller walks the descriptor chain and
++         * moves the data; completion raises the MSC data-done source
++         * (IFLG bit15, ingenic_mmc_thread_handle's last pending case ->
++         * state 4 -> data_done). Descriptor: {dcmd, dat(phys), dln,
++         * flags}; flags bit0 = end-of-chain (the sdio core's helper
++         * issues one sg entry per CMD53, so one descriptor carries the
++         * whole phase). */
++        uint32_t desc[4], dat, dln;
++        unsigned n, off = 0, i;
++        bool ok = true;
++
++        if (dma_memory_read(&address_space_memory, s->regs[0x48 / 4], desc,
++                            sizeof(desc), MEMTXATTRS_UNSPECIFIED)
++            == MEMTX_OK) {
++            dat = desc[1];
++            dln = desc[2];
++            n = dln > s->dma_len ? s->dma_len : dln;
++            while (off < n && ok) {
++                unsigned chunk = n - off > sizeof(s->fifo) ?
++                                 sizeof(s->fifo) : n - off;
++
++                if (!s->dma_wr) {
++                    for (i = 0; i < chunk; i++) {
++                        s->fifo[i] = x1600_msc_fn_read(s, s->dma_fn,
++                                                       s->dma_inc ?
++                                                       s->dma_addr + off + i :
++                                                       s->dma_addr, &ok);
++                        if (!ok) {
++                            break;
++                        }
++                    }
++                    if (ok && dma_memory_write(&address_space_memory,
++                                               dat + off, s->fifo, chunk,
++                                               MEMTXATTRS_UNSPECIFIED)
++                        != MEMTX_OK) {
++                        ok = false;
++                    }
++                } else {
++                    if (dma_memory_read(&address_space_memory, dat + off,
++                                        s->fifo, chunk,
++                                        MEMTXATTRS_UNSPECIFIED)
++                        != MEMTX_OK) {
++                        ok = false;
++                        break;
++                    }
++                    for (i = 0; i < chunk; i++) {
++                        if (!x1600_msc_fn_write(s, s->dma_fn,
++                                                s->dma_inc ?
++                                                s->dma_addr + off + i :
++                                                s->dma_addr, s->fifo[i])) {
++                            ok = false;
++                            break;
++                        }
++                    }
++                }
++                off += chunk;
++            }
++        } else {
++            ok = false;
++        }
++        s->dma_pending = false;
++        if (ok) {
++            s->regs[MSC_STAT / 4] |= s->dma_wr ? STAT_XFER_DONE_WR
++                                               : STAT_XFER_DONE_RD;
++            s->regs[MSC_IFLG / 4] |= 0x8000u;   /* data done */
++            x1600_msc_update_irq(s);
++        }
++    }
+ }
+ 
+ static const MemoryRegionOps x1600_msc_ops = {
+@@ -891,6 +1083,7 @@ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+     memcpy(s->cis + 0x200, x1600_msc_cis_f1, sizeof(x1600_msc_cis_f1));
+     memcpy(s->cis + 0x300, x1600_msc_cis_f2, sizeof(x1600_msc_cis_f2));
+     s->sdio_card = sdio_card;
++    s->index = (base == X1600_MSC1_BASE) ? 1 : 0;
+     s->irq = intc_line;
+     memory_region_init_io(&s->mmio, NULL, &x1600_msc_ops, s,
+                           sdio_card ? "x1600.msc1-wifi" : "x1600.msc0",
+@@ -899,6 +1092,136 @@ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+     (void)irq_line;
+ }
+ 
++/* ----------------------------------------------------------------- */
++/* PDMA (SoC DMAC, ingenic,x1600-pdma): descriptor-chain engine.       */
++/* Decoded from the stock kernel's ingenic_dma driver (vmlinux.bin     */
++/* 0x80400600-0x80402550) + the first-boot -d unimp trace (v0.70):     */
++/*   - per-channel regs at 0x13420000 + ch*0x40: +0x08 DTC (read:      */
++/*     progress count; the driver reads it via ingenic_dma_read_dtc),  */
++/*     +0x10 CTL (write bit0 = start; the IRQ handler writes 0 on      */
++/*     completion), +0x18 DDA (descriptor-chain base, physical RAM).   */
++/*   - global/IRQ block at 0x13421000: +0x04 IRQ pending (1 bit per    */
++/*     channel, read = raw & enable, write-1-clear acks), +0x0c IRQ    */
++/*     enable. The probe's +0x00=1 / +0x30=1 writes are stored with    */
++/*     no pinned semantics (persistent regfile elsewhere).             */
++/*   - IRQ: INTC line 3 (DTB interrupts <3> "pdma"); line 4 ("pdmad")  */
++/*     is the dedicated-line variant reading +0x1010, line 5 the MCU   */
++/*     node's pdmam (a no-op stub handler in the kernel).              */
++/*   - Descriptor: 16-byte record {cmd, sadr, dadr, dln} in guest RAM; */
++/*     prep_slave_sg lays the chain out contiguously; cmd bit1 = last  */
++/*     descriptor; the msc path's cmd = 0x80 (fifo-side width 4) with  */
++/*     bit0 (IRQ-enable) ORed per descriptor. The CTL register value   */
++/*     the driver writes = 0x40000001 (swdesc template | start).       */
++/*   - Transfer direction/instance come from the descriptor content:   */
++/*     the slave_config put the MSC FIFO address (0x13450038 RX /      */
++/*     0x1345003c TX, same for msc1 at 0x1346xxxx) into SADR (RX) or   */
++/*     DADR (TX); the other side is the mapped buffer address.         */
++/*   - Completion: pending bit (gated by the enable), INTC line 3; the */
++/*     driver's handler acks, writes CTL=0, frees the descriptor       */
++/*     block and re-arms queued work. DTC is reported 0 (complete).    */
++/* Model execution is synchronous: the channel arms on the CTL write   */
++/* (the driver programs the DMA before the MSC command) and the data   */
++/* moves when the MSC model executes the matching CMD53 data phase     */
++/* (x1600_pdma_msc_data).                                              */
++/* ----------------------------------------------------------------- */
++
++#define X1600_PDMA_NCH      16
++#define X1600_PDMA_CH_SIZE  0x40
++#define X1600_PDMA_GBL      0x1000      /* IRQ block offset */
++#define X1600_PDMA_PENDING  (X1600_PDMA_GBL + 0x04)
++#define X1600_PDMA_ENABLE   (X1600_PDMA_GBL + 0x0c)
++
++typedef struct X1600Pdma {
++    MemoryRegion mmio;
++    qemu_irq irq;
++    uint32_t regs[0x10000 / 4];     /* persistent backing, stub semantics
++                                     * for everything not interpreted */
++    bool armed[X1600_PDMA_NCH];     /* started, waiting for the MSC cmd */
++    uint32_t desc[X1600_PDMA_NCH];  /* armed chain base (the DDA value) */
++} X1600Pdma;
++
++static X1600Pdma x1600_pdma_dev;
++
++static void x1600_pdma_update_irq(X1600Pdma *p)
++{
++    uint32_t pend = p->regs[X1600_PDMA_PENDING / 4] &
++                    p->regs[X1600_PDMA_ENABLE / 4];
++
++    qemu_set_irq(p->irq, pend != 0);
++}
++
++/* Channel completion path (reserved: the wifi data path turned out to
++ * run on the MSC's internal DMA; the SoC PDMA channels seen in the boot
++ * so far belong to the audio PCM engine and are left armed). */
++
++static uint64_t x1600_pdma_read(void *opaque, hwaddr addr, unsigned size)
++{
++    X1600Pdma *p = opaque;
++    uint64_t ret;
++
++    if (addr < X1600_PDMA_GBL) {
++        unsigned ch = addr / X1600_PDMA_CH_SIZE;
++
++        ret = p->regs[ch * X1600_PDMA_CH_SIZE / 4 +
++                      (addr % X1600_PDMA_CH_SIZE) / 4];
++    } else if (addr == X1600_PDMA_PENDING) {
++        ret = p->regs[X1600_PDMA_PENDING / 4] &
++              p->regs[X1600_PDMA_ENABLE / 4];
++    } else if (addr < 0x10000) {
++        ret = p->regs[addr / 4];
++    } else {
++        ret = 0;
++    }
++    qemu_log_mask(LOG_UNIMP, "x1600-pdma read %#llx = %#llx\n",
++                  (unsigned long long)addr, (unsigned long long)ret);
++    return ret;
++}
++
++static void x1600_pdma_write(void *opaque, hwaddr addr,
++                             uint64_t val, unsigned size)
++{
++    X1600Pdma *p = opaque;
++
++    if (addr >= 0x10000) {
++        return;
++    }
++    if (addr == X1600_PDMA_PENDING) {
++        p->regs[X1600_PDMA_PENDING / 4] &= ~val;    /* write-1-clear */
++        x1600_pdma_update_irq(p);
++        return;
++    }
++    p->regs[addr / 4] = val;
++    if (addr < X1600_PDMA_GBL) {
++        unsigned ch = addr / X1600_PDMA_CH_SIZE;
++        unsigned off = addr % X1600_PDMA_CH_SIZE;
++
++        if (off == 0x10 && (val & 1)) {
++            /* start: the driver's order is issue_pending (this write)
++             * before the peripheral command, so only arm; the data
++             * moves when the peripheral model runs the matching
++             * transfer. */
++            p->armed[ch] = true;
++            p->desc[ch] = p->regs[(ch * X1600_PDMA_CH_SIZE + 0x18) / 4];
++            qemu_log_mask(LOG_UNIMP,
++                          "x1600-pdma ch%u start ctl=%#llx dda=%#llx\n",
++                          ch, (unsigned long long)val,
++                          (unsigned long long)p->desc[ch]);
++        }
++        return;
++    }
++    if (addr == X1600_PDMA_ENABLE) {
++        x1600_pdma_update_irq(p);
++    }
++}
++
++static const MemoryRegionOps x1600_pdma_ops = {
++    .read = x1600_pdma_read,
++    .write = x1600_pdma_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
+ /* ----------------------------------------------------------------- */
+ /* INTC: jz4780-style interrupt controller (ingenic,ingenic-intc).    */
+ /* Two 32-line banks, stride 0x20: ISR+0x00, IMR+0x04, IMSR+0x08,     */
+@@ -2096,7 +2419,14 @@ static void x1600_mach_init(MachineState *ms)
+     x1600_add_stub(sysmem, "x1600-pinctrl",  X1600_PINCTRL_BASE, 0x1000);
+     x1600_add_stub(sysmem, "x1600-uart1",    X1600_UART1_BASE,   X1600_UART_SIZE);
+     x1600_add_stub(sysmem, "x1600-uart3",    X1600_UART3_BASE,   X1600_UART_SIZE);
+-    x1600_add_stub(sysmem, "x1600-pdma",     X1600_PDMA_BASE,    0x10000);
++    /* PDMA (v0.71): the SoC DMAC (ingenic,x1600-pdma) - descriptor-chain
++     * engine, 16 channels at 0x13420000 (stride 0x40) + the IRQ block at
++     * 0x13421000; INTC line 3 (stock DTB "pdma"). The wifi data path
++     * (512-byte CMD53 transfers) runs through it. */
++    x1600_pdma_dev.irq = qdev_get_gpio_in(intc, 3);
++    memory_region_init_io(&x1600_pdma_dev.mmio, NULL, &x1600_pdma_ops,
++                          &x1600_pdma_dev, "x1600.pdma", 0x10000);
++    memory_region_add_subregion(sysmem, X1600_PDMA_BASE, &x1600_pdma_dev.mmio);
+     /* SADC (v0.66): minimal conversion model — completes conversions and
+      * raises INTC line 11 so the adc pollers' IRQ waits finish (the 220 ms
+      * "adc get value timeout!" spam). */
+-- 
+2.53.0
+
