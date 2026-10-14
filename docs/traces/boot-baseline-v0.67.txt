@@ -1,10 +1,10 @@
 # x1600-boot-test baseline — M4 boot regression gate (docs/PLAN.md M4)
-# generated: 2026-10-13T08:10:26Z
+# generated: 2026-10-14T00:48:18Z
 # firmware: stock v1.6 UNMODIFIED; kernel /home/matt/dev/hiby-r1-sdk/unpacked/1.6/vmlinux.bin md5 dceda6683b9bc56b9a4110530b9add3f
 # nand image /home/matt/dev/hiby-r1-sdk/unpacked/1.6/nand-r1.bin md5 ae41e974e78aab2730774d05c9cbf37c
-# qemu binary /home/matt/dev/hiby-r1-sdk/tools/vendors/qemu/build/qemu-system-mipsel md5 546b9dd0ec4d26d16a3f96dbf8dbe4b3
-# main repo HEAD: 09b17ea
-# vendored qemu rev: e282fd9 (hw/mips/x1600.c: UNCOMMITTED bring-up state)
+# qemu binary /home/matt/dev/hiby-r1-sdk/tools/vendors/qemu/build/qemu-system-mipsel md5 670a9c9d443d619f9c495060495f7f80
+# main repo HEAD: dd6898c
+# vendored qemu rev: 320c3d8 (hw/mips/x1600.c: clean)
 # boot cmd: qemu-system-mipsel -M x1600 -kernel <kernel> -serial file:<log> -display none -monitor none -no-reboot
 # window: serial output through the terminal marker "UBIFS (ubi1:0): default file-system created" —
 #   the documented rcS end state (wifi/DHD failure stall); the gate does
@@ -59,10 +59,10 @@ Build-time adjustment of leaf fanout to 32.
 NR_IRQS:200
 x1600 Clock Power Management Unit init!
 =========== x1600 clocks: =============
-apll     = 0 , mpll     = 0, ddr = 0
+apll     = 1200000000 , mpll     = 1200000000, ddr = 0
 cpu_clk  = 0 , l2c_clk  = 0
-ahb0_clk = 0 , ahb2_clk = 0
-apb_clk  = 0 , ext_clk  = 24000000
+ahb0_clk = 0 , ahb2_clk = 200000000
+apb_clk  = 1200000000 , ext_clk  = 24000000
 
 clocksource: ingenic_clocksource: mask: 0xffffffffffffffff max_cycles: 0x1623fa770, max_idle_ns: 1763180808952 ns
 sched_clock: 64 bits at 1500kHz, resolution 666ns, wraps every 4398046510951ns
@@ -695,39 +695,10 @@ Creating 7 MTD partitions on "sfc_nand":
 0x000005c80000-0x000007d00000 : "userdata"
 initcall ingenic_sfc_drv_init+0x0/0x18 returned 0 after <N> usecs
 calling  serial_ingenic_init+0x0/0x68 @ <PID>
-10030000.serial: ttyS0 at MMIO 0x10030000 (irq = 55, base_baud = 0) is a uart0
-------------[ cut here ]------------
-WARNING: CPU: 0 PID: <PID> at drivers/tty/serial/serial_core.c:411 uart_get_baud_rate+0x170/0x1a4()
-Modules linked in:
-CPU: 0 PID: <PID> Comm: swapper Not tainted 4.4.94+ #12
-<stack dump>
-Call Trace:
-[<8001c960>] show_stack+0x54/0x88
-[<8003071c>] warn_slowpath_common+0xa0/0xd0
-[<800307d4>] warn_slowpath_null+0x18/0x24
-[<802b4094>] uart_get_baud_rate+0x170/0x1a4
-[<804153b8>] serial_ingenic_set_termios+0x94/0x388
-[<802b449c>] uart_set_options+0x104/0x130
-[<807bb430>] serial_ingenic_console_setup+0xbc/0xd0
-[<8005e944>] register_console+0x1c4/0x470
-[<802b64b8>] uart_add_one_port+0x30c/0x438
-[<80414bd4>] serial_ingenic_probe+0x33c/0x3a4
-[<802c2e2c>] platform_drv_probe+0x54/0xa8
-[<802c10d4>] driver_probe_device+0x138/0x2bc
-[<802c12d4>] __driver_attach+0x7c/0xb4
-[<802bf3c4>] bus_for_each_dev+0x94/0xa4
-[<802c073c>] bus_add_driver+0xf0/0x200
-[<802c1cd0>] driver_register+0xb0/0x104
-[<807bb47c>] serial_ingenic_init+0x38/0x68
-[<80010584>] do_one_initcall+0xf0/0x1fc
-[<807a2cf0>] kernel_init_freeable+0x168/0x228
-[<80585dc0>] kernel_init+0x10/0x100
-[<800174ec>] ret_from_kernel_thread+0x14/0x1c
-
----[ end trace <ID> ]---
+10030000.serial: ttyS0 at MMIO 0x10030000 (irq = 55, base_baud = 75000000) is a uart0
 console [ttyS0] enabled
 bootconsole [early0] disabled
-10032000.serial: ttyS2 at MMIO 0x10032000 (irq = 53, base_baud = 0) is a uart2
+10032000.serial: ttyS2 at MMIO 0x10032000 (irq = 53, base_baud = 75000000) is a uart2
 initcall serial_ingenic_init+0x0/0x68 returned 0 after <N> usecs
 calling  ingenic_rtc_driver_init+0x0/0x18 @ <PID>
 rtc-ingenic 10003000.rtc: rtc core: registered 10003000.rtc as rtc0
@@ -854,57 +825,10 @@ calling  alsa_sound_last_init+0x0/0xac @ <PID>
 ALSA device list:
 No soundcards found.
 initcall alsa_sound_last_init+0x0/0xac returned 0 after <N> usecs
-------------[ cut here ]------------
-WARNING: CPU: 0 PID: <PID> at drivers/tty/serial/serial_core.c:411 uart_get_baud_rate+0x170/0x1a4()
-Modules linked in:
-CPU: 0 PID: <PID> Comm: swapper Tainted: <TAINT> 4.4.94+ #12
-<stack dump>
-Call Trace:
-[<8001c960>] show_stack+0x54/0x88
-[<8003071c>] warn_slowpath_common+0xa0/0xd0
-[<800307d4>] warn_slowpath_null+0x18/0x24
-[<802b4094>] uart_get_baud_rate+0x170/0x1a4
-[<804153b8>] serial_ingenic_set_termios+0x94/0x388
-[<802b6be8>] uart_change_speed.isra.2+0x44/0x15c
-[<802b72cc>] uart_startup+0xf4/0x218
-[<802b74f8>] uart_open+0x108/0x160
-[<8029d1c8>] tty_open+0x41c/0x618
-[<800c63ac>] chrdev_open+0x184/0x1c4
-[<800bfde4>] do_dentry_open.isra.2+0x218/0x32c
-[<800cfa5c>] path_openat+0xa7c/0xdec
-[<800d0f70>] do_filp_open+0x38/0x8c
-[<800c118c>] do_sys_open+0x18c/0x234
-[<807a2d24>] kernel_init_freeable+0x19c/0x228
-[<80585dc0>] kernel_init+0x10/0x100
-[<800174ec>] ret_from_kernel_thread+0x14/0x1c
-
----[ end trace <ID> ]---
 mtd: rootfs 41943040 131072 0
 VFS: Mounted root (squashfs filesystem) readonly on device 50:2.
 devtmpfs: mounted
 Freeing unused kernel memory: 1272K
-------------[ cut here ]------------
-WARNING: CPU: 0 PID: <PID> at drivers/tty/serial/serial_core.c:411 uart_get_baud_rate+0x170/0x1a4()
-Modules linked in:
-CPU: 0 PID: <PID> Comm: init Tainted: <TAINT> 4.4.94+ #12
-<stack dump>
-Call Trace:
-[<8001c960>] show_stack+0x54/0x88
-[<8003071c>] warn_slowpath_common+0xa0/0xd0
-[<800307d4>] warn_slowpath_null+0x18/0x24
-[<802b4094>] uart_get_baud_rate+0x170/0x1a4
-[<804153b8>] serial_ingenic_set_termios+0x94/0x388
-[<802b6be8>] uart_change_speed.isra.2+0x44/0x15c
-[<802b6dcc>] uart_set_termios+0xcc/0x1e0
-[<802a156c>] tty_set_termios+0x160/0x1c8
-[<802a19c4>] set_termios+0x200/0x250
-[<802a1d8c>] tty_mode_ioctl+0x30c/0x5f4
-[<8029bef4>] tty_ioctl+0xc14/0xc88
-[<800d3a48>] do_vfs_ioctl+0x554/0x640
-[<800d3b8c>] SyS_ioctl+0x58/0x9c
-[<8002092c>] syscall_common+0x30/0x54
-
----[ end trace <ID> ]---
 calling  init_module+0x0/0x38 [utils] @ <PID>
 initcall init_module+0x0/0x38 [utils] returned 0 after <N> usecs
 calling  rmem_manager_init+0x0/0x80 [rmem_manager] @ <PID>
@@ -936,11 +860,9 @@ input: md-gpio-keys as /devices/platform/md-gpio-keys/input/input0
 calling  gpio_init+0x0/0x5c [soc_gpio] @ <PID>
 initcall gpio_init+0x0/0x5c [soc_gpio] returned 0 after <N> usecs
 calling  jz_pwm_init+0x0/0x290 [soc_pwm] @ <PID>
-pwm clk source rate 0
+pwm clk source rate 1200000000
 initcall jz_pwm_init+0x0/0x290 [soc_pwm] returned 0 after <N> usecs
 calling  init_module+0x0/0x1d8 [pwm_backlight] @ <PID>
-PWM: pwm only support frequency low than 0
-PWM: pwm ch0 is not config!
 initcall init_module+0x0/0x1d8 [pwm_backlight] returned 0 after <N> usecs
 calling  jzfb_module_init+0x0/0x178 [soc_fb] @ <PID>
 initcall jzfb_module_init+0x0/0x178 [soc_fb] returned 0 after <N> usecs
@@ -959,51 +881,29 @@ initcall jz_adc_init+0x0/0x1b4 [soc_adc] returned 0 after <N> usecs
 calling  lg35583_init+0x0/0x500 [lcd_lg35583] @ <PID>
 deviceless supply bldo1 not found, using dummy regulator
 deviceless supply bldo2 not found, using dummy regulator
-LCD: lcd_id_vol:-16 lcd_id:0
+LCD: lcd_id_vol:3299 lcd_id:1
 initcall lg35583_init+0x0/0x500 [lcd_lg35583] returned 0 after <N> usecs
 calling  switch_init+0x0/0x424 [sa_sound_switch] @ <PID>
 [SASS]1 detect items
 [SASS]success to init switch item headphone
 [SASS]switch_probe OK
 initcall switch_init+0x0/0x424 [sa_sound_switch] returned 0 after <N> usecs
-Data bus error, epc == c0153778, ra == c01535a8
-Oops[#1]:
-CPU: 0 PID: <PID> Comm: cmd_jpeg_displa Tainted: <TAINT> 4.4.94+ #12
-task: <ADDR> ti: <ADDR> task.ti: <ADDR>
-<regdump>
-epc   : c0153778 jzfb_blank+0x4ac/0xc50 [soc_fb]
-ra    : c01535a8 jzfb_blank+0x2dc/0xc50 [soc_fb]
-Status: <CP0>	KERNEL EXL IE 
-Cause : <CP0> (ExcCode 07)
-PrId  : 2ed1024f (Xburst)
-<modules>
-Process cmd_jpeg_displa (pid: <PID>, threadinfo=<ADDR>, task=<ADDR>, tls=<ADDR>)
-<stack dump>
-Call Trace:
-[<c0153778>] jzfb_blank+0x4ac/0xc50 [soc_fb]
-[<802847fc>] fb_blank+0x5c/0xa4
-[<802852ec>] do_fb_ioctl+0x500/0x584
-[<800d3a48>] do_vfs_ioctl+0x554/0x640
-[<800d3b8c>] SyS_ioctl+0x58/0x9c
-[<8002092c>] syscall_common+0x30/0x54
-
-Code: afa30020  8fa40020  3c03b305 <ac64200c> 8c642010  ac642008  8c642014  afa4001c  8fa5001c 
----[ end trace <ID> ]---
 calling  cs43131_init+0x0/0xc8 [codec_cs43131] @ <PID>
 [CS43131_MX30] cs43131_power pin:34 output
 [CS43131_MX30] cs43131_reset pin:53 output
 initcall cs43131_init+0x0/0xc8 [codec_cs43131] returned 0 after <N> usecs
+hrtimer: interrupt took 48181334 ns
 calling  hyn_ts_init+0x0/0x9a0 [cst8xx_touch] @ <PID>
 hyn_ts_init load touch driver
 input: hyn_ts as /devices/i2c-1/1-0015/input/input1
 1-0015 supply aldo2 not found, using dummy regulator
 1-0015 supply vcc_i2c not found, using dummy regulator
-PWM: pwm ch0 is not config!
+create proc entry lcd_reg success
 [HYN_TS/I]hyn_get_ic_information:read chip_ID fail !!!
-TP: lcd_id_vol:-16 lcd_id:0
+TP: lcd_id_vol:3299 lcd_id:1
 hyn_ts_probe_entry 9-2  fw update start
 
-CTP cst78xx start:0x0000 length:0x3c00 checksum:0fd1
+CTP cst78xx start:0x0000 length:0x3c00 checksum:044a
 [HYN_TS/E]cst78xx_update:enter boot mode faile!
 [HYN_TS/E]cst78xx_read_checksum:enter boot mode faile!!!
 
@@ -1027,24 +927,21 @@ wlan power off: initok
 wifi_platform_bus_enumerate device present 0
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
-bcm_wlan_power_on, RESET
-wifi_platform_bus_enumerate device present 1
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
 failed to power up DHD generic adapter, 2 retry left
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
 wifi_platform_bus_enumerate device present 0
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
-bcm_wlan_power_on, RESET
-wifi_platform_bus_enumerate device present 1
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
 failed to power up DHD generic adapter, 1 retry left
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
 wifi_platform_bus_enumerate device present 0
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
-bcm_wlan_power_on, RESET
-wifi_platform_bus_enumerate device present 1
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
 failed to power up DHD generic adapter, 0 retry left
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
@@ -1056,32 +953,28 @@ dhd_init_gpio_wlan_hostwake: gpio_request(8) for WL_HOST_WAKE failed
 Power-up adapter 'DHD generic adapter'
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
-bcm_wlan_power_on, RESET
-wifi_platform_bus_enumerate device present 1
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
 failed to power up DHD generic adapter, 3 retry left
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
 wifi_platform_bus_enumerate device present 0
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
-bcm_wlan_power_on, RESET
-wifi_platform_bus_enumerate device present 1
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
 failed to power up DHD generic adapter, 2 retry left
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
 wifi_platform_bus_enumerate device present 0
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
-bcm_wlan_power_on, RESET
-wifi_platform_bus_enumerate device present 1
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
 failed to power up DHD generic adapter, 1 retry left
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
 wifi_platform_bus_enumerate device present 0
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
-bcm_wlan_power_on, RESET
-wifi_platform_bus_enumerate device present 1
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
 failed to power up DHD generic adapter, 0 retry left
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
@@ -1093,32 +986,28 @@ dhd_init_gpio_wlan_hostwake: gpio_request(8) for WL_HOST_WAKE failed
 Power-up adapter 'DHD generic adapter'
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
-bcm_wlan_power_on, RESET
-wifi_platform_bus_enumerate device present 1
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
 failed to power up DHD generic adapter, 3 retry left
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
 wifi_platform_bus_enumerate device present 0
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
-bcm_wlan_power_on, RESET
-wifi_platform_bus_enumerate device present 1
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
 failed to power up DHD generic adapter, 2 retry left
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
 wifi_platform_bus_enumerate device present 0
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
-bcm_wlan_power_on, RESET
-wifi_platform_bus_enumerate device present 1
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
 failed to power up DHD generic adapter, 1 retry left
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
 wifi_platform_bus_enumerate device present 0
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
-bcm_wlan_power_on, RESET
-wifi_platform_bus_enumerate device present 1
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
 failed to power up DHD generic adapter, 0 retry left
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
@@ -1130,32 +1019,28 @@ dhd_init_gpio_wlan_hostwake: gpio_request(8) for WL_HOST_WAKE failed
 Power-up adapter 'DHD generic adapter'
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
-bcm_wlan_power_on, RESET
-wifi_platform_bus_enumerate device present 1
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
 failed to power up DHD generic adapter, 3 retry left
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
 wifi_platform_bus_enumerate device present 0
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
-bcm_wlan_power_on, RESET
-wifi_platform_bus_enumerate device present 1
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
 failed to power up DHD generic adapter, 2 retry left
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
 wifi_platform_bus_enumerate device present 0
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
-bcm_wlan_power_on, RESET
-wifi_platform_bus_enumerate device present 1
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
 failed to power up DHD generic adapter, 1 retry left
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
 wifi_platform_bus_enumerate device present 0
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
-bcm_wlan_power_on, RESET
-wifi_platform_bus_enumerate device present 1
+bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
 failed to power up DHD generic adapter, 0 retry left
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
@@ -1216,7 +1101,7 @@ Call Trace:
 initcall dhd_module_init+0x0/0x2a8 [cywdhd] returned -17 after <N> usecs
 calling  init_module+0x0/0x44 [keyboard_adc_multifunc] @ <PID>
 CPU 0 Unable to handle kernel paging request at virtual address c04060a8, epc == 802c1368, ra == 802bf484
-Oops[#2]:
+Oops[#1]:
 CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
 task: <ADDR> ti: <ADDR> task.ti: <ADDR>
 <regdump>
@@ -1248,7 +1133,7 @@ Code: 8e420044  14400020  00a08825 <8c820004> 8c42001c  14400007  00808025  0c0b
 ---[ end trace <ID> ]---
 calling  leds_pwm_dev_init+0x0/0x78 [leds_pwm_add] @ <PID>
 CPU 0 Unable to handle kernel paging request at virtual address c04060a8, epc == 802c1368, ra == 802bf484
-Oops[#3]:
+Oops[#2]:
 CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
 task: <ADDR> ti: <ADDR> task.ti: <ADDR>
 <regdump>
@@ -1279,7 +1164,7 @@ Code: 8e420044  14400020  00a08825 <8c820004> 8c42001c  14400007  00808025  0c0b
 ---[ end trace <ID> ]---
 calling  sa_config_init+0x0/0x78 [sa_config_module] @ <PID>
 CPU 0 Unable to handle kernel paging request at virtual address c04060a8, epc == 802c1368, ra == 802bf484
-Oops[#4]:
+Oops[#3]:
 CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
 task: <ADDR> ti: <ADDR> task.ti: <ADDR>
 <regdump>
@@ -1310,7 +1195,7 @@ Code: 8e420044  14400020  00a08825 <8c820004> 8c42001c  14400007  00808025  0c0b
 ---[ end trace <ID> ]---
 calling  earpods_adc_init+0x0/0x100 [sa_earpods_adc] @ <PID>
 CPU 0 Unable to handle kernel paging request at virtual address c04060a8, epc == 802c1368, ra == 802bf484
-Oops[#5]:
+Oops[#4]:
 CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
 task: <ADDR> ti: <ADDR> task.ti: <ADDR>
 <regdump>
@@ -1343,12 +1228,39 @@ calling  sahd_init+0x0/0x9c [sa_hgl_dma] @ <PID>
 [SAUD]sahd_init
 initcall sahd_init+0x0/0x9c [sa_hgl_dma] returned 0 after <N> usecs
 calling  jz_efuse_init+0x0/0x340 [soc_efuse] @ <PID>
-EFUSE: failed to get efuse cfg wr_strobe!
-initcall jz_efuse_init+0x0/0x340 [soc_efuse] returned -1 after <N> usecs
-calling  jz_efuse_init+0x0/0x340 [soc_efuse] @ <PID>
-EFUSE: failed to get efuse cfg wr_strobe!
-initcall jz_efuse_init+0x0/0x340 [soc_efuse] returned -1 after <N> usecs
+initcall jz_efuse_init+0x0/0x340 [soc_efuse] returned 0 after <N> usecs
 calling  tcs1421_dev_init+0x0/0x78 [tcs1421_add] @ <PID>
+CPU 0 Unable to handle kernel paging request at virtual address c04060a8, epc == 802c1368, ra == 802bf484
+Oops[#5]:
+CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
+task: <ADDR> ti: <ADDR> task.ti: <ADDR>
+<regdump>
+epc   : 802c1368 __device_attach_driver+0x24/0xbc
+ra    : 802bf484 bus_for_each_drv+0x9c/0xac
+Status: <CP0>	KERNEL EXL IE 
+Cause : <CP0> (ExcCode 02)
+BadVA : c04060a8
+PrId  : 2ed1024f (Xburst)
+<modules>
+Process insmod (pid: <PID>, threadinfo=<ADDR>, task=<ADDR>, tls=<ADDR>)
+<stack dump>
+Call Trace:
+[<802c1368>] __device_attach_driver+0x24/0xbc
+[<802bf484>] bus_for_each_drv+0x9c/0xac
+[<802c0ef8>] __device_attach+0xa4/0x128
+[<802c04b8>] bus_probe_device+0x3c/0xb0
+[<802be5e8>] device_add+0x44c/0x55c
+[<802c2bb0>] platform_device_add+0x19c/0x234
+[<c0724020>] tcs1421_dev_init+0x20/0x78 [tcs1421_add]
+[<80010584>] do_one_initcall+0xf0/0x1fc
+[<8008b770>] do_init_module+0x74/0x1d4
+[<80087458>] load_module+0x17b8/0x1c78
+[<80087b04>] SyS_finit_module+0x70/0x88
+[<8002092c>] syscall_common+0x30/0x54
+
+Code: 8e420044  14400020  00a08825 <8c820004> 8c42001c  14400007  00808025  0c0b04c3  02002025 
+---[ end trace <ID> ]---
+calling  codec_board_init+0x0/0x4c [x1600_hiby_r1_sound_card] @ <PID>
 CPU 0 Unable to handle kernel paging request at virtual address c04060a8, epc == 802c1368, ra == 802bf484
 Oops[#6]:
 CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
@@ -1370,38 +1282,7 @@ Call Trace:
 [<802c04b8>] bus_probe_device+0x3c/0xb0
 [<802be5e8>] device_add+0x44c/0x55c
 [<802c2bb0>] platform_device_add+0x19c/0x234
-[<c072e020>] tcs1421_dev_init+0x20/0x78 [tcs1421_add]
-[<80010584>] do_one_initcall+0xf0/0x1fc
-[<8008b770>] do_init_module+0x74/0x1d4
-[<80087458>] load_module+0x17b8/0x1c78
-[<80087b04>] SyS_finit_module+0x70/0x88
-[<8002092c>] syscall_common+0x30/0x54
-
-Code: 8e420044  14400020  00a08825 <8c820004> 8c42001c  14400007  00808025  0c0b04c3  02002025 
----[ end trace <ID> ]---
-calling  codec_board_init+0x0/0x4c [x1600_hiby_r1_sound_card] @ <PID>
-CPU 0 Unable to handle kernel paging request at virtual address c04060a8, epc == 802c1368, ra == 802bf484
-Oops[#7]:
-CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
-task: <ADDR> ti: <ADDR> task.ti: <ADDR>
-<regdump>
-epc   : 802c1368 __device_attach_driver+0x24/0xbc
-ra    : 802bf484 bus_for_each_drv+0x9c/0xac
-Status: <CP0>	KERNEL EXL IE 
-Cause : <CP0> (ExcCode 02)
-BadVA : c04060a8
-PrId  : 2ed1024f (Xburst)
-<modules>
-Process insmod (pid: <PID>, threadinfo=<ADDR>, task=<ADDR>, tls=<ADDR>)
-<stack dump>
-Call Trace:
-[<802c1368>] __device_attach_driver+0x24/0xbc
-[<802bf484>] bus_for_each_drv+0x9c/0xac
-[<802c0ef8>] __device_attach+0xa4/0x128
-[<802c04b8>] bus_probe_device+0x3c/0xb0
-[<802be5e8>] device_add+0x44c/0x55c
-[<802c2bb0>] platform_device_add+0x19c/0x234
-[<c073501c>] codec_board_init+0x1c/0x4c [x1600_hiby_r1_sound_card]
+[<c072b01c>] codec_board_init+0x1c/0x4c [x1600_hiby_r1_sound_card]
 [<80010584>] do_one_initcall+0xf0/0x1fc
 [<8008b770>] do_init_module+0x74/0x1d4
 [<80087458>] load_module+0x17b8/0x1c78

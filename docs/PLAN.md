@@ -1,6 +1,6 @@
 # Plan — QEMU X1600 full-system emulation (v1.1)
 
-STATUS (2026-10-13, after the v0.64 MSC/SDIO session):
+STATUS (2026-10-14, after the v0.66–v0.67 stubs session + M4 gate; v0.65 RES round folded in):
 
 - **M0: DONE.** QEMU builds in-repo (mipsel-softmmu), `X1600` machine type
   registered, `XBurstR2` from upstream, regmap verified disassembly-wise
@@ -34,37 +34,74 @@ STATUS (2026-10-13, after the v0.64 MSC/SDIO session):
   `dev->mutex`); soc_i2c/soc_aic/soc_adc load clean, both msc hosts
   register, **UBIFS on erased userdata works**, userland runs.
   **v0.64:** MSC0/MSC1 became real jzmmc_v12 host models — msc0 with the
-  SDIO wifi card present, msc1 an empty TF slot; the mmc core sees the
-  card but SDIO card init fails -34 at the CMD52/CCCR stage (open).
-- **Boot state now (v0.64):** MSC0/MSC1 are real jzmmc_v12 host models
-  (qemu e282fd9, exported as patch 0005): **msc0 @0x13450000 (INTC 37)
-  carries the SDIO wifi card** (BCM43438/AP6212 — the wifi is on msc0,
-  not msc1 as v0.63 guessed: the DHD's wifi_platform_bus_enumerate
-  drives jzmmc_manual_detect(0) synchronously), **msc1 @0x13460000
-  (INTC 36) is the empty TF slot** completing fast with STAT_TIME_OUT_RES
-  (v0.63's 6-s op:55 retry spam gone). The mmc core now sees the wifi
-  card (CMD5 OCR handshake OK, SDIO attach starts) but card init fails
-  **-34 (-ERANGE, R5_OUT_OF_RANGE) at the CMD52/CCCR stage**, so cywdhd
-  still fails (5 power-cycle loops → -19 → re-probe EEXIST → dangling
-  device → module-chain tail oopses #2-#7, sound card last) — the rcS
-  stall is unchanged. Everything upstream of that still works: all soc
-  modules load, touch probes over the I2C stub, UBIFS on erased userdata
-  (`UBIFS (ubi1:0): default file-system created`), userland runs. Device
-  model surface now: DDR, TCSM0, OST clockevent (line 4), 16550 UART0 +
-  ext, SFC+SPI-NAND (line 7), real INTC (→CPU line 2), RTC
-  (write-protocol), CGU (PLL-lock + CE-trigger), I2C0-2, AIC, SADC,
-  **MSC0 + SDIO card, MSC1 + empty TF**, persistent: TCU, pinctrl,
-  UART1-3, PDMA, USB-PHY.
-- **Next (M2 exit):** 1. root-cause the R5/-ERANGE at the CMD52/CCCR
-  stage (decode soc_msc.ko's resp[0] handling + the vendor core's
-  mmc_io_rw_direct_host/R5_* masks — the ONE open fault on the wifi
-  path); 2. EFUSE stub (serve efuse_chip_id); 3. SADC minimal conversion
-  semantics (clears the 220 ms spam); 4. JPEG stub 0x13050000 (clears
-  the splash oops); then rcS reaches theme →
-  `S92_03_start_music_player`. Boot evidence: docs/M1-bringup-log.md
-  v0.64.
-- Boot evidence, register dumps, and every boot-stop decode live in
-  docs/M1-bringup-log.md (v0.1 through v0.64, incl. the M2 section).
+  SDIO wifi card present (BCM43438/AP6212; the wifi is on msc0 — the
+  DHD's wifi_platform_bus_enumerate drives jzmmc_manual_detect(0)), msc1
+  an empty TF slot.
+  **v0.65:** the -34 (-ERANGE) root cause was the RES byte-window: the
+  vendor host composes resp[0] from THREE separate RES reads
+  (`(RES1<<24)|(RES2<<8)|(RES3&0xff)`), the model returned the same
+  value on all three, so CIS bytes landed on the R5 flag bits
+  (`&0x100` → -ERANGE per the vendor core's non-upstream masks).
+  Fixed with a byte-window RES queue — **the SDIO card now enumerates
+  completely** (`mmc0: new SDIO card at address 0001`), CCCR/CIS/FBR1
+  reads all complete.
+  **v0.66–v0.67 (stubs session, merged to main):** **LCD controller
+  stub 0x13050000/0x10000** (persistent regfile; +0xa018 busy=0;
+  +0x1004 kick → +0x2010 EOF bit17 + INTC 31 — the old "JPEG stub"
+  framing was wrong: cmd_jpeg_display is pure userland fb ioctls, the
+  oops was soc_fb bus-erroring on the unmapped LCD block; the IRQ is
+  mandatory — pan_display_sync=1 waits on state==2); **SADC conversion
+  semantics** (CFG bit n 0→1 → 12-bit 0xFFF sample, W1C IFLAG, INTC 11 —
+  kills the 3595× "adc get value timeout" from the sa_sound_switch
+  200 ms poller; 0xFFF = correct emulated idle for all consumers);
+  **CGU div_ahb2 = 200 MHz + EFUSE stub 0x13540000/0x100** (trigger/
+  poll/data-window protocol; soc_efuse's init validates timing from
+  clk_get_rate("div_ahb2") — it failed insmod at the old rate BEFORE
+  any MMIO; serves `CHIP_ID: <32 hex>`); **AHB2 PWM stub
+  0x134c0000/0x10000** (fifth unmapped block, pinned by the
+  pwm_backlight DBE the moment the LCD stub landed). **Verified:
+  0 bus errors, 0 adc timeouts, EFUSE initcall 0, pwm_backlight
+  initcall 0, splash path clean.** Evidence: docs/M2-stubs-log.md
+  (v0.66–v0.67); patches 0100–0104; the decoded register protocols and
+  the player-launch checklist live in
+  docs/research-brief-stubs-player-launch.md.
+  **The v0.65 "DHD never registers its sdio driver" fault is
+  ROOT-CAUSED** (wifi session; patch 0006, verification in flight):
+  the DHD power-up loop arms notify_semaphore via
+  dhd_bus_reg_sdio_notify → sdio_func_reg_notify (registers
+  dummy_sdmmc_driver), which completes only from dummy_probe when
+  `func->num == 2` — the model card advertised NF=1, so no func2 ever
+  existed. Fix: the card advertises **NF=2 + FBR2/F2 CIS**.
+- **Boot state now (v0.67 main):** all soc modules load clean through
+  the stubs; the ONLY remaining faults are the unchanged DHD cascade
+  (cywdhd O+ taint → keyboard_adc_multifunc, leds_pwm_add,
+  sa_config_module, sa_earpods_adc, tcs1421_add,
+  x1600_hiby_r1_sound_card, oopses #1–#6) stalling rcS before the
+  theme → `S92_03_start_music_player` sequence. Device model surface
+  adds on top of the v0.64 list: **LCD controller (INTC 31), SADC
+  conversions (INTC 11), CGU div_ahb2 200 MHz, EFUSE, AHB2 PWM**; the
+  nand image now serves `theme:1` at ota+0x20000 (rcS compares the raw
+  7 bytes; previously `1      ` → always the else branch).
+- **M4 gate live:** `tools/x1600-boot-test.sh` boots the unmodified
+  stock firmware, captures the serial window, and diffs a canonical
+  message SET + the ordered init-thread SEQUENCE against
+  docs/traces/boot-baseline-v0.67.txt. The v0.67 baseline is recorded
+  and verified (0 DBE / 0 adc timeouts / EFUSE + pwm initcall 0 / SDIO
+  card enumerates).
+- **Next (M2 exit):** 1. the wifi session verifies the NF=2/FBR2/F2-CIS
+  fix: the notify chain completes (dummy_probe on func2 → semaphore →
+  `sdio_register_driver` → `bcmsdh_sdmmc_probe`), then walk the probe
+  chain (CCCR 0x02 IOE write via CMD52, block sizes, sdioh_cfg_read,
+  backplane reads; CMD53 modelling only when the trace demands it);
+  success = cywdhd returns 0, cascade oopses #1–#6 gone, rcS proceeds.
+  2. then theme → `S92_03_start_music_player` **= M2 EXIT**. 3.
+  Player-launch followups (research brief): BT console pollution (move
+  the console to ttyS2 0x10032000), fb readback hook (LCD +0x1000
+  descriptor tap → 480×800 RGB565 dump), NO panel model needed
+  (LG35583 init is GPIO-bitbang SPI through the existing pinctrl stub).
+- Boot evidence lives in docs/M1-bringup-log.md (v0.1–v0.65),
+  docs/M2-stubs-log.md (v0.66–v0.67), and
+  docs/research-brief-stubs-player-launch.md.
 
 Goal: **boot the byte-identical stock firmware (v1.6 **unmodified** xImage +
 rootfs.squashfs) inside QEMU to the player's first UI frame, using it as the
