@@ -1,7 +1,7 @@
 From 1f062d663e0b0674278031ff198d51ea31ecef67 Mon Sep 17 00:00:00 2001
 From: Matthew Bodenham <matthew@bodenham.me>
 Date: Wed, 14 Oct 2026 10:02:49 +0900
-Subject: [PATCH] x1600: UART2 real serial backend; stock
+Subject: [PATCH 110/111] x1600: UART2 real serial backend; stock
  console=ttyS2,3000000n8
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
