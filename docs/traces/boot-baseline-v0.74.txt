@@ -1,10 +1,10 @@
 # x1600-boot-test baseline — M4 boot regression gate (docs/PLAN.md M4)
-# generated: 2026-10-14T07:54:33Z
-# firmware: stock v1.6 UNMODIFIED; kernel /home/matt/dev/hiby-r1-sdk/.kilo/worktrees/qemu-ubifs-mount/unpacked/1.6/vmlinux.bin md5 dceda6683b9bc56b9a4110530b9add3f
-# nand image /home/matt/dev/hiby-r1-sdk/.kilo/worktrees/qemu-ubifs-mount/unpacked/1.6/nand-r1.bin md5 56c94f139d589cfcc87089e96eb3b3bc
-# qemu binary /home/matt/dev/hiby-r1-sdk/.kilo/worktrees/qemu-ubifs-mount/tools/vendors/qemu/build/qemu-system-mipsel md5 ca285fda1d8c0dfd3f7ad7233877f011
-# main repo HEAD: 2707ad7
-# vendored qemu rev: c035f2f (hw/mips/x1600.c: UNCOMMITTED bring-up state)
+# generated: 2026-10-14T08:01:52Z
+# firmware: stock v1.6 UNMODIFIED; kernel /home/matt/dev/hiby-r1-sdk/unpacked/1.6/vmlinux.bin md5 dceda6683b9bc56b9a4110530b9add3f
+# nand image /home/matt/dev/hiby-r1-sdk/unpacked/1.6/nand-r1.bin md5 346aced8ef057e3c64f2981fd3377ffc
+# qemu binary /home/matt/dev/hiby-r1-sdk/tools/vendors/qemu/build/qemu-system-mipsel md5 6ad82e3eafba1c789e7991a641411d3f
+# main repo HEAD: b47781e
+# vendored qemu rev: 1f41591 (hw/mips/x1600.c: clean)
 # boot cmd: qemu-system-mipsel -M x1600 -kernel <kernel> -serial file:<console log> -serial file:<ttyS0 log> -display none -monitor none -no-reboot
 # console port: ttyS2 = serial0 (captured; stock cmdline
 #   console=ttyS2,3000000n8); ttyS0 = serial1 (earlycon + BT uart,
@@ -248,34 +248,34 @@ Power-up adapter 'DHD generic adapter'
 =========== WLAN placed in NOMAL ON========
 wlan power on: init
 bcm_wlan_power_on  NORMAL
+mmc0: queuing unknown CIS tuple 0x81 (1 bytes)
 mmc0: new SDIO card at address 0001
 wifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 3 retry left
+bcmsdh_register: register client driver
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:1 failed with error -12
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:2 failed with error -12
+dhd_wifi_platform_load_sdio: sdio_register_driver timeout or error 
 =========== WLAN placed in NOMAL OFF ========
 wlan power off: initok
 wifi_platform_bus_enumerate device present 0
-=========== WLAN placed in RESET ON  ========
-wlan power on: poweron
-bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 2 retry left
-=========== WLAN placed in RESET OFF========
-wlan power off: poweroff
-wifi_platform_bus_enumerate device present 0
-=========== WLAN placed in RESET ON  ========
-wlan power on: poweron
-bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 1 retry left
-=========== WLAN placed in RESET OFF========
-wlan power off: poweroff
-wifi_platform_bus_enumerate device present 0
-=========== WLAN placed in RESET ON  ========
-wlan power on: poweron
-bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 0 retry left
-=========== WLAN placed in RESET OFF========
-wlan power off: poweroff
-wifi_platform_bus_enumerate device present 0
-failed to power up DHD generic adapter, max retry reached**
 unregister wifi platform drivers
 dhd_module_init: Failed to load the driver, try cnt 3
 dhd_init_gpio_wlan_hostwake: gpio_request(8) for WL_HOST_WAKE failed
@@ -283,32 +283,63 @@ Power-up adapter 'DHD generic adapter'
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
 bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 3 retry left
+bcmsdh_register: register client driver
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:1 failed with error -12
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+------------[ cut here ]------------
+WARNING: CPU: 0 PID: <PID> at fs/sysfs/dir.c:31 sysfs_warn_dup+0x6c/0x88()
+sysfs: cannot create duplicate filename '/devices/platform/md_ingenic,mmc.0/mmc_host/mmc0/mmc0:0001/mmc0:0001:2/chipvendor'
+<modules>
+CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
+<stack dump>
+Call Trace:
+[<8001c960>] show_stack+0x54/0x88
+[<8003071c>] warn_slowpath_common+0xa0/0xd0
+[<80030778>] warn_slowpath_fmt+0x2c/0x38
+[<80123b88>] sysfs_warn_dup+0x6c/0x88
+[<80123848>] sysfs_add_file_mode_ns+0x140/0x1d0
+[<80123910>] sysfs_create_file_ns+0x38/0x44
+[<c03c5a54>] bcmsdh_sdmmc_probe+0x12c/0x4a8 [cywdhd]
+[<80390a6c>] sdio_bus_probe+0xc4/0x158
+[<802c10d4>] driver_probe_device+0x138/0x2bc
+[<802c12d4>] __driver_attach+0x7c/0xb4
+[<802bf3c4>] bus_for_each_dev+0x94/0xa4
+[<802c073c>] bus_add_driver+0xf0/0x200
+[<802c1cd0>] driver_register+0xb0/0x104
+[<c03c255c>] bcmsdh_register+0x5c/0x94 [cywdhd]
+[<c03abec8>] dhd_wifi_platform_load+0x320/0x498 [cywdhd]
+[<c03ac74c>] dhd_wifi_platform_register_drv+0x2a4/0x32c [cywdhd]
+[<c0439148>] dhd_module_init+0x148/0x2a8 [cywdhd]
+[<80010584>] do_one_initcall+0xf0/0x1fc
+[<8008b770>] do_init_module+0x74/0x1d4
+[<80087458>] load_module+0x17b8/0x1c78
+[<80087b04>] SyS_finit_module+0x70/0x88
+[<8002092c>] syscall_common+0x30/0x54
+
+---[ end trace <ID> ]---
+could not create sysfs files
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:2 failed with error -12
+dhd_wifi_platform_load_sdio: sdio_register_driver timeout or error 
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
 wifi_platform_bus_enumerate device present 0
-=========== WLAN placed in RESET ON  ========
-wlan power on: poweron
-bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 2 retry left
-=========== WLAN placed in RESET OFF========
-wlan power off: poweroff
-wifi_platform_bus_enumerate device present 0
-=========== WLAN placed in RESET ON  ========
-wlan power on: poweron
-bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 1 retry left
-=========== WLAN placed in RESET OFF========
-wlan power off: poweroff
-wifi_platform_bus_enumerate device present 0
-=========== WLAN placed in RESET ON  ========
-wlan power on: poweron
-bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 0 retry left
-=========== WLAN placed in RESET OFF========
-wlan power off: poweroff
-wifi_platform_bus_enumerate device present 0
-failed to power up DHD generic adapter, max retry reached**
 unregister wifi platform drivers
 dhd_module_init: Failed to load the driver, try cnt 2
 dhd_init_gpio_wlan_hostwake: gpio_request(8) for WL_HOST_WAKE failed
@@ -316,32 +347,63 @@ Power-up adapter 'DHD generic adapter'
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
 bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 3 retry left
+bcmsdh_register: register client driver
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:1 failed with error -12
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+------------[ cut here ]------------
+WARNING: CPU: 0 PID: <PID> at fs/sysfs/dir.c:31 sysfs_warn_dup+0x6c/0x88()
+sysfs: cannot create duplicate filename '/devices/platform/md_ingenic,mmc.0/mmc_host/mmc0/mmc0:0001/mmc0:0001:2/chipvendor'
+<modules>
+CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
+<stack dump>
+Call Trace:
+[<8001c960>] show_stack+0x54/0x88
+[<8003071c>] warn_slowpath_common+0xa0/0xd0
+[<80030778>] warn_slowpath_fmt+0x2c/0x38
+[<80123b88>] sysfs_warn_dup+0x6c/0x88
+[<80123848>] sysfs_add_file_mode_ns+0x140/0x1d0
+[<80123910>] sysfs_create_file_ns+0x38/0x44
+[<c03c5a54>] bcmsdh_sdmmc_probe+0x12c/0x4a8 [cywdhd]
+[<80390a6c>] sdio_bus_probe+0xc4/0x158
+[<802c10d4>] driver_probe_device+0x138/0x2bc
+[<802c12d4>] __driver_attach+0x7c/0xb4
+[<802bf3c4>] bus_for_each_dev+0x94/0xa4
+[<802c073c>] bus_add_driver+0xf0/0x200
+[<802c1cd0>] driver_register+0xb0/0x104
+[<c03c255c>] bcmsdh_register+0x5c/0x94 [cywdhd]
+[<c03abec8>] dhd_wifi_platform_load+0x320/0x498 [cywdhd]
+[<c03ac74c>] dhd_wifi_platform_register_drv+0x2a4/0x32c [cywdhd]
+[<c0439148>] dhd_module_init+0x148/0x2a8 [cywdhd]
+[<80010584>] do_one_initcall+0xf0/0x1fc
+[<8008b770>] do_init_module+0x74/0x1d4
+[<80087458>] load_module+0x17b8/0x1c78
+[<80087b04>] SyS_finit_module+0x70/0x88
+[<8002092c>] syscall_common+0x30/0x54
+
+---[ end trace <ID> ]---
+could not create sysfs files
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:2 failed with error -12
+dhd_wifi_platform_load_sdio: sdio_register_driver timeout or error 
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
 wifi_platform_bus_enumerate device present 0
-=========== WLAN placed in RESET ON  ========
-wlan power on: poweron
-bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 2 retry left
-=========== WLAN placed in RESET OFF========
-wlan power off: poweroff
-wifi_platform_bus_enumerate device present 0
-=========== WLAN placed in RESET ON  ========
-wlan power on: poweron
-bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 1 retry left
-=========== WLAN placed in RESET OFF========
-wlan power off: poweroff
-wifi_platform_bus_enumerate device present 0
-=========== WLAN placed in RESET ON  ========
-wlan power on: poweron
-bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 0 retry left
-=========== WLAN placed in RESET OFF========
-wlan power off: poweroff
-wifi_platform_bus_enumerate device present 0
-failed to power up DHD generic adapter, max retry reached**
 unregister wifi platform drivers
 dhd_module_init: Failed to load the driver, try cnt 1
 dhd_init_gpio_wlan_hostwake: gpio_request(8) for WL_HOST_WAKE failed
@@ -349,37 +411,68 @@ Power-up adapter 'DHD generic adapter'
 =========== WLAN placed in RESET ON  ========
 wlan power on: poweron
 bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 3 retry left
+bcmsdh_register: register client driver
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:1 failed with error -12
+bcmsdh_sdmmc: bcmsdh_sdmmc_probe Enter
+------------[ cut here ]------------
+WARNING: CPU: 0 PID: <PID> at fs/sysfs/dir.c:31 sysfs_warn_dup+0x6c/0x88()
+sysfs: cannot create duplicate filename '/devices/platform/md_ingenic,mmc.0/mmc_host/mmc0/mmc0:0001/mmc0:0001:2/chipvendor'
+<modules>
+CPU: 0 PID: <PID> Comm: insmod Tainted: <TAINT> 4.4.94+ #12
+<stack dump>
+Call Trace:
+[<8001c960>] show_stack+0x54/0x88
+[<8003071c>] warn_slowpath_common+0xa0/0xd0
+[<80030778>] warn_slowpath_fmt+0x2c/0x38
+[<80123b88>] sysfs_warn_dup+0x6c/0x88
+[<80123848>] sysfs_add_file_mode_ns+0x140/0x1d0
+[<80123910>] sysfs_create_file_ns+0x38/0x44
+[<c03c5a54>] bcmsdh_sdmmc_probe+0x12c/0x4a8 [cywdhd]
+[<80390a6c>] sdio_bus_probe+0xc4/0x158
+[<802c10d4>] driver_probe_device+0x138/0x2bc
+[<802c12d4>] __driver_attach+0x7c/0xb4
+[<802bf3c4>] bus_for_each_dev+0x94/0xa4
+[<802c073c>] bus_add_driver+0xf0/0x200
+[<802c1cd0>] driver_register+0xb0/0x104
+[<c03c255c>] bcmsdh_register+0x5c/0x94 [cywdhd]
+[<c03abec8>] dhd_wifi_platform_load+0x320/0x498 [cywdhd]
+[<c03ac74c>] dhd_wifi_platform_register_drv+0x2a4/0x32c [cywdhd]
+[<c0439148>] dhd_module_init+0x148/0x2a8 [cywdhd]
+[<80010584>] do_one_initcall+0xf0/0x1fc
+[<8008b770>] do_init_module+0x74/0x1d4
+[<80087458>] load_module+0x17b8/0x1c78
+[<80087b04>] SyS_finit_module+0x70/0x88
+[<8002092c>] syscall_common+0x30/0x54
+
+---[ end trace <ID> ]---
+could not create sysfs files
+bus num (host idx)=0, slot num (rca)=1
+found adapter info 'DHD generic adapter'
+sdioh_probe, 147, ready = 00000002
+F1 signature read @0x18000000=0x1000a9a6
+dhdsdio_probe_attach: si_attach failed!
+dhdsdio_probe: dhdsdio_probe_attach failed
+bcmsdh_probe: device attach failed
+sdioh_probe: bcmsdh_probe failed
+bcmsdh_sdmmc: probe of mmc0:0001:2 failed with error -12
+dhd_wifi_platform_load_sdio: sdio_register_driver timeout or error 
 =========== WLAN placed in RESET OFF========
 wlan power off: poweroff
 wifi_platform_bus_enumerate device present 0
-=========== WLAN placed in RESET ON  ========
-wlan power on: poweron
-bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 2 retry left
-=========== WLAN placed in RESET OFF========
-wlan power off: poweroff
-wifi_platform_bus_enumerate device present 0
-=========== WLAN placed in RESET ON  ========
-wlan power on: poweron
-bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 1 retry left
-=========== WLAN placed in RESET OFF========
-wlan power off: poweroff
-wifi_platform_bus_enumerate device present 0
-=========== WLAN placed in RESET ON  ========
-wlan power on: poweron
-bcm_wlan_power_on, RESETwifi_platform_bus_enumerate device present 1
-failed to power up DHD generic adapter, 0 retry left
-=========== WLAN placed in RESET OFF========
-wlan power off: poweroff
-wifi_platform_bus_enumerate device present 0
-failed to power up DHD generic adapter, max retry reached**
 unregister wifi platform drivers
 dhd_module_init: Failed to load the driver, try cnt 0
 dhd_module_init: Failed to load driver max retry reached**
 dhd_module_init out
-initcall dhd_module_init+0x0/0x2a8 [cywdhd] returned -19 after <N> usecs
+initcall dhd_module_init+0x0/0x2a8 [cywdhd] returned -62 after <N> usecs
 calling  dhd_module_init+0x0/0x2a8 [cywdhd] @ <PID>
 ------------[ cut here ]------------
 WARNING: CPU: 0 PID: <PID> at fs/sysfs/dir.c:31 sysfs_warn_dup+0x6c/0x88()
