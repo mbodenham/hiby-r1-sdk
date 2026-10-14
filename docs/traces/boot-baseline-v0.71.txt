@@ -1,0 +1,25 @@
+# x1600-boot-test baseline — M4 boot regression gate (docs/PLAN.md M4)
+# generated: 2026-10-14T06:36:28Z
+# firmware: stock v1.6 UNMODIFIED; kernel /home/matt/dev/hiby-r1-sdk/unpacked/1.6/vmlinux.bin md5 dceda6683b9bc56b9a4110530b9add3f
+# nand image /home/matt/dev/hiby-r1-sdk/unpacked/1.6/nand-r1.bin md5 ae41e974e78aab2730774d05c9cbf37c
+# qemu binary /home/matt/dev/hiby-r1-sdk/tools/vendors/qemu/build/qemu-system-mipsel md5 3c0681f3fa323ca731ba0f1d12c3e67c
+# main repo HEAD: ef0ef2a
+# vendored qemu rev: c5c3883 (hw/mips/x1600.c: clean)
+# boot cmd: qemu-system-mipsel -M x1600 -kernel <kernel> -serial file:<console log> -serial file:<ttyS0 log> -display none -monitor none -no-reboot
+# console port: ttyS2 = serial0 (captured; stock cmdline
+#   console=ttyS2,3000000n8); ttyS0 = serial1 (earlycon + BT uart,
+#   discardable — the window is serial0 only).
+# window: serial output through the terminal marker "UBIFS (ubi1:0): default file-system created" —
+#   the documented rcS end state (wifi/DHD failure stall); the gate does
+#   not require the player UI.
+# normalization: guest timestamps stripped; consecutive duplicate lines
+#   squeezed; volatile numbers neutralized: initcall "after <N> usecs"
+#   durations, BogoMIPS/lpj, UBIFS image sequence number (randomized by
+#   the kernel per attach), oops trace IDs, PID/task/threadinfo/tls
+#   fields, register+stack dump contents, Modules-linked-in/Tainted
+#   oops snapshots; the documented timing-spam line classes (adc poller,
+#   i2cN write timeout, hrtimer delay warning) dropped.
+# comparison: distinct canonical messages (order/multiplicity-free)
+#   + ordered sequence of init-thread structural lines (calling/initcall
+#   chain, console handoff, root mount) — see tools/x1600-boot-test.sh.
+# --- window ---

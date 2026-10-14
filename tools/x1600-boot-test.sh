@@ -23,7 +23,7 @@
 #
 #   --timeout SEC        max boot wall time in seconds (default 360)
 #   --baseline FILE      baseline trace to diff against
-#                        (default docs/traces/boot-baseline-v0.70.txt)
+#                        (default docs/traces/boot-baseline-v0.71.txt)
 #   --update-baseline    (re)record the baseline from a fresh boot
 #   --qemu PATH          qemu-system-mipsel binary
 #                        (default tools/vendors/qemu/build/qemu-system-mipsel)
@@ -88,7 +88,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-[ -n "$BASELINE" ] || BASELINE=$ROOT/docs/traces/boot-baseline-v0.70.txt
+[ -n "$BASELINE" ] || BASELINE=$ROOT/docs/traces/boot-baseline-v0.71.txt
 [ -n "$QEMU" ]     || QEMU=$ROOT/tools/vendors/qemu/build/qemu-system-mipsel
 [ -n "$KERNEL" ]   || KERNEL=$ROOT/unpacked/1.6/vmlinux.bin
 
