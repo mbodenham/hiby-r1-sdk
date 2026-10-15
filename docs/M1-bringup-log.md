@@ -3643,3 +3643,128 @@ worktree currently holds (the demo VM's live file is the shared state).
 The worktree image was left as main's clean copy (d8d10c2f). The next
 round that needs a gate PASS should run it against a pristine
 as-extracted v1.6 userdata volume (or re-baseline deliberately).
+
+## v0.91 (2026-10-15, M3 tap-regression bisect round, worktree qemu-tap-regress) — the "tap no longer selects" report: NO model regression; the stock 30 s idle window + the invisible blank
+
+The manager's regression report: the first-boot language picker renders,
+the cursor crosshair tracks QMP pointer moves perfectly, but the verified
+QMP tap recipe (abs move + left press 140 ms + release) no longer
+selects — "the user cannot interact". The suspect list was 0117..0126
+(everything input-adjacent since the verified v0.77 touch-cal round,
+prime suspect 0125's abs-axis metadata). Verdict up front: **the
+tap-delivery chain is INTACT on current main; zero vendored changes this
+round; the symptom is the stock-firmware idle blank interacting with an
+invisible blank state in the VNC feed.**
+
+- **Worktree ops:** the setup step had NOT been done in this worktree
+  (no vendors/unpacked); did the one-time cp -a from main (vendors 777M,
+  unpacked 263M), rebuilt once. The shared nand image (463bf765...,
+  main's = the stopped demo VM's file) booted CLEAN in five boots this
+  round — no UBIFS bad-CRC / RO-flip (the v0.90 first-half freeze is not
+  in the current image state).
+- **Reproduce (the window is the whole story):** fresh boot on the
+  shared image: picker (lg_activity_main + the benign listview print)
+  at guest t≈29 s, fully painted ~1-2 s later. The idle blank
+  (i2c1 write timeout + hyn_ts_suspend, the FBIOBLANK(4) wall) fires at
+  t≈57-59 s with no input — so the interactive window is ~25-30 s from
+  render, the SAME ~30 s gap the v0.79 boots had (activity t≈56 →
+  blank t≈86); the GUI just starts ~27 s earlier now (the 0120/0121 SFC
+  acceleration), which moved the blank earlier on the clock but did NOT
+  shrink the window. A tap at t≈63 s (30+ s after render, no input in
+  between) does NOT select — screendump byte-identical except the
+  crosshair — exactly the reported symptom. A tap fired programmatically
+  ~0.3-1 s after the listview print (well inside the window) DOES select:
+  the wizard advanced to the region page with ENGLISH strings (rep2,
+  twice on current main).
+- **TEMP-REG-DIAG instrumentation** (stripped before commit; the trail
+  was in /tmp/kilo/reg/rep4/qemu.err) in x1600_input_event (every
+  evt), x1600_i2c_touch_report, x1600_i2c_int_pulse, and the i2c1
+  slave's read/write paths (frame reads, the 0xa5 sleep arm, the 0xaa
+  wake-check). The in-window tap trail matches the v0.77 verified
+  contract EXACTLY: abs events arrive with the RAW QMP values
+  (16384/16282 → x=240 y=397 at the (v*dim)>>15 formula — 0125's
+  abs_info [0,0x7fff] is an identity and the values are NOT
+  pre-scaled/clipped), touch_report(1,240,397) on the press edge, the
+  model INT pulse, then NINE driver reads over the 140 ms hold (8 held
+  frames b2=01 x=0x0f0 y=0x193 at the 20 ms re-assert + one lift frame
+  b2=00 b3=0x80) — press dispatch full record, lift dispatch BTN_TOUCH
+  0, per-record counter left at 0. The chain is whole.
+- **Where a POST-BLANK tap dies:** every model stage still fires (ABS
+  and BTN reach the handler, touch_report runs, the INT pulses stream at
+  20 ms) but the driver performs ZERO i2c1 reads — the hyn driver
+  disabled its IRQ in hyn_ts_suspend (stock kernel driver behavior, the
+  v0.78 wall) and the resume never runs. The model side is faithful
+  throughout: the 0xa5 sleep-write arms the wake-check exactly as
+  designed (v0.77 calibration 4), and the model WOULD answer the 0xaa
+  resume read — it just never comes.
+- **0125 exonerated twice:** (a) the diag shows raw 16384/16282 arriving
+  (identity scaling, INPUT_EVENT_ABS_MIN/MAX are 0x0000/0x7fff and
+  qemu_input_scale_axis(v,0,0x7fff,0,0x7fff) = v exactly); (b) the live
+  A/B — removed the .abs_info registration (keeping everything else),
+  rebuilt, booted a PRISTINE first-boot image, tapped in-window: the tap
+  STILL selects English (region page in English). The metadata changes
+  nothing; it is the correct declaration for the handler's formula and
+  stays.
+- **The key paths are also intact (and a practical lever):** SADC keys
+  (Up/Down qcodes → 103/108 → the key-mv ladder) and gpio-keys (Right
+  qcode → 106 → PC28; Esc → 1 → PC31) all reach the model and inject.
+  Crucially, PERIODIC KEYS POSTPONE THE BLANK: with a harmless Up/Down
+  key every 8-20 s the suspend moved to last-input + ~30 s EXACTLY
+  (rep5: last key virtual t=61.2 → suspend t=91.1; repF: keeper key at
+  wall +1629 → suspend +1659). The firmware's idle timer resets on ANY
+  evdev input — keys keep the picker interactive indefinitely.
+- **The wake flow does NOT exist at the wizard (re-verified, stock
+  behavior):** after the blank, Right, Up, Down, Enter(SADC) and
+  Esc(POWER) were each followed by a tap and watched for the 0xaa
+  resume read — NONE unblank (an early "RESUME after right" note was a
+  grep false positive on SFC flash row addresses 0xaa00; the diag shows
+  no 0xaa read). This re-confirms v0.79's decode live: litegui's wake
+  gates (setting(93)!=0 && app-state in {3,4,5}) fail at the wizard, so
+  blanked = bricked for ALL input until the stock ~5-min power-save
+  shutdown reboots the VM and re-opens a window. The main-UI wake was
+  verified in the v0.78 round and is unaffected.
+- **Why the demo feed looks broken:** the LCD surface model does not
+  render the FBIOBLANK(4) state — the feed keeps showing a BRIGHT picker
+  for the whole ~5-min cycle (mean luminance 244.6 before and after the
+  suspend), while the touch is dead for all but ~30 s of it. The user
+  sees a live-looking screen with a tracking crosshair and a dead tap.
+  The v0.77/0.79-era recipe already carried the "WITHIN the window"
+  caveat; the report is that caveat biting, not a regression.
+- **End-to-end verification on the CLEAN binary + a PRISTINE image**
+  (make_nand_image.py regenerated; true first boot, UBIFS format at
+  kernel t=23.6, picker at wall +29 s):
+  - (a) tap→select: QMP abs (16384,16282) + left 140 ms hold + release
+    at +3 s after the listview print → the wizard advanced to the region
+    page in ENGLISH (/tmp/kilo/reg/final_before.png the 6-row picker →
+    final_after.png "← Region / UK / US / China / Japan" in English,
+    settled dump identical at +10 s).
+  - (b) cursor crosshair tracks: QMP move (8000,16000) → the crosshair
+    rendered at screen (117,390) (final_cursor_a.png; an out-of-range
+    move 40000 confirmed the handler clamps the touch model but the
+    overlay follows the raw latch — stay in 0..0x7fff).
+  - (c) wake flow: the honest verdict is above — no key wakes the
+    blanked wizard; the working equivalent is the KEEPER recipe (a key
+    every ≤25 s holds the window open; verified last-input+30 s twice).
+  - (d) gate: tools/x1600-boot-test.sh PASS on the pristine image —
+    "boot window matches baseline (296 distinct messages, 158 structural
+    lines)" vs docs/traces/boot-baseline-v0.89.txt, exactly the
+    condition the v0.90 gate note predicted (the first-boot format
+    marker needs an unformatted userdata). No baseline re-record: the
+    model diff is empty, dmesg unchanged.
+- **Recipes for the manager (no code needed):** (1) tap recipe
+  unchanged — QMP input-send-event abs x=16384 y=16282 + left press,
+  140-350 ms hold, release, STRING enums, landing within ~25 s of the
+  picker render or of the last input; (2) to make the picker
+  interactable indefinitely, inject an innocuous key (qcode "up"/"down")
+  every ≤25 s — the idle timer resets on each; (3) after the blank,
+  only the stock 5-min shutdown/reboot cycle re-opens the window.
+- **Recommended next lever (NOT this round's remit):** model the
+  FBIOBLANK(4) visual state in the LCD surface (backlight off) so the
+  blank is VISIBLE in the feed — that is the fix for "the user can't
+  tell the picker is dead", and it is faithful (the real panel goes
+  dark). It touches the LCD display surface, deliberately left untouched
+  here per the round's scope.
+- Worktree state: vendored qemu byte-identical to main's committed state
+  (git status clean; no 0128 patch — nothing changed); unpacked/1.6/
+  nand-r1.bin left as the gate's pristine post-gate state (first-boot
+  formatted by the gate run); docs committed on qemu-tap-regress.

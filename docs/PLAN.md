@@ -872,3 +872,39 @@ qemu-vmstate-snapshots, patch 0124)
     the demo VM's live file). See the M1 log v0.90 gate note for the
     three runs and the condition for a real PASS (a pristine
     as-extracted userdata volume, or a deliberate re-baseline).
+
+- **Status (M3 tap-regression bisect round, v0.91, worktree
+  qemu-tap-regress):** the manager's "QMP tap no longer selects / the
+  user cannot interact" report was bisected to a NON-regression: the
+  tap-delivery chain (QMP → x1600_input_event → cst8xx MT-A → hyn IRQ →
+  driver reads → evdev → litegui) is INTACT on current main, verified
+  end-to-end with TEMP-REG-DIAG (since stripped) and two live in-window
+  selects (the wizard advanced to the region page in English on a
+  PRISTINE first-boot image, both with 0125's abs_info and with it
+  A/B-removed — the metadata is an exact identity, INPUT_EVENT_ABS_
+  {MIN,MAX}=0/0x7fff and scale(v,0,0x7fff,0,0x7fff)=v, so 0125 and the
+  0117-0126 suspect set are exonerated). The symptom is the stock
+  firmware's idle blank: the interactive window is last-input + ~30 s
+  (with zero input the anchor is ~GUI init at t≈28 s, the blank at
+  t≈57-59 s — the same ~30 s gap the v0.79 boots had; the 0120/0121 SFC
+  acceleration moved the GUI start ~27 s earlier on the clock without
+  shrinking the window). Post-blank, every model stage still fires
+  (INT pulses stream) but the driver performs zero i2c1 reads — its IRQ
+  is disabled by hyn_ts_suspend and litegui's wizard wake gates never
+  unblank (Right/Up/Down/Enter/Esc all dead post-blank, re-verified with
+  the 0xaa resume marker; the early "resume after right" note was a
+  grep false positive on SFC flash row 0xaa00 addresses). The feed
+  shows a BRIGHT picker the whole cycle (the LCD surface does not render
+  the FBIOBLANK(4) state), so the dead window is invisible — that is
+  the whole "user cannot interact" experience. Practical, faithful
+  levers recorded in the M1 log v0.91: tap within ~25 s of the render
+  or of the last input; a keeper key every ≤25 s postpones the blank
+  (verified last-input+30 s exactly, twice); after the blank only the
+  stock 5-min shutdown/reboot re-opens the window. Recommended next
+  lever (out of the touch round's remit): model the blanked visual
+  state (backlight off) in the LCD surface so the window is visible.
+  Gate: tools/x1600-boot-test.sh PASS on the pristine image (296
+  distinct / 158 structural vs boot-baseline-v0.89.txt), confirming the
+  v0.90 gate-note prediction; no baseline re-record (empty model diff,
+  unchanged dmesg). Zero vendored changes this round (no 0128 patch);
+  docs only.
