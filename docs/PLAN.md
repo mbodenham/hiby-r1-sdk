@@ -629,3 +629,53 @@ predates velocity data; SFC (hardest model so far) took ~1 day.
     guest reboot), and the guest has no fb_blank(4)-free shortcut:
     `reboot -f` from the console halts a -no-reboot VM (restart the
     qemu process instead).
+- **Status (M3 BT round, v0.84, worktree qemu-bt-bluez, patch 0123):**
+  the timezone-freeze's root cause is fixed in the BT lane. The stock
+  S80_bt_init chain (brcm_patchram_plus over /dev/ttyS0 = uart0, then
+  TIOCSETD(N_HCI) + HCIUARTSETPROTO(H4)) never completed because nothing
+  answered the UART: the guest sent HCI_Reset every 4 s forever (the
+  patchram's SIGALRM retry — the pre-fix ttyS0 capture is exactly 69 ×
+  `01 03 0c 00`), hci0 never appeared, and the player's embedded bluez
+  client asserted `adapter_get_properties (ADAPTER_IS(self))` and
+  crash-looped, starving the wizard at the timezone screen. The new
+  `chardev-x1600bt` responder on uart0 answers the full byte-exact
+  patchram protocol (0x0C03 reset, 0xFC18 baud 3000000, 0xFC2E minidriver,
+  181×0xFC4C RAM blocks + 0xFC4E launch from
+  BCM4343A1_001.002.009.1010.1030.hcd, post-launch reset/baud, 0xFC01
+  BD_ADDR remembered and reported back, 0xFC27 LPM) and the 4.4 kernel's
+  open-time init surface (1003 1001 1009 1005 0c23 0c14 0c25 0c38 0c39
+  0c05 0c16 1002 0c01 0c1c 0c47 0c24 — all must complete status 0, since
+  __hci_req_sync reports the last command's status as the sync result).
+  Verified: download 207 VS commands + kernel init 235 controller
+  commands, zero unknowns; `hciconfig -a` in the respawn shell shows
+  `hci0 Type: Primary Bus: UART, BD Address 4C:BC:98:B0:<rand>` (the
+  patchram-written address echoed back), /sys/class/bluetooth/hci0
+  exists; bluetoothd powers the adapter (Powered 1->1, Alias accepted);
+  **zero adapter.c assertions across every boot since the fix** (the
+  pre-fix console aborted every ~2 s); gate PASS ×2 (with a freshly
+  regenerated nand image — see the drift note below). Wizard evidence:
+  language tap advances to Region, region tap advances into the Time
+  zone page (the former freeze point) rendering Beijing/Urumqi rows
+  with the console clean — screendumps /tmp/kilo/bt/v_after_lang.png +
+  v_after_region.png. RESIDUAL (parked, input/display lane): the tz
+  page's own row tap does not advance — full-process strace in the
+  guest shows the player reads nothing but its timerfd during tz-page
+  taps and `od /dev/input/event1` reads 0 bytes (the kernel hyn_ts
+  chain delivers no events by then; one `hyn_ts_suspend ... ret=-145`
+  in dmesg), i.e. the touch chain dies ~2 s after the last accepted
+  tap — the v0.78 blanked-state/input wall territory, not the BT path.
+  - Operational notes for the integrator: (1) **the nand image is the
+    guest's persistence layer** — every boot dirties the cwd's
+    nand-r1.bin (UBIFS journal replay changes the next boot's window:
+    "UBIFS recovery needed/mounted" instead of the fresh-format
+    marker), so re-run `tools/x1600/make_nand_image.py
+    unpacked/1.6/nand-r1.bin unpacked/1.6/xImage
+    unpacked/1.6/rootfs.squashfs` before recording or checking a gate;
+    the shared demo VM boots with cwd = the main repo and drifts MAIN's
+    nand-r1.bin the same way. (2) The respawn shell on the ttyS2 console
+    (`console::respawn:-/bin/sh`) is reachable via
+    `-serial telnet:...,server,nowait` (or a socket chardev with
+    `logfile=` to keep the capture tee'd — the demo VM now runs that
+    shape: telnet 127.0.0.1:4448 + logfile /tmp/kilo/livedisp/console.log);
+    guest tools include strace, hciconfig, hcitool, od — enough to
+    diagnose in-guest without model instrumentation.
