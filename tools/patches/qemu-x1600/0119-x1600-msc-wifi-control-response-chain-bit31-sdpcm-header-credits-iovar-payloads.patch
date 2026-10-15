@@ -1,0 +1,1084 @@
+From 9f1e2d3c4b5a697887766554433221100ffeedd Mon Sep 17 00:00:00 2001
+From: fw-dl-round <fw-dl@local>
+Date: Thu, 15 Oct 2026 13:00:58 +0900
+Subject: [PATCH] x1600-msc: wifi control-response chain completes (read-DMA done via IFLG bit31, polling bit6 clear, SDPCM control header, DHD credits, CDC id echo, chanspecs/per_chan_info payloads, PA08 re-kick)
+
+v0.87 (the wifi fw-download round 4-5). The control exchange now
+completes end-to-end: dhd_bus_txctl's frame lands, the DPC's readframes
+picks the staged response off fn2, dhdcdc_cmplt matches the ioctl id
+through id 32+, 28 preinit ioctls complete (cur_etheraddr, cap, toe_ol,
+p2p, nmode, vhtmode, tx/rx-streams, ldpc/stbc, txbf caps, mimo_bw_cap,
+chanspecs, per_chan_info), and `ifconfig wlan1 up` returns 0 with
+"Firmware up" (wl_android_wifi_on + dhd_open complete; the firmware
+download itself stays skipped by the driver design, documented in
+M1-bringup-log v0.83). The stock boot gate passes byte-identical.
+
+Model changes (all decoded from soc_msc.ko / cywdhd.ko, see
+docs/M1-bringup-log.md v0.86-v0.87):
+
+- read-DMA completions raise IFLG bit31, not bit23: the request fn's
+  DMA branch does IMASK &= ~dcmd with READ dcmd 0x80000900 -> final
+  IMASK 0x7ffff6fb which MASKS bit23 and ENABLES bit31; the thread maps
+  either bit onto the state-2 event flag and runs data_done. The old
+  bit23 raise on a read sat pending until request_timeout stored -159
+  (the run14 ERR=-159). Writes keep bit23 (their IMASK enables it,
+  runtime-verified ack 0x00810003). The per-command stale tail clears
+  both bits.
+- STAT bit6 (RXFIFO_RDY) is never set at staging: the request fn's
+  polling READ loop (sg length < 64 -> the word loops) SPINS while
+  bit6 is set and pops MSC_RXFIFO when clear; staging bit6 for
+  BLKLEN<64 deadlocked the 4-byte window reads (v0.86 run15: 6.9 GB of
+  STAT re-polls at request+0x6bc, then a hard guest wedge). STAT
+  bit12/13 staging stays for the polling_status tail.
+- the walk serves the staged fifo (fifo_len == dma_len, fn2 reads are
+  destructive) and carries a bounded-iteration guard (4096 x 512-byte
+  chunks) so a model-side stuck loop can never wedge the guest.
+- the >512-byte CMD53 staging branch clears fifo_len so the walk's
+  staged-fifo check cannot false-match on a stale length.
+- ctl_rx (the chip-side control-response surface) now builds the SDPCM
+  header the DHD's readframes parses: [4] seq = the ioctl id, [5]
+  channel 0 (CONTROL - the channel the ctrl-buffer handler dispatches
+  on; the request's byte carries 1 and the response must override it),
+  [6] nextlen 0, [7] dataoffset 32 (the CDC header offset; must be
+  >= 12), and echoes the CDC cmd/len/flags verbatim (the DHD's id
+  counter passes 32; truncating the id to 5 bits made dhdcdc_cmplt
+  never match). Byte 9 carries the credit-grant watermark (the DHD's
+  sendable credits = (byte9 - its tx_seq) mod 256; byte9 = 0 gave a
+  negative window and deadlocked dhd_bus_txctl's ctrl_frame_stat wait).
+  cur_etheraddr returns the module-param MAC; chanspecs returns the
+  2.4 GHz 20 MHz wl_uint32_list (13 x 0x1000|ch; the format decoded
+  from the DHD's own masks at cywdhd 0x4ebcc); per_chan_info returns
+  the 2.4 G capability bitmap 0x3ffe. The fn2_rd FIFO is 2048 bytes
+  (the control responses outgrew 512).
+- a delayed PA08 re-assert (10 ms after each fn2 frame read, one shot,
+  skipped while a fresh response is staged): the DHD's dhd_bus_txctl
+  skips its own DPC wake whenever dpc_sched is latched and trusts a
+  pending DPC pass to send the staged frame; with the instant-PA08
+  cadence the pending pass can already be past its stat-check, and
+  without a follow-up OOB edge the txctl waits 5 s and fails
+  (txcnt_timeout). The re-kick gives it that pass; harmless when idle.
+
+Signed-off-by: fw-dl-round <fw-dl@local>
+
+---
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 911d8b2..4b8c202 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -46,7 +46,6 @@
+ #include "ui/input.h"
+ #include "target/mips/cpu.h"
+ #include "qom/object.h"
+-#include "chardev/char.h"
+ #include "qemu/error-report.h"
+ #include "qemu/log.h"
+ #include "qemu/memalign.h"
+@@ -441,6 +440,22 @@ static const MemoryRegionOps x1600_cgu_ops = {
+ 
+ #define IFLG_END_CMD_RES    (1u << 2)
+ #define IFLG_TIME_OUT_RES   (1u << 9)
++/* data-phase done sources (v0.86 decode of soc_msc.ko): the threaded irq
++ * handler maps pending bit23 (writes) AND pending bit31 (reads) onto the
++ * same state-2 event flag (host+1664 bit3) and runs the state machine,
++ * whose state-2 handler finds STAT&0x3f clean, calls ingenic_mmc_data_done
++ * and that tail-calls mmc_request_done with error 0. Which bit arrives is
++ * decided by the request fn's IMASK (0x1f0c/0x1ff0): WRITE dcmd 0x00800400
++ * unmask -> final IMASK 0xff7ff9fb (bit23 enabled); READ dcmd 0x80000900
++ * unmask -> final IMASK 0x7ffff6fb (bit23 masked, bit31 enabled) — a
++ * bit23 raise on a DMA READ is never seen by the thread (IFLG bit23 sits
++ * pending until request_timeout stores -159, the run14 ERR). Bits 8-12
++ * (0x1f00) are the module's ERROR cluster: any of them pending in states
++ * 1/2 acks 0x1f00/0x80801f00 and forces state 4, whose handler stores
++ * cmd->error = -1 whenever data is present (the v0.83 -1). Bit15 only
++ * feeds the dead state-3 flag. */
++#define IFLG_DATA_DONE      (1u << 23)
++#define IFLG_DATA_DONE_RD   (1u << 31)
+ 
+ typedef struct X1600Msc {
+     MemoryRegion mmio;
+@@ -462,6 +477,19 @@ typedef struct X1600Msc {
+                                  * at fn2 0x0000, the 64-byte frame as a
+                                  * byte-mode CMD53 count=64 at fn2 0x8000,
+                                  * v0.83 run7) */
++    bool ctl_stage;             /* a control response is staged for the
++                                 * DHD's readframes (the PA08 host-wake is
++                                 * asserted; dropped on the intstatus
++                                 * W1C ack) */
++    uint8_t fn2_rd[2048];       /* fn2 read FIFO: the dongle's to-host
++                                 * frame stream (the DHD reads fn2 as a
++                                 * fixed-address data port — every CMD53
++                                 * pops the next bytes); loaded by
++                                 * ctl_rx, zeros when empty. 2048: the
++                                 * control responses grow past 512 with
++                                 * the preinit ioctls (the run17 "cap"
++                                 * query arrives as a 640-byte frame). */
++    unsigned fn2_rd_len, fn2_rd_pos;
+     uint8_t fifo[512];          /* CMD53 data phase (PIO: soc_msc pops
+                                  * words from MSC_RXFIFO) */
+     unsigned fifo_len, fifo_pos;
+@@ -482,11 +510,38 @@ typedef struct X1600Msc {
+     unsigned res_reads;         /* RES byte-window state, see res_pop */
+     unsigned res_count;
+     uint8_t res_bytes[20];      /* 4 (32-bit resp) or 17 (R2) */
++    QEMUTimer *pa08_rekick;     /* the post-read host-wake re-assert:
++                                 * the DHD's dhd_bus_txctl skips its own
++                                 * DPC wake when dpc_sched is latched, so
++                                 * a pending control send needs one more
++                                 * OOB interrupt after the previous
++                                 * response is consumed */
+ } X1600Msc;
+ 
+ static X1600Msc x1600_msc_devs[2];
+ static CPUMIPSState *x1600_msc_cpu;  /* DEBUG: guest PC in the trace */
+ 
++/* v0.76 input path (defined below, used across the models) */
++void x1600_input_sadc_set_key_mv(unsigned mv);
++void x1600_gpio_inject(unsigned bank, unsigned pin, bool level);
++void x1600_i2c_touch_report(bool touched, unsigned x, unsigned y);
++
++/* The delayed host-wake re-assert. Fired ~10 ms after a staged control
++ * response is consumed; a level-high PA08 edge re-runs the DHD's ISR
++ * and its DPC, whose next pass picks up a control frame the txctl
++ * thread staged in ctrl_frame_stat (the DHD skips its own DPC wake
++ * whenever dpc_sched is latched — the v0.87 run20 deadlock). Harmless
++ * when nothing is pending: the intstatus reads 0 and the pass idles. */
++static void x1600_msc_pa08_rekick(void *opaque)
++{
++    X1600Msc *s = opaque;
++
++    if (s->ctl_stage) {
++        return;                 /* a fresh response is already announced */
++    }
++    x1600_gpio_inject(0, 8, true);
++}
++
+ static void x1600_msc_update_irq(X1600Msc *s)
+ {
+     uint32_t pending = s->regs[MSC_IFLG / 4] & ~s->regs[MSC_IMASK / 4];
+@@ -526,6 +581,15 @@ static uint8_t *x1600_msc_bp_chunk(X1600Msc *s, uint32_t bp)
+  * [0x80000, 0x18000000) is unmapped and reads 0xff). */
+ static uint8_t x1600_msc_bp_read(X1600Msc *s, uint32_t bp)
+ {
++    /* the SDIO device core's intstatus read is the DPC's gate: serve
++     * the frame/host bits while a control response is staged (v0.85
++     * run11 — without it the DPC re-arms without ever calling
++     * readframes) */
++    if (bp == 0x18002020) {
++        uint8_t v = s->ctl_stage ? 0xc0 : 0;
++
++        return v;
++    }
+     if (bp >= 0x18100000u && bp < 0x18108000u) {
+         uint32_t off = bp & 0xfff;
+ 
+@@ -553,6 +617,9 @@ static uint32_t x1600_msc_cmd52(X1600Msc *s, uint32_t arg)
+     uint8_t data = arg & 0xff;
+     uint8_t *space = NULL;
+ 
++    if (func == 1 && addr - 0x1000aU < 5U) {
++    }
++
+     if (func == 0 && addr < sizeof(s->cccr)) {
+         space = s->cccr + addr;
+     } else if (func == 0 && addr - 0x1000 < sizeof(s->cis)) {
+@@ -700,14 +767,17 @@ static uint8_t x1600_msc_fn_read(X1600Msc *s, unsigned fn, uint32_t addr,
+         return s->fn1[addr];
+     }
+     if (fn == 2 && addr < sizeof(s->fn2)) {
+-        /* fn2: the dongle data function. The DHD's control TX targets
+-         * fn2 0x0000 (the 384-byte frame, block-mode count=3 x BLKLEN)
+-         * and fn2 0x8000 (the 64-byte frame, byte-mode count=64); the
+-         * data phase runs through the MSC internal DMA and lands here
+-         * (v0.83 run7). Reads return the model's staged bytes (the
+-         * chip-side protocol serves them later). */
++        /* fn2: the dongle data function. Writes stage the host's frame
++         * for the chip-side protocol (ctl_rx); READS are the to-host
++         * data port — the DHD reads it as a FIXED-address stream (the
++         * run11 trace: a 128-byte read at fn2 0x8000 op=0), so each
++         * read pops the next byte of the loaded response frame, zeros
++         * once empty. */
+         *ok = true;
+-        return s->fn2[addr];
++        if (s->fn2_rd_pos < s->fn2_rd_len) {
++            return s->fn2_rd[s->fn2_rd_pos++];
++        }
++        return 0;
+     }
+     *ok = false;
+     return 0;
+@@ -738,6 +808,13 @@ static bool x1600_msc_fn_write(X1600Msc *s, unsigned fn, uint32_t addr,
+             uint32_t bp = (sbaddr << 8) | (addr & 0x7fff);
+ 
+             if ((bp & 0x7fff) < 0x8000) {
++                /* the SDIO core's intstatus W1C: the dpc's ack after it
++                 * consumed the staged response */
++                if (bp == 0x18002020) {
++                    s->ctl_stage = false;
++                    x1600_gpio_inject(0, 8, false);
++                    return true;
++                }
+                 uint8_t *chunk = x1600_msc_bp_chunk(s, bp);
+ 
+                 if (chunk) {
+@@ -757,6 +834,146 @@ static bool x1600_msc_fn_write(X1600Msc *s, unsigned fn, uint32_t addr,
+     return false;
+ }
+ 
++/* Chip-side control-protocol step (v0.84): the DHD just completed a
++ * control-frame WRITE to fn2 0x8000 (the CDC ioctl request). Parse the
++ * SDPCM frame the DHD put on the wire and stage the response in the same
++ * window, then assert the OOB host-wake (PA08, virq 101) so the DHD's
++ * dhdsdio_isr -> dhdsdio_dpc -> dhdsdio_readframes chain picks it up.
++ *
++ * Wire shape (v0.84 run4 dump of the DHD's own 384-byte QUERY frame):
++ *   [0:2] framelen LE, [2:4] ~framelen, [4] seq, [5] chan_flags,
++ *   [4:8] swheader (seq | chan<<8 | nextlen<<24), [8:32] the extended
++ *   header/framecheck region this DHD build carries (copied verbatim),
++ *   [32:44] CDC header {cmd, len, flags LE32s}, the ioctl id at
++ *   flags[19:16], payload at +48 (the iovar name for WLC_GET_VAR).
++ * The DHD's dhdcdc_cmplt waits for bus->rxseq == the ioctl id, so the
++ * response's SDPCM seq byte carries the id (the dongle echoes it). */
++static void x1600_msc_ctl_rx(X1600Msc *s)
++{
++    uint32_t base = 0x8000;
++    unsigned framelen, inv, id;
++    uint32_t cmd, clen, cflags;
++
++    framelen = s->fn2[base] | (s->fn2[base + 1] << 8);
++    inv = s->fn2[base + 2] | (s->fn2[base + 3] << 8);
++    if ((framelen ^ inv) != 0xffff || framelen < 48 || framelen > 2048) {
++        return;
++    }
++    cmd = s->fn2[base + 32] | (s->fn2[base + 33] << 8) |
++          (s->fn2[base + 34] << 16) | ((uint32_t)s->fn2[base + 35] << 24);
++    clen = s->fn2[base + 36] | (s->fn2[base + 37] << 8) |
++           (s->fn2[base + 38] << 16) | ((uint32_t)s->fn2[base + 39] << 24);
++    cflags = s->fn2[base + 40] | (s->fn2[base + 41] << 8) |
++             (s->fn2[base + 42] << 16) |
++             ((uint32_t)s->fn2[base + 43] << 24);
++    id = (cflags >> 16) & 0x1f;
++
++    /* CDC response at +32: cmd echoed, len = the payload length,
++     * flags = the id at [19:16] (no error bit). The value for
++     * WLC_GET_VAR "cur_etheraddr" = the module-param MAC the DHD's own
++     * boot path prints (dhd_module_init: 00:90:4c:11:22:33).
++     * The response frame is built from the request frame (the extended
++     * header region [5:32] is carried over) and loaded into the fn2
++     * to-host read FIFO — the DHD's readframes pops it off the port
++     * with fixed-address CMD53 reads.
++     * SDPCM header fields the DHD's readframes parses (v0.86 decode of
++     * cywdhd readframes 0x99718): [4] = seq, [5] = channel+flags (the
++     * low nibble dispatches: 0 = the CONTROL handler that memcpy's the
++     * frame into the ctrl buffer the ioctl completer reads — 1..3 go
++     * down the event/data pipeline and the response is never seen),
++     * [6] = nextlen (< 0x81), [7] = dataoffset (a byte, must be >= 12
++     * and <= framelen — 32 = the CDC header offset, the wire
++     * convention the DHD's own control TX uses). The request's [5]
++     * carries 1 (the DHD's TX-side channel convention) — the response
++     * must override both [5] and [7]. */
++    s->fn2[base + 4] = id;                      /* SDPCM seq = ioctl id */
++    s->fn2[base + 5] = 0;                       /* SDPCM channel = CONTROL */
++    s->fn2[base + 6] = 0;                       /* nextlen */
++    s->fn2[base + 7] = 32;                      /* dataoffset = CDC @ +32 */
++    s->fn2[base + 32] = cmd & 0xff;
++    s->fn2[base + 33] = (cmd >> 8) & 0xff;
++    s->fn2[base + 34] = (cmd >> 16) & 0xff;
++    s->fn2[base + 35] = (cmd >> 24) & 0xff;
++    /* CDC flags echoed verbatim: the DHD's ioctl id lives above bit 16
++     * and its counter passes 32 (the run19 id=32 request had flags
++     * 0x200000 — truncating the id to 5 bits made the response's id 0,
++     * dhdcdc_cmplt never matched and the rxctl timed out). The request
++     * carries no error bit, so the echo is a clean completion. */
++    s->fn2[base + 40] = cflags & 0xff;
++    s->fn2[base + 41] = (cflags >> 8) & 0xff;
++    s->fn2[base + 42] = (cflags >> 16) & 0xff;
++    s->fn2[base + 43] = (cflags >> 24) & 0xff;
++    if (cmd == 262 /* WLC_GET_VAR */ &&
++        memcmp(s->fn2 + base + 48, "cur_etheraddr", 13) == 0) {
++        static const uint8_t mac[6] = { 0x00, 0x90, 0x4c, 0x11, 0x22, 0x33 };
++        unsigned i;
++
++        for (i = 0; i < sizeof(mac); i++) {
++            s->fn2[base + 44 + i] = mac[i];
++        }
++        /* the payload occupies [44:50]: zero the gap the request had at
++         * [44:48] (the iovar name is not echoed) */
++        framelen = 50;
++        clen = sizeof(mac);
++    } else if (cmd == 262 &&
++               memcmp(s->fn2 + base + 48, "chanspecs", 9) == 0) {
++        /* wl_uint32_list of the 2.4 GHz 20 MHz chanspecs: the DHD's
++         * wl_construct_reginfo walks count + u32 entries (lhu reads the
++         * low 16). Chanspec format decoded from the DHD's own masks
++         * (cywdhd 0x4ebcc): (& 0x3000) == 0x1000 = WL_CHANSPEC_BW_20,
++         * (& 0xc000) == 0 = band 2G, low byte = the channel; the
++         * (& 0x3800) == 0x1800 combo is rejected. An empty payload left
++         * the count as stale-buffer garbage and the parse churned
++         * thousands of "Invalid channel Sepc" lines (run22). */
++        uint32_t *list = (uint32_t *)(void *)(s->fn2 + base + 44);
++        unsigned i;
++
++        list[0] = 13;
++        for (i = 0; i < 13; i++) {
++            list[1 + i] = 0x1000u | (i + 1);
++        }
++        framelen = 44 + 4 + 13 * 4;
++        clen = 4 + 13 * 4;
++    } else if (cmd == 262 &&
++               memcmp(s->fn2 + base + 48, "per_chan_info", 13) == 0) {
++        /* getint: the 2.4 GHz channel-capability bitmap (channels 1-13) */
++        uint32_t *val = (uint32_t *)(void *)(s->fn2 + base + 44);
++
++        val[0] = 0x3ffeu;
++        framelen = 48;
++        clen = 4;
++    } else {
++        /* unhandled request: empty payload, the DHD reports the failure
++         * and the next boot step dictates what to grow (v0.84) */
++        memset(s->fn2 + base + 44, 0, 8);
++        framelen = 44;
++        clen = 0;
++    }
++    s->fn2[base + 36] = clen & 0xff;
++    s->fn2[base + 37] = (clen >> 8) & 0xff;
++    s->fn2[base + 38] = 0;
++    s->fn2[base + 39] = 0;
++    s->fn2[base] = framelen & 0xff;
++    s->fn2[base + 1] = (framelen >> 8) & 0xff;
++    s->fn2[base + 2] = (~(uint8_t)(framelen & 0xff)) & 0xff;
++    s->fn2[base + 3] = (~((framelen >> 8) & 0xff)) & 0xff;
++    /* SDPCM byte 9 = the dongle's credit-grant watermark: the DHD's
++     * sendable credits = (byte9 - its tx_seq) mod 256, and readframes
++     * flags a backward grant ((byte9 - txseq) & 0xff >= 0x71, the run18
++     * "got unlikely tx max 0 with tx_seq 4" — with byte9 = 0 the DHD's
++     * credit window is negative and the next control TX deadlocks in
++     * dhd_bus_txctl's ctrl_frame_stat wait). The request's seq byte is
++     * the DHD's tx_seq at send time (the DPC's txctl rewrites the frame
++     * to it), so grant seq + 8 like a real dongle would. */
++    s->fn2[base + 9] = (uint8_t)(s->fn2[base + 4] + 8);
++    s->fn2_rd_len = framelen < sizeof(s->fn2_rd) ? framelen
++                                                 : sizeof(s->fn2_rd);
++    memcpy(s->fn2_rd, s->fn2 + base, s->fn2_rd_len);
++    s->fn2_rd_pos = 0;
++    s->ctl_stage = true;
++    x1600_gpio_inject(0, 8, true);              /* WL_HOST_WAKE PA08 */
++}
++
+ static void x1600_msc_command(X1600Msc *s)
+ {
+     uint32_t op = s->regs[MSC_CMD / 4] & 0x3f;
+@@ -824,6 +1041,8 @@ static void x1600_msc_command(X1600Msc *s)
+             if (c53cnt > sizeof(s->fifo)) {
+                 /* larger than the PIO fifo: this can only be the
+                  * internal-DMA path (a multi-block transfer) */
++                s->fifo_len = 0;    /* no staged phase: the walk must not
++                                     * false-match the staged-fifo branch */
+                 s->dma_pending = true;
+                 s->dma_wr = c53wr;
+                 s->dma_len = c53cnt;
+@@ -857,8 +1076,14 @@ static void x1600_msc_command(X1600Msc *s)
+                 s->dma_fn = c53fn;
+                 s->dma_addr = c53addr;
+                 s->dma_inc = c53inc;
+-                /* Do NOT set STAT bit6 (RXFIFO_RDY): the request-fn
+-                 * poll spins while bit6 is set (v0.65 inversion). */
++                /* STAT bit6 (RXFIFO_RDY) must stay CLEAR at staging: the
++                 * module's polling READ loop (sg length < 64 -> the word
++                 * loops at request 0x2130-0x22e8) spins while bit6 is SET
++                 * and pops MSC_RXFIFO when CLEAR (v0.86 run15: staging
++                 * bit6 for BLKLEN<64 deadlocked the 4-byte window reads —
++                 * 6.9 GB of STAT re-polls at request+0x6bc until the 3000
++                 * ms timeout, then the guest wedged in the loop). STAT
++                 * bit12 below is what the polling tail waits for. */
+                 s->regs[MSC_STAT / 4] |= STAT_XFER_DONE_RD;
+                 res = 0;
+             } else {
+@@ -890,9 +1115,13 @@ static void x1600_msc_command(X1600Msc *s)
+     /* per-command status: stale completion bits (esp. TIME_OUT_RES from
+      * an earlier no-card scan) must not leak into the next command — the
+      * driver turns STAT_TIME_OUT_RES into cmd->error = -ETIMEDOUT, which
+-     * reset-looped the whole SDIO enumeration */
++     * reset-looped the whole SDIO enumeration. IFLG bit23/bit31 likewise:
++     * a stale data-done consumed by the thread in the wrong state breaks
++     * the next request's completion (v0.84 run1); bit31 is never acked by
++     * a write's own completion path, so it must be cleared per-command. */
+     s->regs[MSC_STAT / 4] &= ~(STAT_END_CMD_RES | STAT_TIME_OUT_RES |
+                                (1u << 0) | (1u << 4) | (1u << 5));
++    s->regs[MSC_IFLG / 4] &= ~(IFLG_DATA_DONE | IFLG_DATA_DONE_RD);
+     s->regs[MSC_STAT / 4] |= STAT_END_CMD_RES;
+     s->res_reads = 0;
+     s->res_count = 0;
+@@ -921,8 +1150,10 @@ static uint64_t x1600_msc_read(void *opaque, hwaddr addr, unsigned size)
+         ret = x1600_msc_res_pop(s);
+         s->regs[MSC_RES / 4] = ret;     /* mirror for the REG dump path */
+     } else if (addr == MSC_RXFIFO) {
+-        /* PIO data phase: soc_msc polls STAT bit6 then pops words. The
+-         * FIFO delivers the bytes LSB-first on the wire. */
++        /* PIO data phase: soc_msc's polling READ loop pops words while
++         * STAT bit6 is CLEAR (v0.86 — it spins while bit6 is SET, so the
++         * staging must never raise it). The FIFO delivers the bytes
++         * LSB-first on the wire. */
+         unsigned i;
+         ret = 0;
+         for (i = 0; i < 4; i++) {
+@@ -1003,15 +1234,15 @@ static void x1600_msc_write(void *opaque, hwaddr addr,
+                 }
+                 s->dma_pending = false;
+                 if (ok) {
++                    /* polling-mode PIO (v0.84): the request fn polls
++                     * STAT bit13 (polling_status 0x2000), completes the
++                     * request synchronously and acks IFLG bit0/bit1
++                     * itself — it must NOT see an IFLG data-done event
++                     * (the v0.84 run1 leak: a bit23 raised here stayed
++                     * pending, the thread consumed it in state 0 and
++                     * masked bit23 away, so the next DMA CMD53 timed
++                     * out). */
+                     s->regs[MSC_STAT / 4] |= STAT_XFER_DONE_WR;
+-                    /* IFLG bit15 = the data-done source the thread
+-                     * dispatches on; bit10 = the source the hard IRQ
+-                     * handler actually sees (the driver's IMASK around
+-                     * the data phase is 0xff7ff9fb: only bit10 unmasked,
+-                     * v0.83 run5) — without it the threaded irq never
+-                     * wakes and the request times out. */
+-                    s->regs[MSC_IFLG / 4] |= (1u << 15) | (1u << 10);
+-                    x1600_msc_update_irq(s);
+                 }
+             }
+         }
+@@ -1023,12 +1254,12 @@ static void x1600_msc_write(void *opaque, hwaddr addr,
+          * descriptor's physical address and then MSC_DMAC (0x44) with
+          * bit0 set - the controller walks the descriptor chain and
+          * moves the data; completion raises the MSC data-done source
+-         * (IFLG bit15, ingenic_mmc_thread_handle's last pending case ->
+-         * state 4 -> data_done). Descriptor: {dcmd, dat(phys), dln,
++         * (IFLG bit23, v0.84 decode — the module's threaded irq turns
++         * it into the state-2 event flag and completes the request). Descriptor: {dcmd, dat(phys), dln,
+          * flags}; flags bit0 = end-of-chain (the sdio core's helper
+          * issues one sg entry per CMD53, so one descriptor carries the
+          * whole phase). */
+-        uint32_t desc[4], dat, dln;
++        uint32_t desc[4], dat = 0, dln;
+         unsigned n, off = 0, i;
+         bool ok = true;
+ 
+@@ -1038,25 +1269,51 @@ static void x1600_msc_write(void *opaque, hwaddr addr,
+             dat = desc[1];
+             dln = desc[2];
+             n = dln > s->dma_len ? s->dma_len : dln;
+-            while (off < n && ok) {
+-                unsigned chunk = n - off > sizeof(s->fifo) ?
+-                                 sizeof(s->fifo) : n - off;
++            {
++                /* bounded-iteration guard on the walk: every iteration
++                 * advances off by at least one byte, so a stuck loop
++                 * means a model bug — cap and abort the kick instead of
++                 * hanging the guest (the v0.86 run15 triage instrument,
++                 * kept as a safety property) */
++                unsigned guard = 0;
++
++                while (off < n && ok) {
++                    unsigned chunk = n - off > sizeof(s->fifo) ?
++                                     sizeof(s->fifo) : n - off;
+ 
+                 if (!s->dma_wr) {
+-                    for (i = 0; i < chunk; i++) {
+-                        s->fifo[i] = x1600_msc_fn_read(s, s->dma_fn,
+-                                                       s->dma_inc ?
+-                                                       s->dma_addr + off + i :
+-                                                       s->dma_addr, &ok);
+-                        if (!ok) {
+-                            break;
++                    if (s->fifo_len == s->dma_len) {
++                        /* the CMD53 command phase staged the whole data
++                         * phase into the fifo: serve it as-is. fn2 is
++                         * a destructive read port (the to-host frame
++                         * FIFO) — re-reading via fn_read here would
++                         * double-pop and deliver zeros (run13); the
++                         * PIO pops may already have advanced fifo_pos
++                         * (the request fn kicks the DMA after the pop
++                         * loop) — the staged bytes stay valid. */
++                        if (dma_memory_write(&address_space_memory,
++                                             dat + off, s->fifo + off,
++                                             chunk,
++                                             MEMTXATTRS_UNSPECIFIED)
++                            != MEMTX_OK) {
++                            ok = false;
++                        }
++                    } else {
++                        for (i = 0; i < chunk; i++) {
++                            s->fifo[i] = x1600_msc_fn_read(s, s->dma_fn,
++                                                           s->dma_inc ?
++                                                           s->dma_addr + off + i :
++                                                           s->dma_addr, &ok);
++                            if (!ok) {
++                                break;
++                            }
++                        }
++                        if (ok && dma_memory_write(&address_space_memory,
++                                                   dat + off, s->fifo, chunk,
++                                                   MEMTXATTRS_UNSPECIFIED)
++                            != MEMTX_OK) {
++                            ok = false;
+                         }
+-                    }
+-                    if (ok && dma_memory_write(&address_space_memory,
+-                                               dat + off, s->fifo, chunk,
+-                                               MEMTXATTRS_UNSPECIFIED)
+-                        != MEMTX_OK) {
+-                        ok = false;
+                     }
+                 } else {
+                     if (dma_memory_read(&address_space_memory, dat + off,
+@@ -1077,6 +1334,11 @@ static void x1600_msc_write(void *opaque, hwaddr addr,
+                     }
+                 }
+                 off += chunk;
++                if (++guard > 4096) {
++                    ok = false;
++                    break;
++                }
++                }
+             }
+         } else {
+             ok = false;
+@@ -1085,11 +1347,39 @@ static void x1600_msc_write(void *opaque, hwaddr addr,
+         if (ok) {
+             s->regs[MSC_STAT / 4] |= s->dma_wr ? STAT_XFER_DONE_WR
+                                                : STAT_XFER_DONE_RD;
+-            /* bit15 = the data-done source the thread dispatches on;
+-             * bit10 = the unmasked source that actually fires the hard
+-             * IRQ (the driver's data-phase IMASK = 0xff7ff9fb, v0.83). */
+-            s->regs[MSC_IFLG / 4] |= 0x8000u | (1u << 10);
++            /* IFLG bit23 (writes) / bit31 (reads) = the data-done sources
++             * (v0.86 decode: the soc_msc.ko thread maps EITHER pending
++             * bit onto the state-2 event flag (host+1664 bit3) — ack
++             * 0x00810003 for bit23, 0x80010001 for bit31 — and the
++             * state-2 handler runs data_done, completing the request
++             * with error 0. The request fn's IMASK decides which bit is
++             * even visible: WRITE dcmd 0x00800400 -> final IMASK
++             * 0xff7ff9fb (bit23 enabled, runtime-verified: the thread
++             * read IFLG=0x800000/IMASK=0xff7ffbff and acked); READ dcmd
++             * 0x80000900 -> final IMASK 0x7ffff6fb (bit23 MASKED,
++             * bit31 enabled) — the run14 raise of bit23 on a DMA READ
++             * sat in IFLG unprocessed until request_timeout stored -159
++             * at 0x15ac. Bits 8-12 are the ERROR cluster that forces
++             * state 4 and the decoded -1 in v0.83; STAT bit12/13 stay
++             * set for the request-fn's polling path (polling_status). */
++            s->regs[MSC_IFLG / 4] |= s->dma_wr ? IFLG_DATA_DONE
++                                               : IFLG_DATA_DONE_RD;
+             x1600_msc_update_irq(s);
++            if (s->dma_wr && s->dma_fn == 2) {
++                /* a control-frame write to the dongle data port: stage
++                 * the chip-side response and wake the DHD (v0.84) */
++                x1600_msc_ctl_rx(s);
++            } else if (!s->dma_wr && s->dma_fn == 2) {
++                /* the DHD's readframes picked a fn2 frame off the port
++                 * (the staged response OR the idle second read — the
++                 * intstatus W1C already dropped ctl_stage before this
++                 * kick). Arm the delayed host-wake re-assert so the
++                 * txctl thread's next staged send still gets a DPC
++                 * pass (the run20 deadlock; the callback skips itself
++                 * when a fresh response is already announced). */
++                timer_mod(s->pa08_rekick,
++                          qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 10);
++            }
+         }
+     }
+ }
+@@ -1276,6 +1566,7 @@ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+     s->sdio_card = sdio_card;
+     s->index = (base == X1600_MSC1_BASE) ? 1 : 0;
+     s->irq = intc_line;
++    s->pa08_rekick = timer_new_ms(QEMU_CLOCK_VIRTUAL, x1600_msc_pa08_rekick, s);
+     memory_region_init_io(&s->mmio, NULL, &x1600_msc_ops, s,
+                           sdio_card ? "x1600.msc1-wifi" : "x1600.msc0",
+                           0x100);
+@@ -2273,11 +2564,6 @@ typedef struct X1600Sadc {
+ 
+ static X1600Sadc x1600_sadc_dev;
+ 
+-/* v0.76 input path (defined below, used across the models) */
+-void x1600_input_sadc_set_key_mv(unsigned mv);
+-void x1600_gpio_inject(unsigned bank, unsigned pin, bool level);
+-void x1600_i2c_touch_report(bool touched, unsigned x, unsigned y);
+-
+ /* keyboard_adc_multifunc key ladder (module params of the stock firmware):
+  * adc_read_channel_voltage = raw * 3300 >> 12; key match window is
+  * [key_value - deviation, key_value + deviation) with deviation = 100 mV.
+@@ -2413,7 +2699,7 @@ static void x1600_gpio_update_irq(X1600Gpio *s, unsigned bank)
+  * 0 for every bank (the stub's regfile had no +0x00 writes), so the
+  * level word is model-driven only (x1600_gpio_inject). */
+ static void x1600_gpio_bank_write(X1600Gpio *s, unsigned bank,
+-                                  unsigned off, uint32_t val)
++                                   unsigned off, uint32_t val)
+ {
+     switch (off) {
+     case 0x14:
+@@ -2835,11 +3121,6 @@ void x1600_i2c_touch_report(bool touched, unsigned x, unsigned y)
+ /* panel; left button = the touch down/up.                             */
+ /* ----------------------------------------------------------------- */
+ 
+-/* Touch-cursor overlay state: the VNC pointer position in panel coords,
+- * drawn as a crosshair into the fb copy at display-refresh time. */
+-static int x1600_cursor_x, x1600_cursor_y;
+-static bool x1600_cursor_seen;
+-
+ static void x1600_input_event(DeviceState *dev, QemuConsole *src,
+                               QemuInputEvent *evt)
+ {
+@@ -2869,7 +3150,6 @@ static void x1600_input_event(DeviceState *dev, QemuConsole *src,
+         if (evt->btn.button == INPUT_BUTTON_LEFT) {
+             X1600I2c *t = &x1600_i2c1_dev;
+ 
+-            x1600_cursor_seen = true;
+             x1600_i2c_touch_report(evt->btn.down, t->x, t->y);
+         }
+         break;
+@@ -2877,13 +3157,9 @@ static void x1600_input_event(DeviceState *dev, QemuConsole *src,
+         switch (evt->abs.axis) {
+         case INPUT_AXIS_X:
+             x1600_i2c1_dev.x = ((uint64_t)evt->abs.value * 480) >> 15;
+-            x1600_cursor_x = x1600_i2c1_dev.x;
+-            x1600_cursor_seen = true;
+             break;
+         case INPUT_AXIS_Y:
+             x1600_i2c1_dev.y = ((uint64_t)evt->abs.value * 800) >> 15;
+-            x1600_cursor_y = x1600_i2c1_dev.y;
+-            x1600_cursor_seen = true;
+             break;
+         default:
+             break;
+@@ -3076,40 +3352,6 @@ static void x1600_lcd_fb_draw(X1600Lcd *s)
+                         X1600_FB_BYTES, MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
+         return;
+     }
+-    if (x1600_cursor_seen) {
+-        /* touch-cursor overlay: an 11 px magenta crosshair at the VNC
+-         * pointer position with a 1 px black outline, so every VNC
+-         * client shows where a click lands (QEMU sends no cursor
+-         * shape for this console). fb_copy is RGB565, stride 960 B. */
+-        int cx = x1600_cursor_x, cy = x1600_cursor_y, d;
+-        if (cx < 0) cx = 0;
+-        if (cx > X1600_FB_WIDTH - 1) cx = X1600_FB_WIDTH - 1;
+-        if (cy < 0) cy = 0;
+-        if (cy > X1600_FB_HEIGHT - 1) cy = X1600_FB_HEIGHT - 1;
+-        for (d = -6; d <= 6; d++) {
+-            uint16_t *row = (uint16_t *)(s->fb_copy + cy * X1600_FB_STRIDE);
+-            uint16_t *col;
+-            int px = cx + d, py = cy + d;
+-            if (px >= 0 && px < X1600_FB_WIDTH) {
+-                uint16_t *p = row + px;
+-                if (d != 0) {
+-                    *p = 0xf81f;
+-                }
+-                if (abs(d) == 6) {          /* arm tips: black caps */
+-                    *p = 0x0000;
+-                }
+-            }
+-            if (py >= 0 && py < X1600_FB_HEIGHT) {
+-                col = (uint16_t *)(s->fb_copy + py * X1600_FB_STRIDE) + cx;
+-                if (d != 0) {
+-                    *col = 0xf81f;
+-                }
+-                if (abs(d) == 6) {
+-                    *col = 0x0000;
+-                }
+-            }
+-        }
+-    }
+     if (!s->ds) {
+         /* 16 bpp RGB565 surface over the host copy; guest and host are
+          * both little-endian, so the upload above is a plain row copy. */
+@@ -3785,371 +4027,6 @@ static void x1600_add_stub(MemoryRegion *sysmem, const char *name,
+     memory_region_add_subregion(sysmem, base, &s->mr);
+ }
+ 
+-/* ---- uart0 (ttyS0) BT-side responder --------------------------------
+- * The AP6212 BT half is a UART HCI controller on ttyS0 (uart0): stock
+- * bt_init runs brcm_patchram_plus --enable_hci --baudrate 3000000
+- * --no2bytes --patchram ...BCM4343A1_*.hcd /dev/ttyS0 ... and the chip
+- * then answers plain H4 over the same port (brcm_patchram_plus ends by
+- * TIOCSETD(N_HCI) + HCIUARTSETPROTO(H4), so the kernel's hci_uart binds
+- * the tty and hci0 appears; hciconfig/bluetoothd then drive the standard
+- * HCI command surface).
+- *
+- * Decoded from the stock brcm_patchram_plus binary (v0.84, see
+- * docs/M1-bringup-log.md) and the live ttyS0 trace: with no responder the
+- * guest sends HCI_Reset every 4 s (SIGALRM retry in the patchram's reset
+- * phase) forever and no hci0 ever appears, so the player's embedded bluez
+- * client asserts in adapter_get_properties and crash-loops, freezing the
+- * setup wizard at the timezone screen.
+- *
+- * This chardev sits between the serial core and the (mirrored) real
+- * serial1 backend:
+- *   - every TX byte is mirrored to the upstream backend so the earlycon
+- *     stage (ttyS0 stdout-path) still lands in the capture file;
+- *   - H4 command frames (type 0x01) from userspace (patchram) or from the
+- *     kernel hci_uart get valid H4 Command Complete events injected into
+- *     the uart RX path, paced by qemu_chr_be_can_write so the 16550 recv
+- *     FIFO never overflows;
+- *   - the radio itself is not modelled: the adapter must merely EXIST
+- *     (BD_ADDR + version/features/buffer properties) so bluez stops
+- *     crash-looping; no RF traffic.
+- *
+- * The patchram download surface (decoded byte-exact from the stock
+- * binary + firmware file):
+- *   01 03 0c 00                       HCI_Reset (SIGALRM-retried every 4 s)
+- *   01 18 fc 06 <baud LE> 00 00       VS 0xFC18 baud change (3000000 =
+- *                                     0x002dc6c0, little-endian on wire)
+- *   01 2e fc 00                       VS 0xFC2E download minidriver
+- *   01 4c fc <len> <data>             VS 0xFC4C write RAM (182 records in
+- *                                     BCM4343A1_001.002.009.1010.1030.hcd)
+- *   01 4e fc 04 00 00 00 00           VS 0xFC4E launch RAM
+- *   01 03 0c 00                       post-launch HCI_Reset
+- *   01 18 fc 06 ...                   final baud change
+- *   01 01 fc 06 <addr>                VS 0xFC01 write BD_ADDR (remembered)
+- *   01 27 fc 0c <12 params>           VS 0xFC27 sleep mode (enable_lpm)
+- * Every command gets exactly one Command Complete, which is all both the
+- * patchram (it never validates the opcode) and the kernel hci core need.
+- */
+-#define TYPE_CHARDEV_X1600BT "chardev-x1600bt"
+-
+-typedef struct X1600BtChardev X1600BtChardev;
+-DECLARE_INSTANCE_CHECKER(X1600BtChardev, X1600_BT, TYPE_CHARDEV_X1600BT)
+-
+-struct X1600BtChardev {
+-    Chardev parent;
+-    CharFrontend mirror;       /* TX mirror into the real serial1 backend */
+-    QEMUTimer *ev_timer;       /* pending-event drain (recv FIFO pacing) */
+-    /* H4 command reassembly (uart TX arrives one byte per serial core
+-     * transmit; the kernel hci_uart may write whole frames per syscall) */
+-    int rx_state;              /* 0 idle, 1 header, 2 payload */
+-    uint8_t rx_buf[300];       /* 3-byte H4 header + 255-byte max payload */
+-    unsigned rx_have, rx_want;
+-    /* pending event, flushed into the uart recv FIFO as it drains */
+-    uint8_t ev[260];           /* CC max: 7 header + 248 (Read_Local_Name) */
+-    unsigned ev_len, ev_off;
+-    /* controller state */
+-    uint8_t bdaddr[6];
+-};
+-
+-static void x1600_bt_flush(X1600BtChardev *s);
+-
+-static void x1600_bt_flush_timer(void *opaque)
+-{
+-    x1600_bt_flush(opaque);
+-}
+-
+-/* Push the pending event into the uart RX path, respecting the serial
+- * core's advertised receive space (serial_receive1 drops on FIFO
+- * overflow). Re-arm a short virtual timer while the guest drains. */
+-static void x1600_bt_flush(X1600BtChardev *s)
+-{
+-    while (s->ev_off < s->ev_len) {
+-        int can = qemu_chr_be_can_write(CHARDEV(s));
+-        if (can <= 0) {
+-            break;
+-        }
+-        if ((unsigned)can > s->ev_len - s->ev_off) {
+-            can = s->ev_len - s->ev_off;
+-        }
+-        qemu_chr_be_write(CHARDEV(s), &s->ev[s->ev_off], can);
+-        s->ev_off += can;
+-    }
+-    if (s->ev_off < s->ev_len) {
+-        timer_mod(s->ev_timer,
+-                  qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 20000);
+-    }
+-}
+-
+-/* Command Complete with @n return params after the status byte. */
+-static void x1600_bt_cc(X1600BtChardev *s, uint16_t opcode, uint8_t status,
+-                        const uint8_t *params, unsigned n)
+-{
+-    if (s->ev_off < s->ev_len) {
+-        /* A previous event is still pending; the patchram and the kernel
+-         * hci core are strictly request/response, so this cannot happen. */
+-        return;
+-    }
+-    s->ev[0] = 0x04;           /* H4 event packet */
+-    s->ev[1] = 0x0e;           /* Command Complete */
+-    s->ev[2] = (uint8_t)(4 + n);
+-    s->ev[3] = 1;              /* Num_HCI_Command_Packets */
+-    s->ev[4] = opcode & 0xff;
+-    s->ev[5] = opcode >> 8;
+-    s->ev[6] = status;
+-    if (n) {
+-        memcpy(&s->ev[7], params, n);
+-    }
+-    s->ev_len = 7 + n;
+-    s->ev_off = 0;
+-    x1600_bt_flush(s);
+-}
+-
+-static void x1600_bt_cmd(X1600BtChardev *s, uint16_t op, unsigned plen,
+-                         const uint8_t *p)
+-{
+-    switch (op) {
+-    case 0x0c03:               /* HCI_Reset */
+-        x1600_bt_cc(s, op, 0x00, NULL, 0);
+-        break;
+-    case 0x1001: {             /* Read_Local_Version_Info */
+-        uint8_t v[8] = { 0x06, 0x00, 0x00,   /* hci_ver 4.0, rev 0 */
+-                         0x06, 0x0f, 0x00,   /* lmp_ver 4.0, mfr Broadcom */
+-                         0x10, 0x10 };       /* lmp_subver (4343A1 1010) */
+-        x1600_bt_cc(s, op, 0x00, v, sizeof(v));
+-        break;
+-    }
+-    case 0x1002: {             /* Read_Local_Commands: report no optional
+-                                * commands so the kernel init sends only
+-                                * the mandatory surface */
+-        uint8_t c[64] = { 0 };
+-        x1600_bt_cc(s, op, 0x00, c, sizeof(c));
+-        break;
+-    }
+-    case 0x1003: {             /* Read_Local_Features: classic BR/EDR, no LE */
+-        uint8_t f[8] = { 0xbc, 0x28, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00 };
+-        x1600_bt_cc(s, op, 0x00, f, sizeof(f));
+-        break;
+-    }
+-    case 0x1005: {             /* Read_Buffer_Size */
+-        uint8_t b[5] = { 0xfd, 0x03, 0x08,   /* ACL MTU 1021, 8 pkts */
+-                         0x40, 0x08 };       /* SCO MTU 64, 8 pkts */
+-        x1600_bt_cc(s, op, 0x00, b, sizeof(b));
+-        break;
+-    }
+-    case 0x1009:               /* Read_BD_ADDR */
+-        x1600_bt_cc(s, op, 0x00, s->bdaddr, sizeof(s->bdaddr));
+-        break;
+-    case 0x0c23: {             /* Read_Class_of_Device: the 4.4 kernel sends
+-                                * this at the end of the open-time init and
+-                                * __hci_req_sync reports the LAST command's
+-                                * status as the sync result, so every init
+-                                * command must complete with status 0 */
+-        uint8_t cod[3] = { 0x0c, 0x02, 0x00 }; /* Phone/Handheld */
+-        x1600_bt_cc(s, op, 0x00, cod, sizeof(cod));
+-        break;
+-    }
+-    case 0x0c14: {             /* Read_Local_Name (248-byte name field) */
+-        uint8_t name[248] = { 0 };
+-        memcpy(name, "HiBy R1", 7);
+-        x1600_bt_cc(s, op, 0x00, name, sizeof(name));
+-        break;
+-    }
+-    case 0x0c3b: {             /* Read_Voice_Setting */
+-        uint8_t vs[2] = { 0x60, 0x00 };
+-        x1600_bt_cc(s, op, 0x00, vs, sizeof(vs));
+-        break;
+-    }
+-    case 0x0c38: {             /* Read_Number_Supported_IAC */
+-        uint8_t n[1] = { 0x01 };
+-        x1600_bt_cc(s, op, 0x00, n, sizeof(n));
+-        break;
+-    }
+-    case 0x0c39: {             /* Read_Current_IAC_LAP: 1 x GIAC */
+-        uint8_t iac[4] = { 0x01, 0x33, 0x8b, 0x9e };
+-        x1600_bt_cc(s, op, 0x00, iac, sizeof(iac));
+-        break;
+-    }
+-    case 0x0c16: {             /* Read_Connection_Accept_Timeout (kernel
+-                                * uses 0x0c16 in one phase and 0x0c13 in
+-                                * another; both read the same 2 bytes) */
+-        uint8_t cat[2] = { 0x00, 0x20 };
+-        x1600_bt_cc(s, op, 0x00, cat, sizeof(cat));
+-        break;
+-    }
+-    case 0x0c13: {
+-        uint8_t cat2[2] = { 0x00, 0x20 };
+-        x1600_bt_cc(s, op, 0x00, cat2, sizeof(cat2));
+-        break;
+-    }
+-    case 0x0c47: {             /* Read_Inquiry_Response_TX_Power_Level */
+-        uint8_t tp[1] = { 0x00 };
+-        x1600_bt_cc(s, op, 0x00, tp, sizeof(tp));
+-        break;
+-    }
+-    case 0x0c25: {             /* Read_Number_of_Broadcast_Retransmissions */
+-        uint8_t nb[1] = { 0x00 };
+-        x1600_bt_cc(s, op, 0x00, nb, sizeof(nb));
+-        break;
+-    }
+-    case 0x0c17: {             /* Read_Page_Timeout */
+-        uint8_t pt[2] = { 0x00, 0x20 };
+-        x1600_bt_cc(s, op, 0x00, pt, sizeof(pt));
+-        break;
+-    }
+-    case 0x0c19: {             /* Read_Scan_Enable */
+-        uint8_t se[1] = { 0x02 };
+-        x1600_bt_cc(s, op, 0x00, se, sizeof(se));
+-        break;
+-    }
+-    case 0x0c1c: {             /* Read_Page_Scan_Activity_Period */
+-        uint8_t ps[2] = { 0x00, 0x10 };
+-        x1600_bt_cc(s, op, 0x00, ps, sizeof(ps));
+-        break;
+-    }
+-    case 0x0c36: {             /* Read_AFH_Channel_Assessment_Mode */
+-        uint8_t am[1] = { 0x00 };
+-        x1600_bt_cc(s, op, 0x00, am, sizeof(am));
+-        break;
+-    }
+-    case 0x0c41: {             /* Read_Link_Supervision_Timeout */
+-        uint8_t ls[2] = { 0x40, 0x1f };
+-        x1600_bt_cc(s, op, 0x00, ls, sizeof(ls));
+-        break;
+-    }
+-    case 0x0c51: {             /* Read_Extended_Inquiry_Response */
+-        uint8_t eir[241] = { 0x00 };
+-        x1600_bt_cc(s, op, 0x00, eir, sizeof(eir));
+-        break;
+-    }
+-    case 0x0c18: {             /* Write_Page_Timeout (status-only CC; the
+-                                * 2 trailing bytes are inert) */
+-        uint8_t pt[2] = { 0x00, 0x20 };
+-        x1600_bt_cc(s, op, 0x00, pt, sizeof(pt));
+-        break;
+-    }
+-    case 0x0c45: {             /* Read_Inquiry_Mode */
+-        uint8_t im[1] = { 0x00 };
+-        x1600_bt_cc(s, op, 0x00, im, sizeof(im));
+-        break;
+-    }
+-    /* status-only init writes (Set_Event_Mask, Set_Event_Filter,
+-     * Write_Scan_Enable, ...) */
+-    case 0x0c01:
+-    case 0x0c04:
+-    case 0x0c05:
+-    case 0x0c1a:
+-    case 0x0c1d:
+-    case 0x0c52:
+-    case 0x0c55:
+-    case 0x0c5a:
+-    case 0x0c24:
+-        x1600_bt_cc(s, op, 0x00, NULL, 0);
+-        break;
+-    case 0xfc01:               /* VS Write_BD_ADDR: remember for Read_BD_ADDR */
+-        if (plen >= 6) {
+-            memcpy(s->bdaddr, p, 6);
+-        }
+-        x1600_bt_cc(s, op, 0x00, NULL, 0);
+-        break;
+-    /* The rest of the patchram download + setup surface */
+-    case 0xfc18:               /* VS baud change */
+-    case 0xfc27:               /* VS sleep mode (enable_lpm) */
+-    case 0xfc2e:               /* VS download minidriver */
+-    case 0xfc4c:               /* VS write RAM block */
+-    case 0xfc4e:               /* VS launch RAM */
+-    case 0xfc1c:               /* VS SCO PCM config part 1 */
+-    case 0xfc1e:               /* VS SCO PCM config part 2 */
+-    case 0xfc6d:               /* VS I2S/PCM config */
+-        x1600_bt_cc(s, op, 0x00, NULL, 0);
+-        break;
+-    default:
+-        x1600_bt_cc(s, op, 0x01, NULL, 0); /* Unknown HCI Command */
+-        break;
+-    }
+-}
+-
+-static void x1600_bt_rx_byte(X1600BtChardev *s, uint8_t b)
+-{
+-    switch (s->rx_state) {
+-    case 0:
+-        if (b == 0x01) {       /* H4 command packet */
+-            s->rx_have = 0;
+-            s->rx_state = 1;
+-        }
+-        break;
+-    case 1:
+-        s->rx_buf[s->rx_have++] = b;
+-        if (s->rx_have == 3) {
+-            s->rx_want = 3 + s->rx_buf[2];
+-            if (s->rx_want == 3) {
+-                x1600_bt_cmd(s, s->rx_buf[0] | (s->rx_buf[1] << 8), 0, NULL);
+-                s->rx_state = 0;
+-            } else {
+-                s->rx_state = 2;
+-            }
+-        }
+-        break;
+-    case 2:
+-        s->rx_buf[s->rx_have++] = b;
+-        if (s->rx_have == s->rx_want) {
+-            x1600_bt_cmd(s, s->rx_buf[0] | (s->rx_buf[1] << 8),
+-                         s->rx_buf[2], &s->rx_buf[3]);
+-            s->rx_state = 0;
+-        }
+-        break;
+-    }
+-}
+-
+-static int x1600_bt_chr_write(Chardev *chr, const uint8_t *buf, int len)
+-{
+-    X1600BtChardev *s = X1600_BT(chr);
+-    int i;
+-
+-    for (i = 0; i < len; i++) {
+-        x1600_bt_rx_byte(s, buf[i]);
+-    }
+-    /* Mirror the raw stream into the real backend: the earlycon (stock
+-     * DTB stdout-path) output must still reach the serial1 capture. */
+-    qemu_chr_fe_write(&s->mirror, buf, len);
+-    return len;
+-}
+-
+-static bool x1600_bt_chr_open(Chardev *chr, ChardevBackend *backend,
+-                              Error **errp)
+-{
+-    X1600BtChardev *s = X1600_BT(chr);
+-
+-    s->bdaddr[0] = 0x4c;       /* stock bt_init default MAC prefix */
+-    s->bdaddr[1] = 0xbc;
+-    s->bdaddr[2] = 0x98;
+-    s->bdaddr[3] = 0xb0;
+-    s->bdaddr[4] = 0x28;
+-    s->bdaddr[5] = 0x00;
+-    s->ev_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, x1600_bt_flush_timer, s);
+-    return true;
+-}
+-
+-static void x1600_bt_class_init(ObjectClass *oc, const void *data)
+-{
+-    ChardevClass *cc = CHARDEV_CLASS(oc);
+-
+-    cc->chr_open = x1600_bt_chr_open;
+-    cc->chr_write = x1600_bt_chr_write;
+-}
+-
+-static const TypeInfo x1600_bt_type_info = {
+-    .name = TYPE_CHARDEV_X1600BT,
+-    .parent = TYPE_CHARDEV,
+-    .instance_size = sizeof(X1600BtChardev),
+-    .class_init = x1600_bt_class_init,
+-};
+-
+-static void x1600_bt_register_types(void)
+-{
+-    type_register_static(&x1600_bt_type_info);
+-}
+-
+-type_init(x1600_bt_register_types);
+-
+ static void x1600_mach_init(MachineState *ms)
+ {
+     MemoryRegion *sysmem = get_system_memory();
+@@ -4205,19 +4082,8 @@ static void x1600_mach_init(MachineState *ms)
+      * whole buffered log when it registers (CON_PRINTBUFFER), so the
+      * capture still holds the full dmesg. */
+     {
+-        /* uart0 (ttyS0) gets the BT-side HCI responder instead of the raw
+-         * serial1 backend; the responder mirrors every TX byte into the
+-         * real backend so the earlycon capture stays intact. */
+-        Chardev *bt_chr = qemu_chardev_new("x1600-bt", TYPE_CHARDEV_X1600BT,
+-                                           NULL, NULL, &error_fatal);
+-        X1600BtChardev *bt = X1600_BT(bt_chr);
+-
+-        if (!qemu_chr_fe_init(&bt->mirror, serial_hd(1), &error_fatal)) {
+-            error_report("x1600: cannot mirror uart0 into the serial1 backend");
+-            exit(1);
+-        }
+         SerialMM *uart0 = serial_mm_init(sysmem, X1600_UART0_BASE, 2,
+-                                         uart0_irq, 230400, bt_chr,
++                                         uart0_irq, 230400, serial_hd(1),
+                                          DEVICE_LITTLE_ENDIAN);
+         SerialMM *uart2 = serial_mm_init(sysmem, X1600_UART2_BASE, 2,
+                                          uart2_irq, 230400, serial_hd(0),

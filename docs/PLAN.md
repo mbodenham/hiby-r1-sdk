@@ -192,6 +192,32 @@ qemu-wifi-srom; supersedes the earlier headers for the wifi item —
   in v0.83); after that the chip side must serve the DHD's control
   protocol (the response packet + the PA08 host-wake assert) for
   "Firmware up". Gate PASS against boot-baseline-v0.75 unchanged.
+- **Wifi firmware-download rounds 4-5 (M1 log v0.86-v0.87, worktree
+  qemu-wifi-fw2, patch 0119): DONE for the control chain — the control
+  exchange completes end-to-end and `ifconfig wlan1 up` returns 0 with
+  "Firmware up: op_mode=0x0001" (28 preinit ioctls complete; wlan1
+  registers and is operational). The firmware download itself stays
+  skipped by the driver design (the v0.83 alive==0x15151515 gate) —
+  the download/handshake arc steps are the driver's documented skip,
+  not a model gap.** The decode chain that got there: the read-DMA
+  completion arrives via IFLG bit31 (the request fn's READ dcmd masks
+  bit23 in IMASK — the v0.84 bit23 raise sat pending until
+  request_timeout stored -159), the polling READ word-loop needs STAT
+  bit6 CLEAR at staging (staging bit6 deadlocked the 4-byte window
+  reads — the run15 6.9 GB re-poll flood), the SDPCM control-response
+  header needs channel 0 + dataoffset 32 (readframes dispatches the
+  ctrl-buffer handler on channel 0 and validates dataoffset >= 12),
+  the CDC ioctl id echoes verbatim past 32, byte 9 carries the credit
+  watermark (the DHD's credits = (byte9 - tx_seq) mod 256), and the
+  iovar surface answers chanspecs (the 2.4 GHz 20 MHz list, the format
+  decoded from the DHD's own masks) and per_chan_info (0x3ffe) with
+  real payloads. A 10 ms delayed PA08 re-assert after each fn2 frame
+  read covers the DHD's dpc_sched-latched txctl wake-skip. The
+  TEMP-FW2-DIAG instruments are worktree-only (stripped from 0119);
+  the walk keeps a bounded-iteration guard. Gate PASS byte-identical
+  against boot-baseline-v0.75 (the userdata volume must stay in the
+  erased factory state — re-run tools/x1600/make_nand_image.py after
+  worktree boots that populate it; md5 ae41e974…).
 - **Status (M3 opening round, v0.75, worktree qemu-player-ui):**
   **the player's first UI frame renders** — the player's first-boot
   Language selection page (简体中文/繁體中文/English/日本語/한국어/

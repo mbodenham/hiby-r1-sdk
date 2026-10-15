@@ -2612,6 +2612,130 @@ and stops at the ChipClkCSR HT-avail handshake
   next model-side surface once the TX returns 0 — parked here with the
   TX data verified on the wire and the -1 precisely scoped.
 
+## v0.84 (2026-10-15, fw-download round 2, worktree qemu-wifi-fw2) — the
+control-TX -1 pinned to the module's data-DONE wire bit: the model was
+raising the ERROR-cluster source; IFLG bit23 is the real data-done and
+the DHD's first control TX now completes with error 0
+
+- **Setup (fw2):** fresh cp -a of vendors+unpacked at the merged main
+  (patches 0001-0018 + 0120-0121), incremental rebuild OK. Boots to
+  /tmp/kilo/fw2/, console telnet 127.0.0.1:4448 + tee, unimp -d trace
+  for mscdec.py.
+- **The -1 site, decoded from soc_msc.ko (unpacked 1.6 module_driver,
+  symtab + reloc-resolved objdump; full dis at /tmp/kilo/fw2/
+  soc_msc.dis):** NOT the timeout path and NOT the R5 checks — it is
+  ingenic_mmc_thread_handle (the devm_request_threaded_irq thread fn,
+  0xe94; primary handler NULL, dev_id = the jzmmc host struct) plus the
+  state machine it drives. The thread computes pending = IFLG &
+  ~IMASK (regs+0x28/~0x24) and dispatches: bit7 (0x80) = the SDIO card
+  INT (signals mmc sdio_irq, wake_up_process); **bits 8-12 (0x1f00) =
+  the ERROR cluster**: acked (0x1f04 in state 1, 0x80801f00 in state 2,
+  0x1f00 otherwise), then — for CMD53 (cmd->opcode == 53) only — checks
+  STAT (regs+0x04) bit4 (0x10) and on set prints dev_err + stores
+  cmd->error = -1 directly (0xfc8); then unconditionally sets state = 4
+  and calls ingenic_mmc_state_machine. The state-4 handler (jump table
+  .rodata[4] = 0xd04) stores cmd->error = -1 (0xd10) and
+  data->bytes_xfered = 0 whenever mrq->data is present, del_timer,
+  state = 0, mmc_request_done. So ANY data-cluster IFLG bit pending in
+  states 1/2 completes the request with -1. The v0.83 raise (bit15 |
+  bit10) put bit10 into that cluster → the thread raced the request fn
+  (DMA mode returns without polling; the data phase is completed only
+  by this thread) and completed with cmd->error = -1 — the bare -1.
+  (bit15 alone, pre-v0.83, fed the thread's bit15 case → state-2 event
+  flag bit4 — but state 2 consumes flag bit3, state 3 is dead code (no
+  writer sets state 3), so nothing completed → the 300-jiffy timer →
+  request_timeout → the v0.83 -159 timeouts. Both observed behaviors
+  now explained by one wire-semantics error.)
+- **The SUCCESS path, decoded:** the module's data IMASK 0xff7ff9fb
+  unmasks IFLG bits 2, 9, 10, 23. bit2 = END_CMD_RES (command phase:
+  thread sets host+1664 flag bit0 → state-1 handler consumes it,
+  STAT&0x3f clean → ingenic_mmc_command_done reads RES into
+  cmd->resp[0..3] → state = 2). **bit23 = data-DONE**: the thread acks
+  0x00810003, sets host+1664 flag bit3, and the state-2 handler
+  (consuming bit3) with STAT&0x3f clean and mrq->stop == NULL runs
+  ingenic_mmc_data_done (bytes_xfered = blocks*blksz, del_timer, DMA
+  sync) and TAIL-CALLS mmc_request_done with cmd->error untouched = 0.
+  bit31 = a second error class (acks 0x80010001). Bit15 feeds only the
+  dead state-3 flag. (The request-fn's synchronous polling tail —
+  polling_status(STAT 0x1000/0x2000) + IFLG 1/2 write + mmc_request_done
+  — is the POLLING-mode path (module flag host+2372 bit2), not the DHD's
+  DMA path; it explains STAT bit12/13 = XFER_DONE_RD/WR, already
+  modeled.)
+- **Model fix (one wire-semantics line, two sites):** the PIO TXFIFO
+  completion (x1600_msc_write MSC_TXFIFO) and the internal-DMA kick
+  completion (MSC_DMAC) now raise IFLG_DATA_DONE = bit23 instead of the
+  v0.83 bit15|bit10; STAT bit12/13 unchanged (the polling path still
+  sees XFER_DONE). Comments corrected to the decoded protocol.
+
+## v0.85 (2026-10-15, fw-download round 3, worktree qemu-wifi-fw2) — the
+virq-101 demux verdict INVERTED: dispatch works (the run8 "no dispatch"
+was a stale-object artifact of the broken vendored build config); the
+blocker is now downstream — the DPC's first bus access is a 4-byte fn1
+backplane read, no fn2 frame read follows, rxlen=0
+
+- **Setup:** the worktree's tools/vendors/qemu/build was configured
+  against the MAIN tree's absolute paths (cp -a carried meson-info with
+  source=/main/tools/vendors/qemu); relative-path C rules still compiled
+  the worktree's x1600.c, but the tracetool inputs (tools/qemu-vnc/
+  trace-events) point at the main tree and the main tree no longer has
+  them, so any incremental ninja died with "missing and no known rule".
+  Re-ran ./configure --target-list=mipsel-softmmu in the worktree tree
+  (full 1712-target rebuild) — the binary is now DEFINITELY the
+  worktree's model. The prior runs' binaries cannot be trusted to carry
+  every worktree edit (which edits were stale is unknown — treat run8's
+  "no dispatch" as an artifact, not a wire fact).
+- **The demux chain, decoded end-to-end (kdis flow, vmlinux.bin):**
+  tingenic_pinctrl_probe (0x80412290) loops the DT children gpa/gpb/
+  gpc/gpd (order matches the model's INTC wiring A=17 B=16 C=15 D=14);
+  per bank: memset(chip,0,0x88); chip->base = running accumulator
+  (ctx+0x14: 0/32/64/96, += ngpio after gpiochip_add); ngpio = 32
+  (DT ingenic,num-gpios); chip->to_irq = tingenic_gpio_to_irq
+  (chip+0x3c); bank byte at chip+0x8c; ctx at chip+0xc0. Then virq =
+  irq_of_parse_and_map(child, i) → chip+0x94; domain = __irq_domain_add
+  (size=hwirq_max=32, ops 0x806038b8 = {tingenic_irq_domain_xlate,map},
+  host_data = chip) → chip+0x98; irq_set_handler_data(bank_virq, chip)
+  + __irq_set_handler(bank_virq, tingenic_gpio_irq_handler, 1, 0).
+  tingenic_gpio_to_irq: BUG(offset < chip->ngpio), then
+  irq_create_mapping(chip+0x98 domain, offset). tingenic_irq_domain_map
+  sets chip_data = the chip and irq_set_chip_and_handler_name(virq,
+  chip 0x807a9d90 (.data, not in vmlinux.bin), handle_level_irq, NULL).
+  tingenic_gpio_irq_handler: pending = INTP(+0x50+bank*stride) &
+  ~INTM(+0x20+...) (the +0xc4 shadow ptr is 0 in this build → the reg
+  path), find_next_bit(&pending, ngpio, off) → irq_find_mapping(domain,
+  bit) → generic_handle_irq(virq); a 0 mapping silently skips (no ack).
+  Per-pin callbacks: irq_mask → +0x24 = 1<<hwirq, irq_unmask → +0x28,
+  irq_ack → +0x58 (W1C), all through *(chip+0xc0)+bank*stride — exactly
+  the regs the model's TEMP-FW2-DIAG watches. The DHD side
+  (dhd_init_gpio_wlan_hostwake): irq = md_ingenic_sdio_wlan_get_irq()
+  (= 8, the module param; printed as WL_HOST_WAKE=8), gpio_request(8)
+  → gpio_to_desc(8) → gpiod_direction_input → gpiod_to_irq(desc) = 101
+  (the print's "oob_irq=101"), dhd_wlan_resources = {101,101,flags
+  0x414}; bcmsdh_oob_intr_register request_irq(101) at the WLAN-ON
+  step (kernel 148.66 in run9), BEFORE the first PA08 raise.
+- **RUNTIME EVIDENCE (run9, live guest dumps via the respawn shell):**
+  /sys/class/gpio: gpiochip0 GPA base=0 ngpio=32, 32 GPB, 64 GPC, 96
+  GPD — gpio 8 IS PA08 (bank A pin 8), exactly the model's inject.
+  /proc/interrupts: INTC legacy base 8 (virq = INTC hwirq + 8), GPIO
+  mappings dynamic (97 KEY_POWER hw31, 98 hw28, 99 hw22, 100 hyn_ts
+  hw16), and AFTER the DHD's OOB register + the control TX: **101: 1
+  GPIO 8** — the mapping is (domainA, hwirq 8) and THE DEMUX DISPATCHED
+  IT: count 1 = handle_level_irq ran handle_irq_event → the DHD's ISR
+  action ran. The widened model diag confirms the full genirq cycle:
+  request_irq-time +0x28=0x100 (unmask), PA08 raise, demux reads
+  +0x20/+0x50, +0x24=0x100 (mask) + +0x58=0x100 (ack) at dispatch,
+  post-DPC +0x28=0x100 re-unmask. So: PA08 → demux → virq 101 →
+  dhdsdio_isr → dpc ALL WORK in the fully-rebuilt binary.
+- **The new blocker:** one control TX (cmd=262 cur_etheraddr id=1),
+  one PA08 raise, one dispatch — then `dhd_bus_rxctl: rxcnt_timeout=1,
+  rxlen=0`. The DPC issued exactly ONE bus op before going quiet: a
+  CMD53 arg 0x15404004 = READ fn1 addr 0x0A020 count 4 (byte, inc) —
+  a BACKPLANE window read (bp = (SBADDR<<8) | 0x2020), NOT the fn2
+  frame read. The model serves zeros there (bp_chunks are malloc0).
+  readframes never read fn2, so the staged fn2 response was never
+  fetched. run10 re-boots with TEMP-FW2-DIAG c53/c52 logs (every CMD53
+  decode + served bytes; the window regs + clkcsr CMD52s) to identify
+  the DHD's read sequence and what it expects at that SOCRAM offset.
+
 ## v0.84 (2026-10-15, BT round, worktree qemu-bt-bluez) — the BT bring-up
 decoded and modelled: the bluez crash-loop ends, hci0 registers, the
 wizard reaches the timezone page alive (patch 0123, vendored qemu
@@ -2782,3 +2906,167 @@ wizard reaches the timezone page alive (patch 0123, vendored qemu
   `logfile=` to /tmp/kilo/livedisp/console.log with the respawn shell
   on telnet 127.0.0.1:4448). The feed boots to the wizard with the
   BT chain fully up and no crash-loop.
+
+## v0.86 (2026-10-15, fw-download round 4, worktree qemu-wifi-fw2) — the
+DPC chain run10-run15 closed out; the run14 ERR=-159 and the run15 hang
+both decoded from soc_msc.ko's request fn: the 4-byte window ops take the
+POLLING word loops (the READ loop spins while STAT bit6 is SET — the
+run15-prep bit6 staging deadlocked it), and DMA READS complete via IFLG
+bit31, not bit23 (the read-DMA IMASK masks bit23 — the v0.84 raise was
+never seen by the thread and the request timed out into -159)
+
+- **run10-run13 (each verified on the wire, then folded into the model):**
+  (run11) the DPC's gate is the SDIO device core's INTSTATUS backplane
+  read at bp 0x18002020 — the model now serves 0xC0 (frame|host bits)
+  while a control response is staged, W1C on write, and deasserts PA08 at
+  the W1C; without it the DPC re-arms without ever calling readframes.
+  (run12) the fn2 data port is a STREAMING FIFO, not a fixed-address
+  window: the 128-byte fixed-address read served the first staged byte
+  repeatedly — fixed by popping the staged response FIFO on every fn2
+  byte. (run13) the RX walk double-popped: the command phase already
+  prefetched the whole data phase into the model's fifo (fn2 is
+  destructive), so the DMA walk re-read fn2 → zeros → corrupt header →
+  rxlen=0 — fixed: the walk serves the staged fifo when fifo_len ==
+  dma_len (only fn2 reads are destructive; the PIO pops may already have
+  advanced fifo_pos — the staged bytes stay valid) + PA08 deasserts at
+  the intstatus W1C.
+- **run14:** the DPC's readframes DID pick the staged response up — the
+  walk served it into the DHD's buffer ("dma done ok=1 wr=0 buf: 32 00
+  cd ff 01 01 00 01" = framelen 50, checksum ✓, seq=id ✓) — but the DPC
+  got ERR=-159 from sdioh_buffer_tofrom_bus ("RX FAILED 825ddd40,
+  addr=0x08000, pkt_len=128") and discarded the frame; dhd_bus_rxctl
+  timed out (rxlen=0), dhd_preinit_ioctls_alive failed with -145, the
+  DHD power-cycled and retried the whole cycle (id=2).
+- **run15 (the brief's item-6 hypothesis applied) WEDGED the guest:**
+  with STAT bit6 staged for BLKLEN<64 requests, the 4-byte fn1 window
+  read (arg 0x15000004, BLKLEN=4) spun forever in the module's polling
+  READ loop — 6.9 GB of unimp trace, an endless flood of "x1600-msc
+  read 0x4 = 0x1840 pc=c017e244" (= module base 0xc017c000 + 0x2244, the
+  loop's STAT re-poll at ingenic_mmc_request+0x6bc) — the loop can only
+  exit by popping (which needs bit6 CLEAR) and the model clears bit6
+  only when the FIFO drains (which needs pops): a deadlock. The 3000 ms
+  module timeout then printed the reg+descriptor dump and the guest
+  stayed wedged in the spin (the timer completed the request; the poll
+  loop never returned).
+- **The request-fn decode (soc_msc.dis ingenic_mmc_request 0x1b88, now
+  full):** the POLLING flag is host+2372 bit2, set at 0x1c94 when
+  data->[36]==1 AND sg->length < 64 — the DHD's 4-byte window reads and
+  writes take the polling word loops at 0x2130-0x22e8: per word, the
+  READ loop polls STAT bit6 (0x40) — **spin while bit6 SET, pop MSC_
+  RXFIFO when CLEAR** (0x22b0 stores the word) — and the WRITE loop
+  polls STAT bit7 (0x80) symmetrically; then the byte tail, bytes_
+  xfered = blocks*blksz, and polling_status(STAT 0x1000/0x2000) which
+  the model already satisfies by staging STAT bit12/13. Polling ops
+  never touch IMASK's data bits and never kick DMAC (DMAC=0 in the
+  run15 dump). With bit6 CLEAR at staging (run14) the window reads
+  popped fine — the run15-prep staging was simply the wrong sense.
+- **The DMA-path IMASK decode — the real run14 -159:** the DMA branch
+  (sg length >= 64) does IMASK &= ~dcmd at 0x1f0c (WRITE dcmd
+  0x00800400 → enables IFLG bits 10+23; READ dcmd 0x80000900 → enables
+  bits 8+11+31), then IMASK &= 0xFFFFFDFB at 0x1ff0 (adds bits 2+9).
+  WRITE-DMA final IMASK 0xff7ff9fb: bit23 enabled — the model's bit23
+  raise works (runtime-verified: the thread read IFLG=0x800000 with
+  IMASK=0xff7ffbff, acked 0x00810003, set the state-2 flag bit3, masked
+  everything, and the state-2 handler ran data_done → the TX completed
+  error 0). READ-DMA final IMASK 0x7FFFF6FB: **bit23 MASKED, bit31
+  enabled** — the model's bit23 raise sat in IFLG unprocessed for the
+  full 3000 ms (run14 dump: IFLG=0x00800000, state=2, DMAC=9 kicked)
+  until ingenic_mmc_request_timeout fired and stored -159 at 0x15ac.
+  The thread maps pending bit31 the same way as bit23 (state-2 event
+  flag bit3, ack 0x80010001) — bit31 is the DMA READ data-done source.
+- **Model fix (three lines, run16 prep):** revert the STAT bit6 staging
+  (the polling pop loop needs bit6 CLEAR); raise IFLG bit31 for
+  read-DMA completions (write completions keep bit23); clear stale
+  bit31 alongside bit23 in the per-command tail. STAT bit12/13 staging
+  stays (the polling_status tail).
+
+## v0.87 (2026-10-15, fw-download round 5, worktree qemu-wifi-fw2) — the
+control protocol is END-TO-END: the MAC ioctl completes, 28 preinit
+ioctls complete, and `ifconfig wlan1 up` returns 0 with "Firmware up"
+(wlan1 registered and operational; the fw download itself stays skipped
+by the driver design, the v0.83 finding). Four decode fixes got there:
+the run15 hang root-caused (the bit6 revert), the read-DMA completion
+moved to IFLG bit31, the SDPCM control-response header fixed (channel 0
++ dataoffset 32), the DHD credit/CDC-id/iovar payload surface filled
+
+- **run16 (the v0.86 fixes live):** the guest no longer hangs — the
+  probe's window reads complete ("F1 signature read @0x18000000=
+  0x1000a9a6" at 17.79s, no module timeout), the probe parks with the
+  stock "firmware path not found" (two attempts register wlan0 then
+  wlan1; the second instance is the live one). The scripted
+  `ifconfig wlan1 up` reached dhd_open → WLAN ON → "skip download FW and
+  nv" (the v0.83 skip) → the control TX completed ("TX xfr'd ..., len=
+  384") — but the DPC's readframes discarded the response with
+  "dhdsdio_readframes: Bad data offset 1: HW len 50, min 12 seq 1".
+- **The SDPCM header decode (cywdhd readframes 0x99718):** [0:2]
+  framelen, [2:4] its checksum (^ == 0xffff), [4] = seq, [5] =
+  channel+flags (the LOW NIBBLE dispatches: 0 = the CONTROL handler —
+  the cold-section function that memcpy's the frame into the ctrl
+  buffer the ioctl completer reads; channels 1-3 go down the event/data
+  pipeline and a response is never seen), [6] = nextlen (< 0x81),
+  [7] = dataoffset (a BYTE, must be >= 12 and <= framelen). The model's
+  response carried the request's channel byte (1) and dataoffset (1) —
+  fixed: channel 0, dataoffset 32 (the CDC header offset — the wire
+  convention the DHD's own control TX uses, verified by the model's
+  request parse: cmd at +32, the iovar name at +48).
+- **run17:** the MAC ioctl COMPLETED and the DHD issued the next ioctl
+  (WLC_GET_VAR "cap", 640 bytes) — which the model's ctl_rx length gate
+  (> 512) rejected: no response staged, rxlen=0. Fixed: the gate to
+  2048 and fn2_rd to 2048 bytes.
+- **run18:** a full ioctl sequence ran (ids 1-4) but the FIFTH txctl
+  deadlocked: "dhd_bus_txctl: ctrl_frame_stat == TRUE txcnt_timeout=1"
+  after 5 s (dhdcdc_msg w/status -5). Decode: the DHD's txctl sets
+  ctrl_frame_stat=TRUE, then SKIPS its own DPC wake when the
+  dpc_sched/bus+0x48 flag is latched, and trusts a pending DPC pass to
+  send the frame (dhdsdio_txctl at cywdhd 0x99634 sends it and clears
+  the stat + wakes the waiter). With the model's instant-PA08 cadence
+  the pending pass can already be past its stat-check → the frame is
+  never sent and nothing schedules the DPC again. ALSO decoded: the
+  response's SDPCM byte 9 is the dongle's credit-grant watermark (the
+  DHD's sendable credits = (byte9 - its tx_seq) mod 256; readframes
+  flags a backward grant at ((byte9 - txseq) & 0xff) >= 0x71 — the
+  "got unlikely tx max 0 with tx_seq 4" print) and byte 8 is the
+  flow-bit window. With byte9 = 0 the credit window is negative.
+  Fixed: byte9 = the request's seq + 8 (the model reads the DHD's
+  tx_seq off the wire — the DPC's txctl rewrites the frame's seq byte
+  to it) + the delayed PA08 re-assert: 10 ms after every fn2 frame
+  read the model re-asserts PA08 once (the re-kick timer), giving any
+  pending ctrl_frame_stat send its DPC pass; harmless when idle
+  (intstatus reads 0, the pass exits).
+- **run19:** the credits unblocked the send pipeline — 32 ioctls ran —
+  then id 32 deadlocked: the model truncated the CDC ioctl id to 5 bits
+  ((cflags >> 16) & 0x1f) and the DHD's id counter had reached 32, so
+  the response's id was 0, dhdcdc_cmplt never matched, rxlen=0. Fixed:
+  the CDC flags echoed verbatim (the request carries no error bit).
+- **run22:** the sequence ran to the last iovars — cur_etheraddr, cap,
+  toe_ol, p2p, nmode, vhtmode, txstreams/rxstreams, ldpc_cap, stbc_rx/
+  tx, txbf_bfe/bfr_cap, mimo_bw_cap, chanspecs, per_chan_info — and the
+  EMPTY chanspecs response left the DHD's wl_uint32_list count as stale
+  buffer garbage: wl_construct_reginfo churned thousands of "Invalid
+  channel Sepc. 0x..." lines. Chanspec format decoded from the DHD's
+  own masks (cywdhd 0x4ebcc): (& 0x3000) == 0x1000 = WL_CHANSPEC_BW_20,
+  (& 0xc000) == 0 = band 2G, the low byte = the channel, the
+  (& 0x3800) == 0x1800 combo rejected. Fixed: "chanspecs" returns the
+  2.4 GHz 20 MHz list (count 13, 0x1000|ch for ch 1..13) and
+  "per_chan_info" returns the 2.4 G capability bitmap 0x3ffe.
+- **run23: THE MILESTONE.** 28 control exchanges complete; the DHD runs
+  dhd_preinit through the regulatory construction; "Firmware up:
+  op_mode=0x0001" and **IFUP_rc=0** — wlan1 registered and operational.
+  The remaining Invalid-channel prints come from later per-bw_cap
+  constructions (bw_cap variants of the chanspec list — a cosmetic
+  data-quality item, non-blocking). The firmware download itself stays
+  skipped by the driver design (v0.83: dhdsdio_download_firmware gates
+  on the module-global alive == 0x15151515, armed by the probe when the
+  card "looks alive") — the arc's download/handshake steps are the
+  driver's documented skip, not a model gap.
+- **Model state (the vendored qemu, uncommitted):** the read-DMA
+  completions raise IFLG bit31 (writes keep bit23), the polling READ
+  loop keeps bit6 CLEAR at staging, the walk serves the staged fifo and
+  carries a bounded-iteration guard, the stale per-command tail clears
+  bit23+bit31, ctl_rx builds the SDPCM control header (channel 0,
+  nextlen 0, dataoffset 32) + the CDC echo (cmd, len, flags verbatim)
+  + the credit watermark (seq+8) and answers cur_etheraddr, chanspecs
+  and per_chan_info with real payloads, and the fn2 read port re-asserts
+  PA08 10 ms after each frame read (the re-kick timer). The
+  TEMP-FW2-DIAG trace instruments stay worktree-only (stripped from the
+  exported patch).
