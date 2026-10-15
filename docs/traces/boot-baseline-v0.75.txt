@@ -1,10 +1,10 @@
 # x1600-boot-test baseline — M4 boot regression gate (docs/PLAN.md M4)
-# generated: 2026-10-14T11:14:49Z
-# firmware: stock v1.6 UNMODIFIED; kernel /home/matt/dev/hiby-r1-sdk/.kilo/worktrees/qemu-player-ui/unpacked/1.6/vmlinux.bin md5 dceda6683b9bc56b9a4110530b9add3f
-# nand image /home/matt/dev/hiby-r1-sdk/.kilo/worktrees/qemu-player-ui/unpacked/1.6/nand-r1.bin md5 d5702fb026589a9c71a580e2a0213030
-# qemu binary /home/matt/dev/hiby-r1-sdk/.kilo/worktrees/qemu-player-ui/tools/vendors/qemu/build/qemu-system-mipsel md5 46ee2cc92cec1bfb7f08a8fd7913fd79
-# main repo HEAD: da70ccb
-# vendored qemu rev: 77a3ad6 (hw/mips/x1600.c: UNCOMMITTED bring-up state)
+# generated: 2026-10-15T04:15:00Z
+# firmware: stock v1.6 UNMODIFIED; kernel /home/matt/dev/hiby-r1-sdk/unpacked/1.6/vmlinux.bin md5 dceda6683b9bc56b9a4110530b9add3f
+# nand image /home/matt/dev/hiby-r1-sdk/unpacked/1.6/nand-r1.bin md5 9d0ae929097d971792f29e063d80ab0d
+# qemu binary /home/matt/dev/hiby-r1-sdk/tools/vendors/qemu/build/qemu-system-mipsel md5 eb71ae5c4571afa7857f2bcbaa612bdd
+# main repo HEAD: 6bc9250
+# vendored qemu rev: ded9cc0 (hw/mips/x1600.c: clean)
 # boot cmd: qemu-system-mipsel -M x1600 -kernel <kernel> -serial file:<console log> -serial file:<ttyS0 log> -display none -monitor none -no-reboot
 # console port: ttyS2 = serial0 (captured; stock cmdline
 #   console=ttyS2,3000000n8); ttyS0 = serial1 (earlycon + BT uart,
@@ -338,17 +338,293 @@ initcall codec_board_init+0x0/0x4c [x1600_hiby_r1_sound_card] returned 0 after <
 Saving random seed: SKIP (read-only file system detected)
 ubi1: attaching mtd6
 ubi1: scanning is finished
-ubi1: empty MTD device detected
 ubi1: attached mtd6 (name "userdata", size 32 MiB)
 ubi1: PEB size: 131072 bytes (128 KiB), LEB size: 126976 bytes
 ubi1: min./max. I/O unit sizes: 2048/2048, sub-page size 2048
 ubi1: VID header offset: 2048 (aligned 2048), data offset: 4096
 ubi1: good PEBs: 260, bad PEBs: 0, corrupted PEBs: 0
-ubi1: user volume: 0, internal volumes: 1, max. volumes count: 128
-ubi1: max/mean erase counter: 0/0, WL threshold: 4096, image sequence number: <N>
-ubi1: available PEBs: 236, total reserved PEBs: 24, PEBs reserved for bad PEB handling: 20
-UBI device number 1, total 260 LEBs (33013760 bytes, 31.4 MiB), available 236 LEBs (29966336 bytes, 28.5 MiB), LEB size 126976 bytes (124.0 KiB)
+ubi1: user volume: 1, internal volumes: 1, max. volumes count: 128
+ubi1: max/mean erase counter: 2/1, WL threshold: 4096, image sequence number: <N>
+ubi1: available PEBs: 0, total reserved PEBs: 260, PEBs reserved for bad PEB handling: 20
 ubi1: background thread "ubi_bgt1d" started, PID <PID>
-Set volume size to 29966336
-Volume ID 0, size 236 LEBs (29966336 bytes, 28.5 MiB), LEB size 126976 bytes (124.0 KiB), dynamic, name "user_data", alignment 1
-UBIFS (ubi1:0): default file-system created
+UBI device number 1, total 260 LEBs (33013760 bytes, 31.4 MiB), available 0 LEBs (0 bytes), LEB size 126976 bytes (124.0 KiB)
+UBIFS (ubi1:0): background thread "ubifs_bgt1_0" started, PID <PID>
+UBIFS (ubi1:0): UBIFS: mounted UBI device 1, volume 0, name "user_data"
+UBIFS (ubi1:0): LEB size: 126976 bytes (124 KiB), min./max. I/O unit sizes: 2048 bytes/2048 bytes
+UBIFS (ubi1:0): FS size: 28696576 bytes (27 MiB, 226 LEBs), journal size 1396736 bytes (1 MiB, 11 LEBs)
+UBIFS (ubi1:0): reserved for root: 1355409 bytes (1323 KiB)
+UBIFS (ubi1:0): media format: w4/r0 (latest is w4/r0), UUID EE0CED74-EE75-488F-9AB1-23A738B3ADD4, small LPT model
+UBIFS (ubi1:0): full atime support is enabled.
+Starting system message bus: done
+Starting /etc/init.d/S39_recovery.recovery : begin 
+Starting /etc/init.d/S39_recovery.recovery : end 
+Starting network: OK
+MAC d0:31:10:d0:31:10
+dhd_set_mac_addr_handler: interface info not available/down 
+Starting sys_server...
+rm: can't remove '/mnt/sd_0': Read-only file system
+rm: can't remove '/mnt/udisk_0/disk_1': Read-only file system
+Starting /etc/init.d/S80_bt_init : begin Starting /etc/init.d/S80_bt_init : end Starting /etc/init.d/S92_03_start_music_player : begin Starting /etc/init.d/S92_03_start_music_player : end (SYS:D):sys_server: Build Sep 13 2025 14:15:42 94f5d17
+(SYS:D):server: socket created.
+(SYS:D):server: bind done.
+(SYS:D):server: listen done.
+(SYS:D):sys_server: open server ok.
+# lg_system_main in
+(GUI:D)lg_system: build time: Dec 29 2025 18:22:00.
+(hgl_fb: I) fb_buffers 2
+(hgl_fb: I) --------fb_bpp=16
+(hgl_fb: I) fb is ready
+(hgl_ts: D) Got Name hyn_ts
+(hgl_ts: I) ts is ready
+(GUI:D)x1000: lg platform init.
+(GUI:D)lg_class: lg class init.
+(MGR:E):ot_json: 32000
+(MGR:E):ot_json: 44100
+(MGR:E):ot_json: 48000
+(MGR:E):ot_json: 88200
+(MGR:E):ot_json: 96000
+(MGR:E):ot_json: 176400
+(MGR:E):ot_json: 192000
+(MGR:E):ot_json: 352800
+(MGR:E):ot_json: 384000
+(MGR:E):ot_json: 44100
+(MGR:E):ot_json: 48000
+(MGR:E):ot_json: 88200
+(MGR:E):ot_json: 96000
+(MGR:E):ot_json: 176400
+(MGR:E):ot_json: 192000
+(MGR:E):ot_json: 44100
+(MGR:E):ot_json: 48000
+(MGR:E):ot_json: 88200
+(MGR:E):ot_json: 96000
+(MGR:E):ot_json: 176400
+(MGR:E):ot_json: 192000
+(MGR:I):ot_device: Imported 4 devices.
+(MGR:I):ot_device: Found a new default device: headset
+(MGR:I):ot_device: Imported 4 ports.
+(MGR:I):ot_device: Imported 101 HDB gains.
+(MGR:I):ot_device: Imported 101 MDB gains.
+(MGR:I):ot_device: Imported 101 LDB gains.
+(MGR:I):ot_device: Imported 7 DSD gains.
+(MGR:I):ot_device: Imported 101 SW gains.
+(MGR:I):ot_device: Imported 2 volumes.
+(MGR:E):output_port_detect: headset change:1
+(MGR:E):output_port_detect: change finish
+product name: r1
+OTA_SERVICE: version(1.0)
+(GUI:D)lg_system: lg_platform_init
+BT_MACADDR 4C:BC:98:B0:30:BC
+Selected firmware: BCM4343A1_001.002.009.1010.1030.hcd
+(SYS:D) Libsystem Build Dec 13 2025 17:32:45 ba63c26
+no support other cmd
+(GUI:D)lg_dlna: output_process.
+event open success , fd -> 11.
+(GUI:D)lg_dlna: waiting for incoming connection...
+udhcpc: SIOCGIFINDEX: No such device
+(GUI:E)lg_music_db_init: warning :call lg_music_db_init
+set music db soft heap limit is 1MB
+(MGR:E):platform: action:change
+(MGR:E):platform: path:/devices/platform/regulatory.0
+SAM/I HiBy Engine 5e4c22e Build Aug 15 2025 17:11:10 http://www.hiby.com
+SAM/I Options: [LINUX][SA_MAX_META=128][DSD2PCM_DSD64_Q=1][DSD2PCM_DSD128_Q=2][DSD2PCM_DSD256_Q=3][DSD2PCM_DSD512_Q=3]
+BAL/D Balance module init
+BAL/D HiBy host magic = 79426948
+BAL/D HiBy host version = 1.2
+mseb/D MSEB module init
+mseb/D HiBy host magic = 0x79426948
+mseb/D HiBy host version = 1.2
+STEREO/D Sound Field module init
+STEREO/D HiBy host magic = 79426948
+STEREO/D HiBy host version = 1.2
+sony_select/D sony_select module init
+sony_select/D HiBy host magic = 79426948
+sony_select/D HiBy host version = 1.2
+STEREO/D construct
+BAL/D construct
+sa_thread_begin status:0
+(GUI:D)lg_textview: lg_textview_list=00fca55c
+(GUI:D)lg_font_ft2: construct.
+(GUI:E)get_str_res.c: line: 150 open a:\font\custom_font_config.ini fail!
+(GUI:D)lg_font_log: construct.
+(SYS:D):mount_service: has one cmd:MOUNT:UMOUNT:/data/mnt/sd_0
+(SYS:D):mount_service: cmd finish
+(GUI:D)lg_message_thread: msg = MOUNT:UMOUNT
+(GUI:D)lg_message_thread: SD_UNMOUNT_MSG
+(GUI:D)lg_message_thread: sd_unmount_callback
+(GUI:D)lg_guimain: lg_topbar_init
+(GUI:D)lg_guimain: lg_activity_mng_init
+(GUI:D)event_input: construct.
+(GUI:D)lg_guimain: lg_ial_init
+(GUI:D)lg_system: lg_gui_init
+(GUI:D)lg_calculate_capatity: access ret = -1
+(GUI:D)system_if: system_if_usb_select_device, val: 1
+(GUI:D)system_if: usb_gadget_storage_int
+mount /sys/kernel/config
+mkdir /sys/kernel/usb_gadget/android0
+mkdir /sys/kernel/config/usb_gadget/android0/strings/0x409
+mkdir /sys/kernel/config/usb_gadget/android0/configs/c.1
+mkdir /sys/kernel/config/usb_gadget/android0/configs/c.1/strings/0x409
+mkdir /sys/kernel/config/usb_gadget/android0/functions/mass_storage.0
+Mass Storage Function, version: 2009/09/11
+LUN: removable file: (no medium)
+(GUI:D)system_if: usb_device_role: 1
+no support other cmd
+Invalid mixer control
+(GUI:D)system_if: system_if_set_digital_filter  minimum phase
+sh: write error: No such device
+(GUI:D)system_if: 0000system_if_set_line_control /sys/devices/platform/earpods_adc/earpods_adc/earpods_adc_sw
+
+(GUI:D)system_if: system_if_set_line_control  
+(GUI:D)system_if: system_if_set_line_control 0
+Invalid mixer control NOS_EN
+Invalid mixer control DRE_EN
+adc_key adc_key.0: Key 0: multi-function set to 0
+(GUI:E)bluetooth_hiby: bluetooth_hiby_init
+sys_cmd enter
+input: com_input as /devices/virtual/input/input4
+open codec dev error!
+(GUI:D)lg_message_thread: msg = INPUT:ADD
+(GUI:D)lg_message_thread: INPUT_ADD
+(GUI:D)lg_message_thread: msg = INPUT:REMOVE
+(GUI:D)lg_message_thread: INPUT_REMOVE
+system_if_airplay_set_connect_callback
+airplay_set_callback 0x00509fe0
+(GUI:D)lg_activity_mng: running activity lg_activity_main
+(GUI:E)lg_listview_create: not listview plane then listview refresh fail
+(GUI:D)event_input: event_x1000_detect
+(MGR:E):platform: action:change
+(MGR:E):platform: path:/devices/platform/regulatory.0
+Can't get device info: No such device
+(MGR:E):platform: action:change
+(MGR:E):platform: path:/devices/platform/regulatory.0
+Agent registered
+Default agent requested
+File /usr/data/alsa.conf already exists.
+(MGR:E):platform: action:change
+(MGR:E):platform: path:/devices/platform/regulatory.0
+**
+ERROR:lib/bluez/adapter.c:194:adapter_get_properties: assertion failed: (ADAPTER_IS(self))
+Bail out! ERROR:lib/bluez/adapter.c:194:adapter_get_properties: assertion failed: (ADAPTER_IS(self))
+Aborted
+**
+ERROR:lib/bluez/adapter.c:194:adapter_get_properties: assertion failed: (ADAPTER_IS(self))
+Bail out! ERROR:lib/bluez/adapter.c:194:adapter_get_properties: assertion failed: (ADAPTER_IS(self))
+Aborted
+Hibylink Serial Port service registered
+**
+ERROR:lib/bluez/adapter.c:194:adapter_get_properties: assertion failed: (ADAPTER_IS(self))
+Bail out! ERROR:lib/bluez/adapter.c:194:adapter_get_properties: assertion failed: (ADAPTER_IS(self))
+Aborted
+[HYN_TS/E]hyn_ts_suspend:set TP to sleep mode fail, ret=-145
+(GUI:D)system_lister: system_lister_power_saving
+Invalid device: No such device
+(GUI:D)lg_activity_mng: lg_power_off
+(GUI:D)Layout.c: remove=layout_main
+(GUI:D)Layout.c: remove=vg_edit_down
+(GUI:D)lg_activity_mng: lg_activity_mng_running exit
+STEREO/D destruct
+BAL/D destruct
+sony_select/D sony_select module done
+STEREO/D Sound Field module done
+mseb/D MSEB module done
+BAL/D Balance module done
+(GUI:D)lg_ial: ial thread exit
+(GUI:D)event_input: destruct.
+(GUI:D)lg_guimain: lg_ial_done
+(GUI:D)lg_guimain: lg_activity_mng_done
+(GUI:D)lg_guimain: lg_messager_close
+(GUI:D)lg_font_ft2: destruct.
+(GUI:D)lg_font_ft2: on_destroy.
+(GUI:D)lg_font_log: destruct.
+(GUI:D)lg_font_log: on_destroy.
+(GUI:D)lg_music_db_done: warning :call lg_music_db_done
+(GUI:D)lg_music_db_done: g_music_db == NULL
+(GUI:D)lg_class: lg class done.
+Stopping /etc/init.d/S92_03_start_music_player : OK
+Stopping /etc/init.d/S80_bt_init : lg_system_main out
+OK
+Stopping sys_server...
+killall: udhcpc: no process killed
+killall: wpa_supplicant: no process killed
+
+Dongle Host Driver, version 1.363.125.19 (r)
+Compiled in /mnt/disk3/zcz/x1600_clean/ingenic.linux/module_driver/devices/wireless/bcmdhd_1.363.125.19_infineon
+wl_android_wifi_on in
+=========== WLAN placed in RESET ON  ========
+wlan power on: poweron
+bcm_wlan_power_on, RESETsdio_reset_comm():
+firmware path not found
+
+dhd_bus_devreset: == WLAN ON ==
+F1 signature read @0x18000000=0x1000a9a6
+F1 signature OK, socitype:0x1 chip:0xa9a6 rev:0x0 pkg:0x3
+DHD: dongle ram size is set to 524288(orig 524288) at 0x0
+skip download FW and nv
+dhd_bus_init: enable 0x06, ready 0x06 (waited 0us)
+bcmsdh_oob_intr_register: Enter
+bcmsdh_oob_intr_register OOB irq=101 flags=4 
+Firmware up: op_mode=0x0001, MAC=22:33:72:5f:65:74
+dhd_wl_ioctl: returning as busstate=0
+CFG80211-ERROR) wl_cfg80211_up : WLC_GET_VERSION failed, err=1
+dhd_open: failed to bring up cfg80211
+wl_android_wifi_off in
+dhd_bus_devreset: == Power OFF ==
+dhdsdio_isr : bus is down. we have nothing to do
+bcmsdh_oob_intr_unregister: Enter
+dhd_bus_devreset:  WLAN OFF DONE
+=========== WLAN placed in RESET OFF========
+wlan power off: poweroff
+dhd_stop: Exit
+ifconfig: SIOCSIFFLAGS: Operation not permitted
+Stopping network: OK
+Stopping /etc/init.d/S39_recovery.recovery : OK
+Stopping system message bus: done
+bluealsa: E: Lost BlueALSA D-Bus name: org.bluealsa
+Saving random seed: SKIP (read-only file system detected)
+Stopping mdev... stopped process in pidfile '/var/run/mdev.pid' (pid 538)
+OK
+UBIFS (ubi1:0): un-mount UBI device 1
+UBIFS (ubi1:0): background thread "ubifs_bgt1_0" stops
+umount: tmpfs busy - remounted read-only
+umount: devtmpfs busy - remounted read-only
+The system is going down NOW!
+Sent SIGTERM to all processes
+Sent SIGKILL to all processes
+Requesting system poweroff
+hiby-hifi-board hiby-hifi-board.0: shutdown
+tcs1421 tcs1421: shutdown
+earpods_adc earpods_adc: shutdown
+sa-config sa-config: shutdown
+leds_pwm2 leds_pwm2: shutdown
+adc_key adc_key.0: shutdown
+mmc mmc0:0001: shutdown
+md_bcmdhd_bt_power md_bcmdhd_bt_power: shutdown
+i2c 1-0015: shutdown
+cs43131 3-0030: shutdown
+sa_sound_switch sa_sound_switch: shutdown
+md_ingenic,mmc md_ingenic,mmc.1: shutdown
+md_ingenic,mmc md_ingenic,mmc.0: shutdown
+ingenic-aic ingenic-aic: shutdown
+md-gpio-keys md-gpio-keys: shutdown
+i2c 0-0062: shutdown
+i2c 0-0034: shutdown
+i2c i2c-3: shutdown
+md_i2c_gpio md_i2c_gpio.3: shutdown
+i2c i2c-1: shutdown
+i2c i2c-0: shutdown
+rmem-manager rmem-manager.0: shutdown
+ingenic-watchdog 10002000.watchdog: shutdown
+rtc-ingenic 10003000.rtc: shutdown
+ingenic-uart 10032000.serial: shutdown
+ingenic-uart 10030000.serial: shutdown
+ingenic-sfc 13440000.sfc: shutdown
+ingenic-tcu 10002000.tcu: shutdown
+snd-soc-dummy snd-soc-dummy: shutdown
+ingenic_usb_phy 10000000.otg_new_phy: shutdown
+alarmtimer alarmtimer: shutdown
+ingenic-mcu 13420000.mcu: shutdown
+ingenic-dma 13420000.dma: shutdown
+ingenic pinctrl 10010000.pinctrl: shutdown
+reg-dummy reg-dummy: shutdown
+PM: Calling irq_gc_shutdown+0x0/0x70
+reboot: System halted
