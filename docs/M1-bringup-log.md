@@ -3070,3 +3070,170 @@ moved to IFLG bit31, the SDPCM control-response header fixed (channel 0
   PA08 10 ms after each frame read (the re-kick timer). The
   TEMP-FW2-DIAG trace instruments stay worktree-only (stripped from the
   exported patch).
+
+## v0.89 (2026-10-15, vmstate round, worktree qemu-vmstate-snapshots) —
+QEMU snapshots: VMStateDescription on every custom device — the
+save/restore round-trip works end-to-end and second-scale iteration
+starts here.
+
+**The device-state snapshot layer (patch 0124).** The machine's custom
+devices were the only unmigrated state: `migrate`/`loadvm` restored RAM
+and the CPU but reset every custom MMIO block, so a resumed guest ran
+with reset devices behind its live drivers (the DHD's staged control
+response gone, the SFC page cache empty, the RTC/CGU back at seed,
+GPIO pending bits cleared — the resume broke in every path that
+touched them). Every custom device in hw/mips/x1600.c now carries a
+VMStateDescription (version_id 1, minimum_version_id 1):
+
+- **OST** (`x1600-ost`): regfile + `period` (the compare reload value)
+  + the armed timer deadline (VMSTATE_TIMER_PTR; the free-running
+  counter derives from QEMU_CLOCK_VIRTUAL, which the migration stream
+  re-bases).
+- **CGU** (`x1600-cgu`): the seeded/programmed regfile + the
+  CE-trigger "written" bitmap (a self-cleared trigger offset reads 0
+  — the bitmap decides).
+- **MSC ×2** (`x1600-msc`, instance ids 0/1): the full SDIO-card
+  surface — host regfile (STAT/IFLG/IMASK/DMAC), the staged RES byte
+  window, CCCR/FBR + CIS chains, the fn1/fn2 windows, the staged CMD53
+  data phase, the staged chip-side control response (fn2_rd FIFO +
+  ctl_stage), the delayed PA08 re-kick timer, and the 32 KB backplane
+  windows with their SBADDR keys. The backplane chunks moved from
+  heap pointers to INLINE windows (`bp_windows[16][0x8000]`, claimed
+  slots zero-filled exactly like the old g_malloc0 chunks, keyed by
+  bp_keys[] with X1600_MSC_BP_FREE sentinels) so the state is
+  snapshotable. post_load recomputes the IRQ level.
+- **AIC** (`x1600-aic`): regfile + FIFO contents/levels + capture
+  byte count + window-snapshot latch + the 1 ms drain timer. The
+  capture FILE* stays runtime state (X1600_AIC_CAPTURE, re-opened by
+  realize on the restore side; the capture file itself is external).
+- **PDMA** (`x1600-pdma`): the persistent regfile + per-channel
+  engine state (armed chains, IRQ-bit snapshots, the AIC PCM pump
+  position and prev-window tracking).
+- **INTC** (`x1600-intc`, QOM device — dc->vmsd): ISR/IMR banks;
+  post_load re-drives the CPU line from (ISR & ~IMR).
+- **RTC** (`x1600-rtc`): the write-protocol regfile (+0x3c key).
+- **SADC** (`x1600-sadc`): regfile + the per-channel commanded
+  samples (the VNC key ladder); post_load re-drives the IRQ.
+- **GPIO** (`x1600-gpio`): bank regfiles (incl. the +0x700 staging
+  window), model-driven pin levels, IRQ enable/mask/pending bits;
+  post_load re-drives the four bank lines (a PA08 host-wake or touch
+  INT held across the snapshot stays asserted).
+- **I2C1 + cst8xx** (`x1600-i2c`): regfile, staged tx/rx buffers,
+  slave-register latch, sleep-arm, touch position latch, INT level +
+  the INT re-assert timer (created eagerly in x1600_mach_init so a
+  restore side always has it; the lazy-create path is unchanged).
+- **EFUSE** (`x1600-efuse`): trigger regfile + latched offset + the
+  fuse array (CHIP_ID reads back identically).
+- **LCD** (`x1600-lcd`): the jzfb regfile, the IRQ state and the
+  backend_seen latch + the 25 Hz fb timer (created eagerly). The
+  display surface, the host fb copy and the console are
+  runtime-rebuildable — post_load leaves them and the next
+  gfx_update/fb_draw recreates what a fresh process needs (the
+  restored screendump is byte-identical, below).
+- **SFC + SPI-NAND** (`x1600-sfc`): control window, CDT table, page
+  cache + feature regs, PIO FIFO/transfer counters. The SPI-NAND
+  array is EXTERNAL state: the mmap'd image file (nand-r1.bin next to
+  the kernel) is shared by both sides — the restore's
+  x1600_sfc_init re-mmaps the same path, so no file handle migrates
+  and both sides see the same flash. post_load re-drives the IRQ.
+- **Every stub regfile** (`x1600-stub`, TCU/USB-PHY/PWM/UART-ext/
+  I2C0/2/uart1/uart3, sequence instance ids — creation order is
+  machine-deterministic): zero-restore would have rewound the USB-PHY
+  enable sequence and the PWM backlight level behind the running
+  guest's back.
+- The in-tree devices (serial-mm UARTs, the CPU, RAM blocks incl.
+  TCSM0) already migrate through their own VMStateDescriptions.
+- The touch-cursor overlay coordinates are cosmetic UI state (the
+  next VNC pointer event refreshes them) and are not migrated.
+
+**Verification.**
+- **(a) The save/restore round-trip (migrate path — the machine has no
+  qcow2, so HMP savevm is unavailable):** fresh VM (VNC + HMP + QMP
+  sockets, `-no-reboot`), boot to the picker (the "lg_listview_create"
+  console line, ~33 s wall on the idle host), `stop`, HMP
+  `migrate file:...` (57 MB stream: 64 MB RAM heavily zero-compressed
+  + device sections), `quit`, restart with `-incoming file:...`,
+  `query-status` = paused (as saved), `cont`. Evidence
+  (/tmp/kilo/vm/verify/): the pre-save screendump and the post-restore
+  screendump are **byte-identical** (md5 adddbda1f969fa881a1be87f7429
+  b494 both) — the picker renders exactly as saved — and a QMP tap at
+  the English row (240,398: abs move + left press/release via
+  input-send-event) **advanced the UI** (the post-tap screendump
+  differs, the fb descriptor writes visible in the trail: the language
+  re-render). The restore instance then quit cleanly.
+- **(b) The boot gate — tools/x1600-boot-test.sh PASS** against the
+  committed baseline (docs/traces/boot-baseline-v0.75.txt, re-recorded
+  at v0.88), NO re-record: the full-cycle used-image run's window
+  compared with **both diffs empty** (multiset + structural; evidence
+  /tmp/kilo/vm/boot-gate-PASS/). The gate-tool fixes below were needed
+  to make the committed baseline verifiable at all; the comparison
+  semantics (message set + structural sequence) are unchanged — the
+  vmstate changes are state-plumbing only and the guest-visible boot
+  is unchanged.
+- **(c) The fast-iteration recipe** is committed as
+  tools/x1600-snapshot-vm.sh (save/resume/tap/dump/stop — the exact
+  commands above wrapped for the manager loop; VNC :11 so the
+  persistent hiby-live-demo VM on :0 is never touched).
+
+**The gate-tool fixes (v0.88 baseline was unverifiable as committed).**
+The v0.88 re-record captured a USED-image full-cycle window (userdata
+already formatted → the "default file-system created" marker never
+prints → the window runs to the 5-min power-save "reboot: System
+halted"). The verify path required the marker (fresh image only) — a
+verify run could not pass against it either way (fresh image: the
+window cuts at 19.6 s and misses the baseline's tail; used image: the
+completeness check failed). Fixes in tools/x1600-boot-test.sh:
+`reboot: System halted` is accepted as the alternate terminal state
+(the baseline's own end state), the timeout default rose 360→480 s to
+cover the full cycle under load, the baseline-strip now skips only the
+header (the old `grep -v '^#'` ate window lines that start with the
+serial shell-prompt echo "# ", e.g. "# lg_system_main in"), and the
+normalizer gained the volatile-value/variant classes a full-cycle
+window needs (all behavior-neutral: the lg_textview_list heap pointer
+— same class as the existing threadinfo/task/tls rules; the async
+console-flush burst split points for "Starting /etc/init.d/" tokens
+and "(SYS:D)/(GUI:D)/(MGR:E)" prints; shell-prompt "#" echoes;
+trailing-space normalization; the per-image UBIFS volume UUID, the
+per-boot BT_MACADDR and the mdev pidfile pid; and the drop list grew
+by the UBIFS journal-recovery pair — they describe the PREVIOUS
+shutdown's cleanliness, not this boot — plus the manager/GUI debug
+chatter whose presence flips with scheduling (MGR:E platform actions,
+the equalizer's EQ-read line), extending the existing timing-spam drop
+list). The comparison semantics (message set + structural sequence)
+are unchanged. With the fixes the committed baseline compares with
+ZERO diffs against a same-shape run (verified offline on three
+full-cycle windows AND live: the final gate run's diff-multiset and
+diff-struct are both 0 bytes).
+
+**The fresh-image caveat** (documented for the next rounds): the gate
+marker only prints on a PRISTINE nand image (tools/x1600/
+make_nand_image.py, md5 ae41e974e78aab2730774d05c9cbf37c); any boot
+formats the userdata and later marker-cut windows are impossible. The
+gate run this round used a used-image full cycle (one clean cycle-1
+boot to the halt first) to match the committed baseline's shape.
+
+**Known edge (not on the recipe's path):** saving mid-rcS while the
+userdata journal is in heavy flight reproduced one UBIFS read-only
+transition after restore (`ubifs_ro_mode: switched to read-only
+mode, error -22` at a userdata inode read — the manager recipe saves
+at the quiet picker instead). The idle-path restore (the verified
+one) is clean. Parked as a mid-flight snapshot fidelity item.
+
+**Pre-existing gap noticed while wiring the snapshot (not this
+round's scope):** the merged source has NO uart0 BT-side HCI responder
+— the commit that added it (2550167) is in the vendored history, but
+the wifi control-chain commit (ded9cc0) rewrote hw/mips/x1600.c from a
+pre-BT base and silently dropped it; the prebuilt binary matches the
+merged source (no x1600-bt strings), so the merged state is
+self-consistent — the boot shows the documented bluez crash-loop
+(adapter.c assertion, the "Aborted" spam in any post-~50 s console
+capture) and the wizard still reaches the picker. The 0123 BT patch
+in tools/patches/qemu-x1600/ no longer applies to the current file.
+Also absent from the merged model: the CS43131 codec and I2C0/2
+slaves (plain stubs). Flagged so the manager can decide whether to
+re-land the BT responder as its own round.
+
+**Model state:** hw/mips/x1600.c carries the VMStateDescriptions
+(committed in the vendored qemu; exported as 0124). The gate-tool
+normalizer fixes are in tools/x1600-boot-test.sh. The recipe script
+is tools/x1600-snapshot-vm.sh.

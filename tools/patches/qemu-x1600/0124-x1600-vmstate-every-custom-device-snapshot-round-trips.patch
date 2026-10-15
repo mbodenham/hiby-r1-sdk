@@ -1,0 +1,763 @@
+From 9380a678b6d1234b8904914c1c25501cf4a22fd4 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Thu, 15 Oct 2026 14:05:35 +0900
+Subject: [PATCH] =?UTF-8?q?x1600:=20VMStateDescription=20on=20every=20cust?=
+ =?UTF-8?q?om=20device=20=E2=80=94=20migration=20snapshots=20work?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The machine's custom devices were the only unmigrated state: a migrate/
+loadvm restored RAM + the CPU but reset every custom MMIO block, so the
+resumed guest ran with reset devices behind its live drivers (the DHD's
+staged control response gone, the SFC page cache empty, RTC/CGU back at
+seed, GPIO pending bits cleared). Every custom device now carries a
+VMStateDescription (version_id 1):
+
+- OST: regfile + period + the armed clockevent deadline (VMSTATE_TIMER_PTR;
+  the free-running counter derives from QEMU_CLOCK_VIRTUAL, re-based by
+  the stream).
+- CGU: regfile + the CE-trigger written bitmap.
+- MSC x2 (instance ids 0/1): host regfile, staged RES byte window,
+  CCCR/CIS, fn1/fn2 windows, staged CMD53 phase, staged chip-side
+  control response (fn2_rd + ctl_stage), the PA08 re-kick timer, and
+  the backplane windows — moved from heap chunks to inline
+  bp_windows[16][0x8000] (claim zero-fills exactly like the old
+  g_malloc0; bp_keys[] with X1600_MSC_BP_FREE sentinels) so the state
+  snapshots. post_load recomputes the IRQ level.
+- AIC: regfile + FIFO contents/levels + capture counter + window-snapshot
+  latch + the 1 ms drain timer. The capture FILE* stays runtime state
+  (X1600_AIC_CAPTURE re-opened by realize; the capture file is external).
+- PDMA: regfile + armed chains + irqbit snapshots + the AIC PCM pump
+  position and prev-window tracking.
+- INTC (QOM device, dc->vmsd): ISR/IMR banks; post_load re-drives the
+  CPU line.
+- RTC / SADC (post_load re-drives the IRQ) / GPIO (post_load re-drives
+  the four bank lines) / EFUSE: regfiles + the model-driven state.
+- I2C1+cst8xx: regfile, staged tx/rx, slave latch, sleep-arm, touch
+  latch, INT level + re-assert timer.
+- LCD: regfile + backend_seen + the fb timer (the surface/fb copy are
+  runtime-rebuildable; the restored screendump is byte-identical).
+- SFC: control window + CDT + page cache + feature regs + PIO counters;
+  the NAND array stays the shared image file (the restore re-mmaps the
+  same nand-r1.bin; no file handle migrates); post_load re-drives the IRQ.
+- Every stub regfile (sequence instance ids; creation order is
+  machine-deterministic): zero-restore would have rewound the USB-PHY
+  sequence and the PWM backlight level behind the running guest.
+
+The lazily-created LCD fb timer and the I2C INT re-assert timer are
+created eagerly in x1600_mach_init (no functional change) so a restore
+side always has them for VMSTATE_TIMER_PTR. post_load hooks only run on
+the migration-load path.
+
+Verified: boot -> picker (~33 s wall), stop, migrate file: (57 MB
+stream), quit, -incoming file:, cont — the restored screendump is
+byte-identical to the pre-save dump and a QMP tap at the English row
+advances the wizard; the boot gate compares with zero diffs against the
+committed v0.88 baseline (no re-record).
+---
+ hw/mips/x1600.c | 438 +++++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 411 insertions(+), 27 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 4ea3e70..8ad2876 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -42,6 +42,7 @@
+ #include "system/address-spaces.h"
+ #include "system/dma.h"
+ #include "system/reset.h"
++#include "migration/vmstate.h"
+ #include "ui/console.h"
+ #include "ui/input.h"
+ #include "target/mips/cpu.h"
+@@ -261,6 +262,22 @@ static const MemoryRegionOps x1600_ost_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* Snapshot state (v0.89): the regfile, the last compare reload value and
++ * the armed deadline. The free-running counter at +0x20/+0x24 derives from
++ * QEMU_CLOCK_VIRTUAL, which the migration stream itself re-bases, so only
++ * the clockevent state is saved here; the timer load re-arms it. */
++static const VMStateDescription x1600_ost_vmstate = {
++    .name = "x1600-ost",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_TIMER_PTR(t, X1600Ost),
++        VMSTATE_UINT32_ARRAY(regs, X1600Ost, X1600_OST_SIZE / 4),
++        VMSTATE_UINT32(period, X1600Ost),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ /* TCSM0 vendor block (unsized in the stock DTB; used by plat_mem_setup +
+  * PM: tcpu_resume/tcpu_sleep/tload_func_to_tcsm park resume code and the
+  * fw-DTB pointer at +0x244 here). On silicon it is on-chip SRAM, never a
+@@ -377,6 +394,20 @@ static const MemoryRegionOps x1600_cgu_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* Snapshot state (v0.89): the seeded/programmed clock regfile plus the
++ * CE-trigger "written" bitmap (reads of a self-cleared trigger offset
++ * return 0 — the bitmap decides that, so it must survive the restore). */
++static const VMStateDescription x1600_cgu_vmstate = {
++    .name = "x1600-cgu",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32_ARRAY(regs, X1600Cgu, 0x100 / 4),
++        VMSTATE_UINT32_ARRAY(written, X1600Cgu, 0x100 / 32),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ /* ----------------------------------------------------------------- */
+ /* MSC (MMC/SD/SDIO host, jzmmc_v12 layout — register defines cross-   */
+ /* checked against the Ingenic X1000 SDK's drivers/mmc/host/jzmmc_v12  */
+@@ -499,13 +530,14 @@ typedef struct X1600Msc {
+     unsigned dma_len;
+     unsigned dma_fn;
+     uint32_t dma_addr;
+-    uint8_t *bp_chunks[16];     /* backplane window content, one 32 KB
+-                                 * chunk per SBADDR key (the BCM window
+-                                 * = 32 KB at (SBADDR<<8) & ~0x7fff);
+-                                 * chunk key = target >> 15. The DHD's
+-                                 * ai_scan for 0xa9a6 uses static core
+-                                 * tables, so only chipcommon (0x18000000)
+-                                 * has meaningful content so far. */
++    /* backplane window content, one 32 KB chunk per SBADDR key (the BCM
++     * window = 32 KB at (SBADDR<<8) & ~0x7fff); chunk key =
++     * target >> 15. The DHD's ai_scan for 0xa9a6 uses static core
++     * tables, so only chipcommon (0x18000000) has meaningful content
++     * so far. Stored INLINE (v0.89, snapshot state): the windows are
++     * zero-filled at claim time exactly like the old g_malloc0 chunks,
++     * keyed by bp_keys[] (X1600_MSC_BP_FREE = unclaimed slot). */
++    uint8_t bp_windows[16][0x8000];
+     uint32_t bp_keys[16];
+     unsigned res_reads;         /* RES byte-window state, see res_pop */
+     unsigned res_count;
+@@ -551,21 +583,26 @@ static void x1600_msc_update_irq(X1600Msc *s)
+ 
+ /* Backplane window chunk lookup/create: the 32 KB bank at fn1
+  * 0x8000-0xffff maps (SBADDR << 8) | (addr & 0x7fff) to a cached chunk
+- * keyed by the backplane address >> 15. */
++ * keyed by the backplane address >> 15. Unclaimed slots carry
++ * X1600_MSC_BP_FREE; claiming one zero-fills the window (the old
++ * g_malloc0 chunk semantics) before keying it. */
++#define X1600_MSC_BP_FREE 0xffffffffu
++
+ static uint8_t *x1600_msc_bp_chunk(X1600Msc *s, uint32_t bp)
+ {
+     unsigned ci;
+ 
+     for (ci = 0; ci < 16; ci++) {
+-        if (s->bp_chunks[ci] && s->bp_keys[ci] == (bp >> 15)) {
+-            return s->bp_chunks[ci];
++        if (s->bp_keys[ci] != X1600_MSC_BP_FREE &&
++            s->bp_keys[ci] == (bp >> 15)) {
++            return s->bp_windows[ci];
+         }
+     }
+     for (ci = 0; ci < 16; ci++) {
+-        if (!s->bp_chunks[ci]) {
+-            s->bp_chunks[ci] = g_malloc0(0x8000);
++        if (s->bp_keys[ci] == X1600_MSC_BP_FREE) {
++            memset(s->bp_windows[ci], 0, sizeof(s->bp_windows[ci]));
+             s->bp_keys[ci] = bp >> 15;
+-            return s->bp_chunks[ci];
++            return s->bp_windows[ci];
+         }
+     }
+     return NULL;
+@@ -1456,13 +1493,66 @@ static const uint8_t x1600_msc_cis_f2[] = {
+     0xff,                               /* CISTPL_END */
+ };
+ 
++static int x1600_msc_post_load(void *opaque, int version_id)
++{
++    X1600Msc *s = opaque;
++
++    x1600_msc_update_irq(s);
++    return 0;
++}
++
++/* Snapshot state (v0.89): the full SDIO-card surface — host regfile
++ * (STAT/IFLG/IMASK/DMAC...), the staged RES byte window, the CCCR/FBR
++ * space + CIS chains, the fn1/fn2 windows, the staged CMD53 data phase,
++ * the staged chip-side control response (fn2_rd FIFO + ctl_stage — the
++ * DHD's readframes continuation), the 32 KB backplane windows with
++ * their SBADDR keys, and the delayed PA08 re-kick timer deadline. The
++ * IRQ line is recomputed in post_load (level from IFLG & ~IMASK). */
++static const VMStateDescription x1600_msc_vmstate = {
++    .name = "x1600-msc",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .post_load = x1600_msc_post_load,
++    .fields = (const VMStateField[]) {
++        VMSTATE_TIMER_PTR(pa08_rekick, X1600Msc),
++        VMSTATE_UINT32_ARRAY(regs, X1600Msc, 0x100 / 4),
++        VMSTATE_UINT16(rca, X1600Msc),
++        VMSTATE_UINT8_ARRAY(cccr, X1600Msc, sizeof_field(X1600Msc, cccr)),
++        VMSTATE_UINT8_ARRAY(cis, X1600Msc, sizeof_field(X1600Msc, cis)),
++        VMSTATE_UINT8_ARRAY(fn1, X1600Msc, sizeof_field(X1600Msc, fn1)),
++        VMSTATE_UINT8_ARRAY(fn2, X1600Msc, sizeof_field(X1600Msc, fn2)),
++        VMSTATE_BOOL(ctl_stage, X1600Msc),
++        VMSTATE_UINT8_ARRAY(fn2_rd, X1600Msc,
++                            sizeof_field(X1600Msc, fn2_rd)),
++        VMSTATE_UINT32(fn2_rd_len, X1600Msc),
++        VMSTATE_UINT32(fn2_rd_pos, X1600Msc),
++        VMSTATE_UINT8_ARRAY(fifo, X1600Msc, sizeof_field(X1600Msc, fifo)),
++        VMSTATE_UINT32(fifo_len, X1600Msc),
++        VMSTATE_UINT32(fifo_pos, X1600Msc),
++        VMSTATE_BOOL(dma_pending, X1600Msc),
++        VMSTATE_BOOL(dma_wr, X1600Msc),
++        VMSTATE_BOOL(dma_inc, X1600Msc),
++        VMSTATE_UINT32(dma_len, X1600Msc),
++        VMSTATE_UINT32(dma_fn, X1600Msc),
++        VMSTATE_UINT32(dma_addr, X1600Msc),
++        VMSTATE_BUFFER_UNSAFE(bp_windows, X1600Msc, 1,
++                              16 * 0x8000),
++        VMSTATE_UINT32_ARRAY(bp_keys, X1600Msc, 16),
++        VMSTATE_UINT32(res_reads, X1600Msc),
++        VMSTATE_UINT32(res_count, X1600Msc),
++        VMSTATE_UINT8_ARRAY(res_bytes, X1600Msc,
++                            sizeof_field(X1600Msc, res_bytes)),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+                            int irq_line, qemu_irq intc_line)
+ {
+     memset(s->cccr, 0, sizeof(s->cccr));
+     memset(s->cis, 0, sizeof(s->cis));
+     memset(s->fn1, 0, sizeof(s->fn1));
+-    /* Backplane: chunked window (see bp_chunks). Chunk 0x18000000+
++    /* Backplane: chunked window (see bp_windows). Chunk 0x18000000+
+      * word 0 = the chipcommon CHIPID badge the DHD's si_doattach reads
+      * as the "F1 signature": chipid = low 16 bits (BCM43430A1/AP6212 =
+      * 0xa9a6, matches the common-CIS MANFID device and the
+@@ -1470,12 +1560,16 @@ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+      * rev = bits 31:28 (rev 1 routes ai_scan to the bcm43430 tables). */
+     {
+         uint32_t sig = 0x1000a9a6u;
+-        s->bp_chunks[0] = g_malloc0(0x8000);
++        unsigned wi;
++
++        for (wi = 0; wi < 16; wi++) {
++            s->bp_keys[wi] = X1600_MSC_BP_FREE;
++        }
+         s->bp_keys[0] = 0x18000000u >> 15;
+-        s->bp_chunks[0][0] = sig;
+-        s->bp_chunks[0][1] = sig >> 8;
+-        s->bp_chunks[0][2] = sig >> 16;
+-        s->bp_chunks[0][3] = sig >> 24;
++        s->bp_windows[0][0] = sig;
++        s->bp_windows[0][1] = sig >> 8;
++        s->bp_windows[0][2] = sig >> 16;
++        s->bp_windows[0][3] = sig >> 24;
+         /* SOCSRAM core (0x18004000) registers for si_socram_size
+          * (v0.72 decode: coreinfo at curmap+0, bits[7:4] = the bank
+          * count for socram rev >= 8; socram_banksize reads bankinfo at
+@@ -1483,8 +1577,8 @@ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+          * 2 banks x ((31+1) << 13) = 512 KB SRAM, matching the
+          * [0x80000, ...) unmapped rule; socram_banksize asserts
+          * idx < 3, so 2 banks, not 4). */
+-        s->bp_chunks[0][0x4000] = 0x20;   /* coreinfo: 2 banks */
+-        s->bp_chunks[0][0x4040] = 0x1f;   /* bankinfo: 256 KB/bank */
++        s->bp_windows[0][0x4000] = 0x20;  /* coreinfo: 2 banks */
++        s->bp_windows[0][0x4040] = 0x1f;  /* bankinfo: 256 KB/bank */
+     }
+     /* Backplane chunk key 0 = [0x00000000, 0x8000): the AI EROM
+      * (enumeration ROM). ai_scan's cold path reads the EROM pointer
+@@ -1527,13 +1621,12 @@ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+         };
+         unsigned i;
+ 
+-        s->bp_chunks[1] = g_malloc0(0x8000);
+         s->bp_keys[1] = 0;
+         for (i = 0; i < sizeof(erom) / sizeof(erom[0]); i++) {
+-            s->bp_chunks[1][4 * i + 0] = erom[i];
+-            s->bp_chunks[1][4 * i + 1] = erom[i] >> 8;
+-            s->bp_chunks[1][4 * i + 2] = erom[i] >> 16;
+-            s->bp_chunks[1][4 * i + 3] = erom[i] >> 24;
++            s->bp_windows[1][4 * i + 0] = erom[i];
++            s->bp_windows[1][4 * i + 1] = erom[i] >> 8;
++            s->bp_windows[1][4 * i + 2] = erom[i] >> 16;
++            s->bp_windows[1][4 * i + 3] = erom[i] >> 24;
+         }
+     }
+     s->cccr[0x00] = 0x11;               /* CCCR rev 1.0, SDIO spec rev 1.1 */
+@@ -1571,6 +1664,7 @@ static void x1600_msc_init(X1600Msc *s, bool sdio_card, hwaddr base,
+                           sdio_card ? "x1600.msc1-wifi" : "x1600.msc0",
+                           0x100);
+     memory_region_add_subregion_overlap(get_system_memory(), base, &s->mmio, 0);
++    vmstate_register(NULL, s->index, &x1600_msc_vmstate, s);
+     (void)irq_line;
+ }
+ 
+@@ -1758,6 +1852,29 @@ static const MemoryRegionOps x1600_aic_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* Snapshot state (v0.89): the regfile, the FIFO contents + levels, the
++ * capture byte count and the window-snapshot latch. The capture FILE*
++ * is env-configured runtime state (X1600_AIC_CAPTURE): realize reopens
++ * it on the restore side, the capture file itself is external state
++ * (not migrated). The 1 ms drain timer reloads from the stream. */
++static const VMStateDescription x1600_aic_vmstate = {
++    .name = "x1600-aic",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_TIMER_PTR(drain, X1600Aic),
++        VMSTATE_UINT32_ARRAY(regs, X1600Aic, 0x100 / 4),
++        VMSTATE_UINT8_ARRAY(txfifo, X1600Aic, X1600_AIC_FIFO_BYTES),
++        VMSTATE_UINT32(txlevel, X1600Aic),
++        VMSTATE_UINT8_ARRAY(rxfifo, X1600Aic, X1600_AIC_FIFO_BYTES),
++        VMSTATE_UINT32(rxlevel, X1600Aic),
++        VMSTATE_UINT64(captured, X1600Aic),
++        VMSTATE_BOOL(snapped_once, X1600Aic),
++        VMSTATE_UINT64(snap_buf, X1600Aic),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ static void x1600_aic_realize(void)
+ {
+     X1600Aic *s = &x1600_aic_dev;
+@@ -1774,6 +1891,7 @@ static void x1600_aic_realize(void)
+     }
+     s->drain = timer_new_ms(QEMU_CLOCK_VIRTUAL, x1600_aic_drain_tick, s);
+     timer_mod(s->drain, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 1);
++    vmstate_register(NULL, 0, &x1600_aic_vmstate, s);
+ }
+ 
+ /* ----------------------------------------------------------------- */
+@@ -2290,6 +2408,33 @@ static const MemoryRegionOps x1600_pdma_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* Snapshot state (v0.89): the persistent regfile backing plus the
++ * per-channel engine state — armed MSC-descriptor chains, the IRQ-bit
++ * snapshot per armed transfer, and the AIC PCM slave pump position
++ * (buf/left/prev tracking). No timers: mem-to-mem chains complete
++ * synchronously, MSC chains wait for the MSC model, AIC periods are
++ * driven by the AIC drain timer. The IRQ line state itself is carried
++ * by the INTC's saved input levels. */
++static const VMStateDescription x1600_pdma_vmstate = {
++    .name = "x1600-pdma",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32_ARRAY(regs, X1600Pdma, 0x10000 / 4),
++        VMSTATE_BOOL_ARRAY(armed, X1600Pdma, X1600_PDMA_NCH),
++        VMSTATE_UINT32_ARRAY(desc, X1600Pdma, X1600_PDMA_NCH),
++        VMSTATE_UINT32_ARRAY(irqbit, X1600Pdma, X1600_PDMA_NCH),
++        VMSTATE_BOOL_ARRAY(aic_active, X1600Pdma, X1600_PDMA_NCH),
++        VMSTATE_BOOL_ARRAY(aic_tx, X1600Pdma, X1600_PDMA_NCH),
++        VMSTATE_UINT64_ARRAY(aic_buf, X1600Pdma, X1600_PDMA_NCH),
++        VMSTATE_UINT32_ARRAY(aic_left, X1600Pdma, X1600_PDMA_NCH),
++        VMSTATE_UINT64_ARRAY(aic_prev_buf, X1600Pdma, X1600_PDMA_NCH),
++        VMSTATE_BOOL_ARRAY(aic_have_prev, X1600Pdma, X1600_PDMA_NCH),
++        VMSTATE_BOOL_ARRAY(aic_snapped, X1600Pdma, X1600_PDMA_NCH),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ /* ----------------------------------------------------------------- */
+ /* INTC: jz4780-style interrupt controller (ingenic,ingenic-intc).    */
+ /* Two 32-line banks, stride 0x20: ISR+0x00, IMR+0x04, IMSR+0x08,     */
+@@ -2378,6 +2523,29 @@ static const MemoryRegionOps x1600_intc_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* Snapshot state (v0.89): the raw line levels and the mask words (IMR
++ * reset is all-masked; the loaded values overwrite it). post_load
++ * re-drives the CPU line from (ISR & ~IMR). */
++static int x1600_intc_post_load(void *opaque, int version_id)
++{
++    X1600Intc *s = opaque;
++
++    x1600_intc_update(s);
++    return 0;
++}
++
++static const VMStateDescription x1600_intc_vmstate = {
++    .name = "x1600-intc",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .post_load = x1600_intc_post_load,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32_ARRAY(isr, X1600Intc, 2),
++        VMSTATE_UINT32_ARRAY(imr, X1600Intc, 2),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ /* Per-instance stub regfile (v0.18): MMIO registers STORE their writes —
+  * the vendor kernel RMWs its PLL/clock/PHY blocks, so read-back of a
+  * written value is the minimum correct semantics (pure 0-return made the
+@@ -2420,13 +2588,32 @@ static const MemoryRegionOps x1600_stub_ops = {
+     .endianness = DEVICE_LITTLE_ENDIAN,
+ };
+ 
++/* Snapshot state (v0.89): the persistent regfile every stub backs (the
++ * vendor kernel RMWs its PLL/clock/PHY/PWM banks; zero-restore would
++ * rewind e.g. the USB-PHY enable sequence and the PWM backlight level
++ * to reset state behind the running guest's back). The buffer is the
++ * stub's own size (all stub sizes are 4-byte multiples). Registered
++ * per instance from x1600_stub_new with a sequence instance id — the
++ * creation order is machine-deterministic, so save/restore agree. */
++static const VMStateDescription x1600_stub_vmstate = {
++    .name = "x1600-stub",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_VBUFFER(regs, X1600Stub, 1, NULL, size),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ static X1600Stub *x1600_stub_new(const char *name, hwaddr size)
+ {
++    static unsigned stub_seq;
+     X1600Stub *s = g_new0(X1600Stub, 1);
+ 
+     s->name = name;
+     s->size = size;
+     s->regs = g_new0(uint32_t, size / 4);
++    vmstate_register(NULL, stub_seq++, &x1600_stub_vmstate, s);
+     return s;
+ }
+ 
+@@ -2447,6 +2634,7 @@ static void x1600_intc_class_init(ObjectClass *klass, const void *data)
+     DeviceClass *dc = DEVICE_CLASS(klass);
+ 
+     dc->realize = x1600_intc_realize;
++    dc->vmsd = &x1600_intc_vmstate;
+ }
+ 
+ static const TypeInfo x1600_intc_info = {
+@@ -2521,6 +2709,20 @@ static const MemoryRegionOps x1600_rtc_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* Snapshot state (v0.89): the RTC regfile — the write-protocol key at
++ * +0x3c and any programmed registers (the guest's set-time writes must
++ * read back across a restore; +0x00 write-ready and the +0x3c bit31
++ * "accepted" flag are read-side constants, not state). */
++static const VMStateDescription x1600_rtc_vmstate = {
++    .name = "x1600-rtc",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32_ARRAY(regs, X1600Rtc, X1600_RTC_SIZE / 4),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ /* ----------------------------------------------------------------- */
+ /* SADC (0x10070000) — minimal conversion model (v0.66). The plain     */
+ /* stub loaded soc_adc clean but never completed conversions: the      */
+@@ -2644,6 +2846,29 @@ static const MemoryRegionOps x1600_sadc_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* Snapshot state (v0.89): the regfile (CFG/IMASK/IFLAG/data windows)
++ * and the per-channel commanded samples (the VNC key ladder). post_load
++ * re-drives the IRQ line from the saved IFLAG & ~IMASK. */
++static int x1600_sadc_post_load(void *opaque, int version_id)
++{
++    X1600Sadc *s = opaque;
++
++    x1600_sadc_update_irq(s);
++    return 0;
++}
++
++static const VMStateDescription x1600_sadc_vmstate = {
++    .name = "x1600-sadc",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .post_load = x1600_sadc_post_load,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32_ARRAY(regs, X1600Sadc, X1600_SADC_SIZE / 4),
++        VMSTATE_UINT32_ARRAY(cmd_sample, X1600Sadc, 4),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ /* ----------------------------------------------------------------- */
+ /* Pinctrl/GPIO (0x10010000) — v0.76 input path. Replaces the plain    */
+ /* stub with the register semantics the vendor kernel's built-in gpio  */
+@@ -2788,6 +3013,37 @@ static const MemoryRegionOps x1600_gpio_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* Snapshot state (v0.89): the bank regfiles (incl. the +0x700 staging
++ * window), the model-driven pin levels, and the IRQ enable/mask/pending
++ * bits. post_load re-drives the four bank INTC lines from the pending
++ * state (a PA08 host-wake or touch INT held across the snapshot stays
++ * asserted). */
++static int x1600_gpio_post_load(void *opaque, int version_id)
++{
++    X1600Gpio *s = opaque;
++    unsigned bank;
++
++    for (bank = 0; bank < X1600_GPIO_BANKS; bank++) {
++        x1600_gpio_update_irq(s, bank);
++    }
++    return 0;
++}
++
++static const VMStateDescription x1600_gpio_vmstate = {
++    .name = "x1600-gpio",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .post_load = x1600_gpio_post_load,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32_ARRAY(regs, X1600Gpio, 0x1000 / 4),
++        VMSTATE_UINT32_ARRAY(level, X1600Gpio, X1600_GPIO_BANKS),
++        VMSTATE_UINT32_ARRAY(irq_en, X1600Gpio, X1600_GPIO_BANKS),
++        VMSTATE_UINT32_ARRAY(irq_mask, X1600Gpio, X1600_GPIO_BANKS),
++        VMSTATE_UINT32_ARRAY(pending, X1600Gpio, X1600_GPIO_BANKS),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ /* model-driven input injection: change a pin's level and, if its IRQ is
+  * enabled + unmasked, latch the pending flag and raise the bank line */
+ void x1600_gpio_inject(unsigned bank, unsigned pin, bool level)
+@@ -3028,6 +3284,35 @@ static const MemoryRegionOps x1600_i2c_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* Snapshot state (v0.89): the controller regfile, the staged tx/rx
++ * transaction buffers, the cst8xx slave register latch + sleep-arm, the
++ * touch position latch and the panel INT level. The INT re-assert timer
++ * reloads from the stream (created eagerly in x1600_mach_init so a
++ * restore side always has it). */
++static const VMStateDescription x1600_i2c_vmstate = {
++    .name = "x1600-i2c",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_TIMER_PTR(int_timer, X1600I2c),
++        VMSTATE_UINT32_ARRAY(regs, X1600I2c, 0x1000 / 4),
++        VMSTATE_UINT8_ARRAY(tx_buf, X1600I2c, sizeof_field(X1600I2c, tx_buf)),
++        VMSTATE_UINT32(tx_len, X1600I2c),
++        VMSTATE_UINT8_ARRAY(rx_buf, X1600I2c, sizeof_field(X1600I2c, rx_buf)),
++        VMSTATE_UINT32(rx_len, X1600I2c),
++        VMSTATE_UINT32(rx_pos, X1600I2c),
++        VMSTATE_UINT32(slave_reg, X1600I2c),
++        VMSTATE_BOOL(sleep_armed, X1600I2c),
++        VMSTATE_BOOL(touched, X1600I2c),
++        VMSTATE_UINT32(x, X1600I2c),
++        VMSTATE_UINT32(y, X1600I2c),
++        VMSTATE_UINT32(fx, X1600I2c),
++        VMSTATE_UINT32(fy, X1600I2c),
++        VMSTATE_BOOL(int_level, X1600I2c),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ /* the VNC touch path: latch the panel position (0..479 x 0..799) and
+  * drive the panel INT (PA16, gpa pin 16). The hyn driver's report
+  * logic alternates full contact records with BTN_TOUCH-only frames
+@@ -3275,6 +3560,21 @@ static const MemoryRegionOps x1600_efuse_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* Snapshot state (v0.89): the trigger regfile, the latched byte offset
++ * and the fuse array (the CHIP_ID segment the guest read back must
++ * match across the restore). */
++static const VMStateDescription x1600_efuse_vmstate = {
++    .name = "x1600-efuse",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32_ARRAY(regs, X1600Efuse, 0x100 / 4),
++        VMSTATE_UINT32(off, X1600Efuse),
++        VMSTATE_UINT8_ARRAY(array, X1600Efuse, sizeof_field(X1600Efuse, array)),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ /* ----------------------------------------------------------------- */
+ /* LCD controller (0x13050000, size 0x10000) — minimal model (v0.66).  */
+ /* Persistent regfile (the jzfb RMW surface: dense 0x00-0xfc cfg/      */
+@@ -3526,6 +3826,34 @@ static const MemoryRegionOps x1600_lcd_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* Snapshot state (v0.89): the jzfb regfile (config/timing regs, the
++ * +0x1000 descriptor tap, the int/state block, the SLCD window), the
++ * IRQ state and the backend-seen latch. The display surface, the host
++ * fb copy and the console are runtime-rebuildable (post_load leaves
++ * them; the next gfx_update/fb_draw recreates what a fresh process
++ * needs) — the 25 Hz fb timer reloads its deadline from the stream
++ * (created eagerly in x1600_mach_init so the restore side has it). */
++static int x1600_lcd_post_load(void *opaque, int version_id)
++{
++    X1600Lcd *s = opaque;
++
++    x1600_lcd_update_irq(s);
++    return 0;
++}
++
++static const VMStateDescription x1600_lcd_vmstate = {
++    .name = "x1600-lcd",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .post_load = x1600_lcd_post_load,
++    .fields = (const VMStateField[]) {
++        VMSTATE_TIMER_PTR(fb_timer, X1600Lcd),
++        VMSTATE_UINT32_ARRAY(regs, X1600Lcd, X1600_LCD_SIZE / 4),
++        VMSTATE_BOOL(backend_seen, X1600Lcd),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ /* ----------------------------------------------------------------- */
+ /* SFC (ingenic_sfc_v2) + SPI-NAND, M2 model. Register semantics      */
+ /* decoded from the vendor driver disassembly + v0.22 stub MMIO log:  */
+@@ -4003,6 +4331,43 @@ static const MemoryRegionOps x1600_sfc_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++/* Snapshot state (v0.89): the control window, the CDT table, the page
++ * cache + feature registers (an interrupted PAGE READ / program cycle
++ * resumes with the right cache contents) and the PIO FIFO/transfer
++ * counters. The SPI-NAND array is EXTERNAL state: the mmap'd image
++ * file (nand-r1.bin) is shared by the save and restore sides — the
++ * restore's x1600_sfc_init re-mmaps the same path, so the file handle
++ * needs no migration and writes flushed by the save side are visible
++ * to the restore side. post_load re-drives the IRQ line from the
++ * pending status. */
++static int x1600_sfc_post_load(void *opaque, int version_id)
++{
++    X1600Sfc *s = opaque;
++
++    x1600_sfc_irq_update(s);
++    return 0;
++}
++
++static const VMStateDescription x1600_sfc_vmstate = {
++    .name = "x1600-sfc",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .post_load = x1600_sfc_post_load,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32_ARRAY(regs, X1600Sfc, 0x100 / 4),
++        VMSTATE_UINT32_ARRAY(cdt, X1600Sfc, 0x200 / 4),
++        VMSTATE_UINT8_ARRAY(cache, X1600Sfc, X1600_NAND_STRIDE),
++        VMSTATE_UINT8_ARRAY(feature, X1600Sfc, 256),
++        VMSTATE_UINT8(pending, X1600Sfc),
++        VMSTATE_UINT32(fifo, X1600Sfc),
++        VMSTATE_INT32(fifo_valid, X1600Sfc),
++        VMSTATE_UINT32(xfer_total, X1600Sfc),
++        VMSTATE_UINT32(xfer_done, X1600Sfc),
++        VMSTATE_UINT8(tx_byte, X1600Sfc),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ static void x1600_sfc_init(X1600Sfc *s, const char *image_path)
+ {
+     int fd = open(image_path, O_RDWR | O_CREAT, 0644);
+@@ -4030,8 +4395,8 @@ static void x1600_sfc_init(X1600Sfc *s, const char *image_path)
+     close(fd);
+     s->feature[0xa0] = 0;      /* block-lock: all unlocked (driver also
+                                  * writes 0 explicitly via SET FEATURE) */
++    vmstate_register(NULL, 0, &x1600_sfc_vmstate, s);
+ }
+-
+ /* ----------------------------------------------------------------- */
+ /* machine                                                           */
+ /* ----------------------------------------------------------------- */
+@@ -4160,6 +4525,7 @@ static void x1600_mach_init(MachineState *ms)
+     memory_region_init_io(&x1600_cgu_dev.mmio, NULL, &x1600_cgu_ops,
+                           &x1600_cgu_dev, "x1600.cgu", 0x100);
+     memory_region_add_subregion(sysmem, X1600_CGU_BASE, &x1600_cgu_dev.mmio);
++    vmstate_register(NULL, 0, &x1600_cgu_vmstate, &x1600_cgu_dev);
+     /* SPL-shaped CGU reset state (v0.66): the stock SPL leaves the PLLs
+      * configured before the kernel runs; our all-zero reset state made
+      * the vendor clock framework compute ext-fallback rates (~24 MHz)
+@@ -4194,6 +4560,7 @@ static void x1600_mach_init(MachineState *ms)
+     memory_region_init_io(&x1600_rtc_dev.mmio, NULL, &x1600_rtc_ops,
+                           &x1600_rtc_dev, "x1600.rtc", X1600_RTC_SIZE);
+     memory_region_add_subregion(sysmem, X1600_RTC_BASE, &x1600_rtc_dev.mmio);
++    vmstate_register(NULL, 0, &x1600_rtc_vmstate, &x1600_rtc_dev);
+     x1600_add_stub(sysmem, "x1600-pinctrl",  X1600_PINCTRL_BASE, 0x1000);
+     x1600_add_stub(sysmem, "x1600-uart1",    X1600_UART1_BASE,   X1600_UART_SIZE);
+     x1600_add_stub(sysmem, "x1600-uart3",    X1600_UART3_BASE,   X1600_UART_SIZE);
+@@ -4205,6 +4572,7 @@ static void x1600_mach_init(MachineState *ms)
+     memory_region_init_io(&x1600_pdma_dev.mmio, NULL, &x1600_pdma_ops,
+                           &x1600_pdma_dev, "x1600.pdma", 0x10000);
+     memory_region_add_subregion(sysmem, X1600_PDMA_BASE, &x1600_pdma_dev.mmio);
++    vmstate_register(NULL, 0, &x1600_pdma_vmstate, &x1600_pdma_dev);
+     /* SADC (v0.66): minimal conversion model — completes conversions and
+      * raises INTC line 11 so the adc pollers' IRQ waits finish (the 220 ms
+      * "adc get value timeout!" spam). */
+@@ -4212,6 +4580,7 @@ static void x1600_mach_init(MachineState *ms)
+     memory_region_init_io(&x1600_sadc_dev.mmio, NULL, &x1600_sadc_ops,
+                           &x1600_sadc_dev, "x1600.sadc", X1600_SADC_SIZE);
+     memory_region_add_subregion(sysmem, X1600_SADC_BASE, &x1600_sadc_dev.mmio);
++    vmstate_register(NULL, 0, &x1600_sadc_vmstate, &x1600_sadc_dev);
+     /* MSC hosts (v0.64): msc0 = SDIO wifi (BCM43438, manual detect via
+      * jzmmc_manual_detect(0) from the DHD); msc1 = TF slot, empty (fast
+      * response timeouts). IRQs on INTC lines 37/36 (stock DTB
+@@ -4239,6 +4608,7 @@ static void x1600_mach_init(MachineState *ms)
+                           &x1600_gpio_dev, "x1600.pinctrl", 0x1000);
+     memory_region_add_subregion(sysmem, X1600_PINCTRL_BASE,
+                                 &x1600_gpio_dev.mmio);
++    vmstate_register(NULL, 0, &x1600_gpio_vmstate, &x1600_gpio_dev);
+     for (unsigned n = 0; n < X1600_GPIO_BANKS; n++) {
+         x1600_gpio_dev.irq[n] = qdev_get_gpio_in(intc,
+                                                  X1600_GPIO_INTA - n);
+@@ -4248,6 +4618,13 @@ static void x1600_mach_init(MachineState *ms)
+                           &x1600_i2c1_dev, "x1600.i2c1", X1600_I2C_SIZE);
+     memory_region_add_subregion(sysmem, X1600_I2C1_BASE,
+                                 &x1600_i2c1_dev.mmio);
++    /* the panel INT re-assert timer exists unconditionally (snapshot
++     * state may carry an armed deadline; the lazy-create path below
++     * stays for the fresh-boot first-touch edge) */
++    x1600_i2c1_dev.int_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
++                                            x1600_i2c_int_tick,
++                                            &x1600_i2c1_dev);
++    vmstate_register(NULL, 0, &x1600_i2c_vmstate, &x1600_i2c1_dev);
+     x1600_input_handler_state =
+         qemu_input_handler_register(NULL, &x1600_input_handler);
+ 
+@@ -4258,6 +4635,11 @@ static void x1600_mach_init(MachineState *ms)
+     memory_region_init_io(&x1600_lcd_dev.mmio, NULL, &x1600_lcd_ops,
+                           &x1600_lcd_dev, "x1600.lcd", X1600_LCD_SIZE);
+     memory_region_add_subregion(sysmem, X1600_LCD_BASE, &x1600_lcd_dev.mmio);
++    /* the 25 Hz refresh timer exists unconditionally (snapshot state may
++     * carry an armed deadline; -display none still never arms it) */
++    x1600_lcd_dev.fb_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
++                                          x1600_lcd_fb_tick, &x1600_lcd_dev);
++    vmstate_register(NULL, 0, &x1600_lcd_vmstate, &x1600_lcd_dev);
+     /* v0.70: graphic console bound to the guest framebuffer, registered
+      * unconditionally (-display none has no listeners and never renders;
+      * -vnc / -display gtk show the emulated screen). */
+@@ -4273,6 +4655,7 @@ static void x1600_mach_init(MachineState *ms)
+     memory_region_init_io(&x1600_efuse_dev.mmio, NULL, &x1600_efuse_ops,
+                           &x1600_efuse_dev, "x1600.efuse", X1600_EFUSE_SIZE);
+     memory_region_add_subregion(sysmem, X1600_EFUSE_BASE, &x1600_efuse_dev.mmio);
++    vmstate_register(NULL, 0, &x1600_efuse_vmstate, &x1600_efuse_dev);
+ 
+     /* AHB2 PWM 0x134c0000: persistent regfile (soc_pwm RMWs its div/mode/
+      * level registers; no polled semantics pinned by the boot yet). */
+@@ -4315,6 +4698,7 @@ static void x1600_mach_init(MachineState *ms)
+         memory_region_init_io(&ost->mmio, NULL, &x1600_ost_ops, ost,
+                               "x1600.ost", X1600_OST_SIZE);
+         memory_region_add_subregion(sysmem, X1600_OST_BASE, &ost->mmio);
++        vmstate_register(NULL, 0, &x1600_ost_vmstate, ost);
+     }
+ 
+     /* kernel image at the stock SPL's decompressed location */
+-- 
+2.53.0
+

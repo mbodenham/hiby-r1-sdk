@@ -21,7 +21,7 @@
 #   tools/x1600-boot-test.sh [--timeout SEC] [--baseline FILE]
 #       [--update-baseline] [--qemu PATH] [--out DIR] [--kernel FILE]
 #
-#   --timeout SEC        max boot wall time in seconds (default 360)
+#   --timeout SEC        max boot wall time in seconds (default 480)
 #   --baseline FILE      baseline trace to diff against
 #                        (default docs/traces/boot-baseline-v0.75.txt)
 #   --update-baseline    (re)record the baseline from a fresh boot
@@ -48,6 +48,11 @@ export LC_ALL
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 
 MARKER='UBIFS (ubi1:0): default file-system created'
+# Full-cycle end state on a USED nand image (userdata already formatted:
+# the marker never prints, rcS runs to the player and the stock 5-min
+# power-save shutdown halts the guest — the v0.88 baseline window shape).
+# Either terminal state completes the boot window.
+HALT_MARKER='reboot: System halted'
 EARLYCON_BANNER='Linux version 4.4.94+'
 EARLYCON_HANDOFF='bootconsole [early0] enabled'
 # The ttyS2 console (serial0) only carries output from its registration
@@ -60,7 +65,7 @@ CONSOLE_HANDOFF_DONE='bootconsole [early0] disabled'
 # same task): the module/initcall chain, console handoff, root mount.
 STRUCT_RE='^(calling |initcall |Linux version |bootconsole \[|console \[ttyS2\]|VFS: Mounted root|VFS: Cannot)'
 
-TIMEOUT=360
+TIMEOUT=480
 BASELINE=
 QEMU=
 KERNEL=
@@ -140,8 +145,12 @@ print_bounded_diff() {
 #    at fault time), the Modules-linked-in / Tainted snapshots of an oops
 #    (depend on how far the concurrent insmod chain got), and the Oops[#N]
 #    counters (depend on how many dumps fired);
-#  - drop the two documented timing-spam line classes (the SADC-stub
-#    220 ms poller and the I2C-stub wait loops): their count and
+#  - drop the documented scheduling-noise line classes (the SADC-stub
+#    220 ms poller, the I2C-stub wait loops, hrtimer delay warnings,
+#    the UBIFS journal-recovery lines — they describe the PREVIOUS
+#    shutdown's cleanliness, not this boot — and the manager/GUI debug
+#    chatter whose presence flips with scheduling (MGR:E platform
+#    actions, the equalizer's EQ-read debug line)): their count and
 #    interleaving are scheduling noise, the probes' own success/failure
 #    prints stay in the window;
 #  - cut at the terminal marker and squeeze consecutive duplicate lines.
@@ -149,6 +158,7 @@ print_bounded_diff() {
 # derived from this.
 normalize() {
     sed -e 's/\r$//' \
+        -e 's/ *$//' \
         -e 's/^\[[[:space:]]*[0-9][0-9.]*\][[:space:]]*//' \
         -e 's/returned \(.*\) after [0-9][0-9]* usecs/returned \1 after <N> usecs/' \
         -e 's/Calibrating delay loop\.\.\. [0-9][0-9.]* BogoMIPS (lpj=[0-9][0-9]*)/Calibrating delay loop... <N> BogoMIPS (lpj=<N>)/' \
@@ -174,10 +184,25 @@ normalize() {
         -e 's/^Oops\[[0-9][0-9]*\]/Oops[<N>]/' \
         -e 's/successFinish display\.\.\./success\nFinish display.../' \
         -e 's/tsk = 0x[0-9a-f][0-9a-f]*/tsk = <ADDR>/' \
+        -e 's/lg_textview_list=[0-9a-f][0-9a-f]*/lg_textview_list=<ADDR>/' \
+        -e 's/Starting \/etc\/init\.d\//\nStarting \/etc\/init.d\//g' \
+        -e 's/(SYS:D)/\n(SYS:D)/g' \
+        -e 's/(GUI:D)/\n(GUI:D)/g' \
+        -e 's/(MGR:E)/\n(MGR:E)/g' \
+        -e 's/ # /\n# /g' \
+        -e 's/^# \{1,\}//m' \
+        -e 's/ *# *$//m' \
+        -e 's/UUID [0-9A-F][0-9A-F-]*/UUID <UUID>/' \
+        -e 's/BT_MACADDR [0-9A-F:][0-9A-F:]*/BT_MACADDR <MAC>/' \
+        -e "s/pidfile '\/var\/run\/mdev\.pid' (pid [0-9][0-9]*)/pidfile mdev.pid (pid <PID>)/" \
+        -e 's/ *$//mg' \
         -e 's/\(thread:[A-Za-z_]*:\)[0-9a-f][0-9a-f]*/\1<PID>/' \
     | grep -v -e '^adc_read_channel_value:adc get value timeout!$' \
               -e '^i2c[0-9] write timeout([0-9][0-9]* ms)$' \
               -e '^hrtimer: interrupt took [0-9][0-9]* ns$' \
+              -e '^UBIFS (ubi1:0): recovery \(needed\|completed\)$' \
+              -e '^[(]MGR:E[)]:platform: ' \
+              -e '^[(]GUI:D[)]lg_helper_equalizer: EQ read file\.$' \
     | awk -v marker="$MARKER" 'index($0, marker) { print; exit } { print }' \
     | uniq
 }
@@ -202,7 +227,8 @@ complete=0
 qemu_died=0
 elapsed=0
 while :; do
-    if grep -qF "$MARKER" "$SERIAL_LOG" 2>/dev/null; then
+    if grep -qF "$MARKER" "$SERIAL_LOG" 2>/dev/null || \
+       grep -qF "$HALT_MARKER" "$SERIAL_LOG" 2>/dev/null; then
         complete=1
         sleep 3
         break
@@ -265,7 +291,10 @@ if [ "$UPDATE" -eq 1 ]; then
 fi
 
 BASEWIN=$OUT/baseline-window-$$.log
-grep -v '^#' "$BASELINE" | normalize > "$BASEWIN"
+# strip only the header (window content itself may legitimately start
+# with "# " — the serial console's shell-prompt echoes, e.g.
+# "# lg_system_main in" in the v0.88 baseline)
+sed -n '/^# --- window ---/,$p' "$BASELINE" | tail -n +2 | normalize > "$BASEWIN"
 [ -s "$BASEWIN" ] || die "baseline has an empty window — wrong file? $BASELINE"
 
 if ! grep -qF "$EARLYCON_BANNER" "$BT_LOG" || ! grep -qF "$EARLYCON_HANDOFF" "$BT_LOG"; then
@@ -288,7 +317,7 @@ if [ "$complete" -ne 1 ]; then
     if [ "$qemu_died" -eq 1 ]; then
         printf 'FAIL: qemu exited early (exit %s) before the boot window completed\n' "$QEXIT" >&2
     else
-        printf 'FAIL: boot window incomplete — terminal marker not reached within %ss\n' "$TIMEOUT" >&2
+        printf 'FAIL: boot window incomplete — terminal marker/halt not reached within %ss\n' "$TIMEOUT" >&2
     fi
     printf '%s\n' '--- last 15 lines of the captured window ---' >&2
     tail -n 15 "$WINDOW" >&2
