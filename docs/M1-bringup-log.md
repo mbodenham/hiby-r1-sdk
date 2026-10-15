@@ -3267,3 +3267,20 @@ is NOT the input chain and NOT the idle blank
   harness, the tz page's rows sit at y≈70-207 (row 1) and y≈210-340
   (row 2) — the picker grid does NOT apply; row 1 center ≈ (240,129)
   → abs (16384,5284).
+
+- **Round close-out (v0.89):** patch 0124 exported
+  (tools/patches/qemu-x1600/0124-x1600-abs-axis-metadata-on-the-input-handler.patch;
+  verified to apply cleanly onto main's vendored HEAD fd0d4c9);
+  vendored commits 956210a (BT restoration) + dac477a (abs_info);
+  gate PASS ×2 against the re-recorded boot-baseline-v0.89.txt (the
+  recording must start from a PRISTINE image — the first record attempt
+  captured a dirty-image window and failed the verify; sequence:
+  regenerate → record → regenerate → verify). The gate normalize() now
+  canonicalizes the two adjacent-swap print races so the window
+  compares stably run-to-run. Worktree committed through c21ff9c.
+  PARKED (the next tz decode round's target): why litegui drops the
+  tz page's item clicks — decode 0x4961e0's item-template/style path
+  for ("vg_listview_time_zone", L"time_zone") vs the working region
+  pair; the handler chain, the registration table and the live event
+  delivery are all verified good (v0.89 above), so the gap is exactly
+  the create-time wiring between the named listview and its items.
