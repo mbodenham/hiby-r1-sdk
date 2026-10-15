@@ -1,0 +1,28 @@
+From fd0d4c90d9b2b0bdd1241821550319ba90600a3c Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Thu, 15 Oct 2026 13:22:59 +0900
+Subject: [PATCH] x1600: touch-cursor visible from boot (center default)
+
+---
+ hw/mips/x1600.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 4299d9f..4ea3e70 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -3123,8 +3123,9 @@ void x1600_i2c_touch_report(bool touched, unsigned x, unsigned y)
+ 
+ /* Touch-cursor overlay state: the VNC pointer position in panel coords,
+  * drawn as a crosshair into the fb copy at display-refresh time. */
+-static int x1600_cursor_x, x1600_cursor_y;
+-static bool x1600_cursor_seen;
++static int x1600_cursor_x = 240;
++static int x1600_cursor_y = 400;
++static bool x1600_cursor_seen = true;
+ 
+ static void x1600_input_event(DeviceState *dev, QemuConsole *src,
+                               QemuInputEvent *evt)
+-- 
+2.53.0
+
