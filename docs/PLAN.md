@@ -706,6 +706,65 @@ predates velocity data; SFC (hardest model so far) took ~1 day.
     guest tools include strace, hciconfig, hcitool, od — enough to
     diagnose in-guest without model instrumentation.
 
+- **Status (M3 tz round, v0.88-v0.89, worktree qemu-wizard-tz, patch
+  0124):** the tz-row flow is decoded and the freeze is pinned to a
+  litegui-level event drop, NOT the input chain. Two deliverables plus
+  one regression fix:
+  - **REGRESSION FOUND AND FIXED:** main's vendored qemu had LOST the
+    BT HCI responder — the wifi round's ded9cc0 rewrite of
+    hw/mips/x1600.c (337+/471-) removed the 378 lines that 2550167
+    (patch 0123) added; every merged-state boot since has the bluez
+    adapter.c assert-flood back (hci0 never registers, the patchram
+    retries HCI_Reset forever). The BT diff applies cleanly to the
+    current tree; restored in the vendored worktree (commit 956210a,
+    converges with the still-correct exported 0123) and verified
+    across 5 fresh boots (zero assertions, the 207-VS download +
+    kernel init complete, bt_init reaches /tmp/bt_init_ok). **The
+    integrator should verify the vendored tree actually contains the
+    0123 code after applying the patch stack** — the drift was
+    invisible in git (the exported patch file survived).
+  - **The tz flow decoded (player binary):** language → region →
+    time-zone pages; the region click handler stores setting 129 AND
+    pre-stores the default zone into setting 130 via the tzlookup.xml
+    parser; the tz-page row click handler (0x4d3740) stores the
+    override into setting 130 and advances. The tz applier
+    (0x469be0, on-change of setting 348) runs
+    `ln -sf /usr/share/zoneinfo/<id> /usr/data/localtime` +
+    `date +"%Z %z" > /data/time_zone`, then (wifi state COMPLETE)
+    ntpdate + hwclock -w --utc. The tz listviews reference
+    z:\layout\theme1\listview\vg_listview_{zone_info,select_zone,
+    time_zone,region}.listview — none exist in the squashfs (the real
+    device ships the same rootfs and works, so they are not the
+    differentiator); the rows render from the generic list geometry
+    (coordinate/list.ini name/name2 fields).
+  - **The freeze pinned by live trace:** the touch chain is ALIVE on
+    the tz page (hyn_ts IRQ counts rise, /dev/input/event1 delivers
+    the full MT-A stream to an od reader armed on the tz page) and the
+    player's tz click handler never runs its first store
+    (/usr/data/user.ini byte-identical across the tap; the applier's
+    files never appear; the console silent). The drop is inside
+    litegui's widget dispatch — the tz listview's items lack the
+    click wiring the region page's items have (handler gate = the
+    item's owner back-pointer chain *(item+248)→+124). NEXT DECODE
+    TARGET (parked with this precise entry): 0x4961e0's
+    name/style resolution for ("vg_listview_time_zone", L"time_zone")
+    vs the working ("vg_listview_region", L"region") — the item
+    template scan loop over the 115-entry widget-name pattern table at
+    0x77bf68. The QMP abs convention is settled and documented:
+    0..0x7fff fractions of the panel (raw screen pixels land at the
+    180°-mirrored point and select the wrong row — proven live: a raw
+    (240,398) tap selected Français).
+  - **patch 0124 (for the manager's harness):** QemuInputHandler
+    abs_info (x/y min/max 0..0x7fff) + QMP input-send-event abs
+    scaling through it — makes the QMP abs convention explicit and
+    predictable; identity for the registered ranges. Gate: PASS ×2
+    against the re-recorded docs/traces/boot-baseline-v0.89.txt (the
+    BT+wifi dmesg changed the window; the gate normalize() now
+    canonicalizes the two run-to-run adjacent-swap print races).
+    Wizard evidence this round: language→region→tz page reached
+    in-window repeatedly (screendumps /tmp/kilo/tz/w1-w2, x0-x3, y1,
+    v1_final).
+
 ## 7. Snapshot/iteration infrastructure (v0.89, worktree
 qemu-vmstate-snapshots, patch 0124)
 

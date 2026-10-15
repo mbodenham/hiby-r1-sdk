@@ -23,7 +23,7 @@
 #
 #   --timeout SEC        max boot wall time in seconds (default 480)
 #   --baseline FILE      baseline trace to diff against
-#                        (default docs/traces/boot-baseline-v0.75.txt)
+#                        (default docs/traces/boot-baseline-v0.89.txt)
 #   --update-baseline    (re)record the baseline from a fresh boot
 #   --qemu PATH          qemu-system-mipsel binary
 #                        (default tools/vendors/qemu/build/qemu-system-mipsel)
@@ -93,7 +93,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-[ -n "$BASELINE" ] || BASELINE=$ROOT/docs/traces/boot-baseline-v0.75.txt
+[ -n "$BASELINE" ] || BASELINE=$ROOT/docs/traces/boot-baseline-v0.89.txt
 [ -n "$QEMU" ]     || QEMU=$ROOT/tools/vendors/qemu/build/qemu-system-mipsel
 [ -n "$KERNEL" ]   || KERNEL=$ROOT/unpacked/1.6/vmlinux.bin
 
@@ -204,6 +204,27 @@ normalize() {
               -e '^[(]MGR:E[)]:platform: ' \
               -e '^[(]GUI:D[)]lg_helper_equalizer: EQ read file\.$' \
     | awk -v marker="$MARKER" 'index($0, marker) { print; exit } { print }' \
+    | awk '
+      # Canonicalize the two documented adjacent-swap races (run-to-run
+      # print-order flips, v0.89): the lcd_lg35583/msc initcall-complete
+      # lines race the framework prints that may follow them. Emit each
+      # known pair with the initcall line first, whichever order the
+      # boot produced. Idempotent on already-canonical windows.
+      {
+        if (pending != "") {
+          if ((pending ~ /^Wait display\.\.\.$/ && \
+               $0 ~ /^initcall lg35583_init\+0x0\/0x500 \[lcd_lg35583\] returned/) || \
+              (pending ~ /^md_ingenic,mmc md_ingenic,mmc\.1: card inserted, state=0$/ && \
+               $0 ~ /^initcall msc_init\+0x0\/0x138 \[soc_msc\] returned/)) {
+            print $0; print pending; pending = ""
+          } else {
+            print pending; pending = $0
+          }
+        } else {
+          pending = $0
+        }
+      }
+      END { if (pending != "") print pending }' \
     | uniq
 }
 

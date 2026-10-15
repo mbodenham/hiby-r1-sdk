@@ -3071,6 +3071,220 @@ moved to IFLG bit31, the SDPCM control-response header fixed (channel 0
   TEMP-FW2-DIAG trace instruments stay worktree-only (stripped from the
   exported patch).
 
+## v0.88 (2026-10-15, M3 tz round, worktree qemu-wizard-tz) — the tz flow
+decoded from the player binary; AND a main-build regression caught on the
+first boot: the wifi round's x1600.c rewrite dropped the BT HCI responder
+(patch 0123) — the bluez crash-loop is back; restored before any tz work
+
+- **Setup** per convention (vendors + unpacked cp -a, gitignored as
+  established). Demo VM verified running (bgp_13dccab4, cwd = main repo,
+  VNC 127.0.0.1:0, sockets under /tmp/kilo/livedisp/). Operational notes:
+  - the socket-chardev console drops guest output ENTIRELY when no
+    client is connected — char-socket.c tcp_chr_write returns -EIO on
+    the disconnected path and the core drops the bytes; logfile= logs
+    only connected traffic (verified twice: the demo VM's own
+    console.log is static with no telnet client, and the tz-diag VM's
+    first boot captured 0 bytes despite logfile=). Capture recipe that
+    works: connect the client BEFORE the boot (persistent python
+    reader, /tmp/kilo/tz/console_cap.py) or use a plain -serial file:.
+  - QMP system_reset on x1600 is NOT a reliable reboot: after the guest
+    reaches userspace it parks the CPU at the PROM reset vector
+    (pc=0xbfc00380, ttyS0 earlycon static, no kernel re-entry). To
+    cycle the guest, restart the qemu process (background_process stop
+    + start) — never pkill (demo VM safety rule).
+  - pristine NAND regenerated before each clean cycle with
+    tools/x1600/make_nand_image.py (the md5 matches the v0.79 note,
+    ae41e974e78aab2730774d05c9cbf37c).
+- **The tz flow decode** (player 4.6M musl, vaddr = file + 0x400000;
+  string refs via lui/addiu absolute pairs with sign-adjusted low
+  halves — objdump prints addiu immediates as signed DECIMAL; xref
+  helper kept at /tmp/kilo/tz/xref.py):
+  - **resources**: usr/resource/str/<lang>/region.txt (CLDR territories
+    GB/US/CN/JP/FR/... — the region picker rows), zones.txt (CLDR
+    zoneStrings: "Europe:Paris" { ec{"Paris"} } — the city labels),
+    zone_info.ini (UTF-16LE: "(UTC+01:00)" label strings keyed
+    UTC+0100), tzlookup.xml (IANA ids per country code), zone_standtime.txt
+    (11.5K, the standby-time options — the wizard's NEXT page material).
+    The tz row text "<City> GMT+01:00" = zones.txt city + the binary's
+    UTC±HH00 label table at vaddr 0x7784d8 rendered through zone_info.ini.
+  - **the applier 0x469be0**: reads setting 130 (the zone id string,
+    e.g. "Asia/Shanghai") via 0x415360; if NON-EMPTY:
+    sprintf(buf,"%s %s%s %s","ln -sf","/usr/share/zoneinfo/",<id>,
+    "/usr/data/localtime") → system(buf); then system("date +\"%Z %z\"
+    > /data/time_zone"). So the device stores TZ as the
+    /usr/data/localtime SYMLINK + the %Z %z text in /data/time_zone
+    (both writable in the VM: /usr/data is the UBIFS mount, /data the
+    SFC-backed data partition — both proven writable by earlier rounds).
+  - **the on-change table**: {setting-id, handler} pairs at file
+    0x360c00- (id 0x130..0x15d range); id 0x15c (348) → 0x451640 = the
+    tz apply chain: applier, then if the wifi state buffer at 0x86f88c
+    compares equal to "COMPLETE" (0x469c60): system("ntpdate
+    0.pool.ntp.org time.windows.com &") + system("hwclock -w --utc")
+    (strings at file 0x36065c/0x360688).
+  - **the tz listview cluster**: a descriptor table of {path[0x10c],
+    name[0x100]} entries (file 0x3e7b00-0x3f5a1c, ~110 listview views)
+    references z:\layout\theme1\listview\vg_listview_zone_info.listview,
+    vg_listview_select_zone.listview, vg_listview_time_zone.listview
+    and vg_listview_region.listview — **NONE of these exist on the
+    rootfs** (theme1/listview ships only book/class/music/
+    tidal_play_info). The wizard page code (0x4d2xxx module) creates
+    "vg_listview_time_zone" with style "style_custom" via 0x4961e0
+    (string pair at 0x784a90/0x784ac4), and the row-click handler at
+    0x4d26e0: builds the zone id via the tzlookup.xml parser 0x4138c0,
+    stores it with 0x416ac0(130, id) (the settings store — the same
+    value is persisted under the INI key "zone_set" in sys_set.ini by
+    the 0x412680 call at 0x4bffd4), then calls 0x433de0(parent, this)
+    — the page-close/advance path. Taps on the region picker DO work
+    (the user navigated to tz), so the tz page's dead taps are the
+    live question for this round: the missing .listview layouts are
+    the top suspect (the region page's list may be a different widget
+    class that doesn't need a .listview file).
+- **THE REGRESSION (caught by the task's "verify on your first boot"
+  item): the bluez adapter.c crash-loop IS BACK on the current main
+  build.** My first tz-diag boot shows the full pre-fix signature:
+  `ERROR:lib/bluez/adapter.c:194:adapter_get_properties: assertion
+  failed: (ADAPTER_IS(self))` → `Bail out!` → `Aborted` repeating, and
+  the BT uart capture (ttyS0.log) shows brcm_patchram_plus's HCI_Reset
+  retry loop (15× `01 03 0c 00`, zero responses) instead of the 207-VS
+  download. Root cause: **the wifi round's commit ded9cc0 (337+/471-
+  rewrite of hw/mips/x1600.c) REMOVED the BT-side HCI responder code
+  that 2550167 (patch 0123) added** — per-commit x1600bt/hci-responder
+  content: 2550167=15 refs, ded9cc0=0, cd2127c=0, fd0d4c9=0. With no
+  responder hci0 never registers, the player's embedded bluez client
+  assert-loops, and the respawn flood starves the wizard (the v0.84
+  freeze mechanism, back verbatim). Restoration: the BT diff
+  (2550167^..2550167, 378 lines) applies CLEANLY onto the current HEAD
+  (the wifi rewrite kept the surrounding context) — applied and
+  rebuilt in the vendored tree; committed after verification. The
+  exported patch tools/patches/qemu-x1600/0123-x1600-uart0-BT-side-
+  HCI-responder-*.patch remains CORRECT — the vendored tree had
+  drifted from it; this worktree re-converges them.
+
+## v0.89 (2026-10-15, M3 tz round cont., worktree qemu-wizard-tz) — the
+live trace: the tz row tap DELIVERS to evdev and is dropped INSIDE
+litegui; the click handler + its registration table decoded; the freeze
+is NOT the input chain and NOT the idle blank
+
+- **Cycle tooling** (all in /tmp/kilo/tz/): tap.py (QMP abs tap + shot),
+  drive2-6.py (render-wait + timed tap sequences inside the interactive
+  window), shell.py (interactive guest shell over the console telnet —
+  the respawn shell IS ttyS2, and the console capture needs the SAME
+  port, so the shell client doubles as the capture: it logs everything
+  it reads to shell.log). Screendumps x*/y*/z*/p1/q1 + w*. The
+  interactive window is ~23-28 s from the picker render (the idle blank
+  at t=84.14 s guest time, deterministic across boots); all wizard taps
+  must land inside it — the scripted drives do language@+6 s,
+  region@+10 s, tz-row@+13 s.
+- **The QMP abs convention, SETTLED empirically (task item 2):**
+  input-send-event abs values are 0..0x7fff fractions of the 480x800
+  panel (16384,16282 → screen (240,398); 5284 → y=129). The RAW
+  screen-pixel convention is WRONG and lands at the MIRRORED point:
+  raw (240,398) → panel (3,9) → the model's 180° inversion → screen
+  (477,791) — on the language page that is row 6 = **Français** (my
+  drive2 x0 screendump caught the wizard re-rendering in French with
+  the region list "France/Chine/Royaume-Uni/États-Unis" — the raw tap
+  selected French, the follow-up normalized tap then hit
+  Royaume-Uni, and the tz page showed "Londres GMT+00:00" — a full
+  accidental end-to-end demonstration that the raw convention reaches
+  the wrong row). Documented for the manager's harness: ALWAYS
+  0..0x7fff.
+- **The wizard flow (verified working end to end up to the tz page):**
+  language picker (6 rows, English = row 3 at (240,398)) → tapping a
+  row re-lays into the Region page (← Region; United Kingdom / United
+  States / China / Japan at y≈146/270/397/522) → tapping China → the
+  Time zone page (← Time zone; Beijing GMT+08:00 / Urumqi GMT+06:00,
+  two-line rows at y≈70-207/210-340). The language pick persists
+  (/usr/data/region = "lang=en") and the wizard restarts at the
+  language page each boot. Screendumps: w0-w2, x0-x2, y1.
+- **THE FREEZE, PINNED (this is the round's core result):**
+  - the touch chain is ALIVE on the tz page: with the od reader armed
+    on the tz page (drive6), the Beijing row tap delivers the full
+    MT-A evdev stream to /dev/input/event1 (200 B od output: tracking
+    id 0, pressure 0x3f, touch major 9, POSITION_X=0xf0=240 — the
+    v0.79 signature); /proc/interrupts hyn_ts (GPIO 16) counts rise
+    24→36 with I2C1 48→72 across a tz-page tap (drive5). NOT the
+    input chain, NOT the blank (all probes pre-blank).
+  - the player's litegui DROPS the tap: the tz-row click handler
+    (decoded at 0x4d3740) never reaches its first store — the settings
+    blob /usr/data/user.ini is byte-IDENTICAL before/after the tap
+    (md5 + /tmp/u_before cmp: USERINI_SAME), /usr/data/localtime and
+    /data/time_zone stay ABSENT (the applier never ran), and the
+    console prints NOTHING at the tap. The BACK button on the tz page
+    is equally dead (z3 vs z1: only the model-side cursor moved).
+  - the tz click handler 0x4d3740 decoded: s0 = *(item+248) → +124
+    (0x456be0 — the item's owner chain); a virtual call on *(s0+100)
+    with *( *(s0+15212) + 464 ) → s1 (the selected zone string);
+    0x499c40(s0) → s2; **set(130, s1)** (0x416ac0 — the zone id
+    setting the applier 0x469be0 consumes); then *s2 == 0 → advance
+    via 0x433de0(*(s0+216), s0), else 0x435cc0. The handler never
+    runs its store → the drop is at/above the owner-chain gate, i.e.
+    the tz listview's item widgets are not wired into the click
+    dispatch.
+  - the handler REGISTRATION is intact in the firmware data: the
+    listview descriptor table (~110 entries of {path[0x10c],
+    name[0x48], callback block}, stride 0x20c, file 0x3e7b00-0x3f5a1c)
+    carries for BOTH pages symmetric callback blocks — region entry @
+    0x874bc8 (click = 0x4d2640), time_zone entry @ 0x874dd4 (click =
+    0x4d3740), same shared helpers at +0x104/+0x108/+0x14c/+0x150/
+    +0x158/+0x160/+0x16c/+0x170. The stock data is NOT the gap.
+  - the region-page click handler (0x4d2640, decoded) shares the same
+    shape and WORKS: it strcmps the clicked text against setting 129,
+    stores set(129, region) on change, then for multi-zone countries
+    builds the default zone id via the tzlookup parser 0x4138c0 and
+    set(130, default) — i.e. **setting 130 (the zone) is ALREADY
+    STORED at the region tap for China (Asia/Shanghai default)** —
+    the tz page's row tap is only the user's OVERRIDE. That also
+    means the wizard's tz stage could be verified end-to-end even
+    with the row tap parked IF the tz page could be bypassed (not
+    possible without input).
+  - the page creates: region = 0x4961e0(parent, "vg_listview_region",
+    L"region"); tz = 0x4961e0(parent, "vg_listview_time_zone",
+    L"time_zone") — both wide style names (0x410ee0 is a wide-string
+    copy; the earlier 'style_custom' reading was the NEXT string in
+    the pool, 0x784ac4 — corrected). The create return value is
+    IGNORED at both sites; the page renders its rows from the generic
+    list geometry (usr/resource/coordinate/list.ini — UTF-16 INI with
+    name_text/name2_text fields = the two-line cell), which explains
+    the rows rendering while the click wiring is missing.
+  - the tz pages' .listview layout files (z:\layout\theme1\listview\
+    vg_listview_zone_info/select_zone/time_zone/region.listview) are
+    absent from the squashfs — but the SAME absence holds on the real
+    device (same rootfs), and the region page (vg_listview_region,
+    layout also missing) WORKS — so the missing layouts alone do not
+    explain the tz page; the differential is inside 0x4961e0's
+    name/style resolution for vg_listview_time_zone + L"time_zone"
+    (the item-template scan loop over the 115-entry widget-name
+    pattern table at 0x77bf68 is the next decode target). The real
+    device completes this wizard (shipping product), so the gap is a
+    VM-vs-device behavioral difference, not firmware data.
+- **BT responder restoration (v0.88's regression fix) VERIFIED across
+  5 fresh boots:** zero adapter.c assertions, the patchram download
+  completes, bluetoothd powers the adapter (Powered: 1 -> 1 -> 0
+  lifecycle visible on the console), bt_init reaches /tmp/bt_init_ok.
+  The wizard's language/region stages run clean with the crash-loop
+  gone. Vendored-tree commit to follow.
+- **The wizard's tz-row handler decode side-note:** for the manager's
+  harness, the tz page's rows sit at y≈70-207 (row 1) and y≈210-340
+  (row 2) — the picker grid does NOT apply; row 1 center ≈ (240,129)
+  → abs (16384,5284).
+
+- **Round close-out (v0.89):** patch 0124 exported
+  (tools/patches/qemu-x1600/0124-x1600-abs-axis-metadata-on-the-input-handler.patch;
+  verified to apply cleanly onto main's vendored HEAD fd0d4c9);
+  vendored commits 956210a (BT restoration) + dac477a (abs_info);
+  gate PASS ×2 against the re-recorded boot-baseline-v0.89.txt (the
+  recording must start from a PRISTINE image — the first record attempt
+  captured a dirty-image window and failed the verify; sequence:
+  regenerate → record → regenerate → verify). The gate normalize() now
+  canonicalizes the two adjacent-swap print races so the window
+  compares stably run-to-run. Worktree committed through c21ff9c.
+  PARKED (the next tz decode round's target): why litegui drops the
+  tz page's item clicks — decode 0x4961e0's item-template/style path
+  for ("vg_listview_time_zone", L"time_zone") vs the working region
+  pair; the handler chain, the registration table and the live event
+  delivery are all verified good (v0.89 above), so the gap is exactly
+  the create-time wiring between the named listview and its items.
+
 ## v0.89 (2026-10-15, vmstate round, worktree qemu-vmstate-snapshots) —
 QEMU snapshots: VMStateDescription on every custom device — the
 save/restore round-trip works end-to-end and second-scale iteration
