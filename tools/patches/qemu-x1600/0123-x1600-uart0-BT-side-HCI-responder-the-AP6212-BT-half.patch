@@ -1,0 +1,459 @@
+From 91f3215c77d15292107f9c259a7a07a4f2cb7192 Mon Sep 17 00:00:00 2001
+From: matt <matt@local>
+Date: Thu, 15 Oct 2026 12:52:50 +0900
+Subject: [PATCH] =?UTF-8?q?x1600:=20uart0=20BT-side=20HCI=20responder=20?=
+ =?UTF-8?q?=E2=80=94=20the=20AP6212=20BT=20half=20comes=20up,=20hci0=20reg?=
+ =?UTF-8?q?isters,=20the=20bluez=20crash-loop=20ends?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The stock S80_bt_init chain runs brcm_patchram_plus --enable_hci
+--baudrate 3000000 --no2bytes --patchram .../BCM4343A1_*.hcd /dev/ttyS0
+... over uart0, then TIOCSETD(N_HCI) + HCIUARTSETPROTO(H4) binds the
+kernel hci_uart and hci0 appears. With no responder the guest sent
+HCI_Reset every 4 s (the patchram's SIGALRM retry) forever: no hci0, the
+player's embedded bluez client asserted adapter_get_properties and
+crash-looped, freezing the setup wizard at the timezone screen.
+
+Decoded from the stock brcm_patchram_plus binary + the live ttyS0 trace:
+  01 03 0c 00                     HCI_Reset (alarm(4) retry loop)
+  01 18 fc 06 <baud LE> 00 00     VS 0xFC18 baud change (3000000)
+  01 2e fc 00                     VS 0xFC2E download minidriver
+  01 4c fc <len> <data>           VS 0xFC4C write RAM (182 records of
+                                  BCM4343A1_001.002.009.1010.1030.hcd)
+  01 4e fc 04 00 00 00 00         VS 0xFC4E launch RAM
+  01 03 0c 00 / 01 18 fc 06 ...   post-launch reset + final baud change
+  01 01 fc 06 <addr>              VS 0xFC01 write BD_ADDR (remembered)
+  01 27 fc 0c <12 params>         VS 0xFC27 sleep mode
+Then the 4.4 kernel's open-time init surface (empirically pinned):
+  1003 1001 1009 1005 0c23 0c14 0c25 0c38 0c39 0c05 0c16 1002 0c01
+  0c1c 0c47 0c24 — every command must complete with status 0 (the
+  kernel's __hci_req_sync reports the LAST command's status as the sync
+  result, so one Unknown-Command response fails the whole open).
+
+The responder is a chardev (chardev-x1600bt) interposed on uart0: every
+TX byte mirrors into the real serial1 backend (the earlycon capture
+stays intact), H4 command frames get Command Complete events injected
+into the uart RX path paced by qemu_chr_be_can_write (the 16550 recv
+FIFO drops on overflow), and the BD_ADDR written by the patchram is
+reported back through Read_BD_ADDR. The radio itself is not modelled:
+the adapter must merely EXIST so bluez stops crash-looping.
+
+Verified by boot: the download runs (207 VS commands), the kernel init
+completes, hciconfig/bluetoothd power the adapter (Powered: 1 -> 1,
+Alias accepted), hci0 shows in the respawn shell with the patchram's
+BD_ADDR (Bus: UART, Features 0xbc 0x28 0x0c), the adapter.c assertions
+are gone, and the wizard reaches the timezone page alive.
+---
+ hw/mips/x1600.c | 379 +++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 378 insertions(+), 1 deletion(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index e540a36..911d8b2 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -46,6 +46,7 @@
+ #include "ui/input.h"
+ #include "target/mips/cpu.h"
+ #include "qom/object.h"
++#include "chardev/char.h"
+ #include "qemu/error-report.h"
+ #include "qemu/log.h"
+ #include "qemu/memalign.h"
+@@ -3784,6 +3785,371 @@ static void x1600_add_stub(MemoryRegion *sysmem, const char *name,
+     memory_region_add_subregion(sysmem, base, &s->mr);
+ }
+ 
++/* ---- uart0 (ttyS0) BT-side responder --------------------------------
++ * The AP6212 BT half is a UART HCI controller on ttyS0 (uart0): stock
++ * bt_init runs brcm_patchram_plus --enable_hci --baudrate 3000000
++ * --no2bytes --patchram ...BCM4343A1_*.hcd /dev/ttyS0 ... and the chip
++ * then answers plain H4 over the same port (brcm_patchram_plus ends by
++ * TIOCSETD(N_HCI) + HCIUARTSETPROTO(H4), so the kernel's hci_uart binds
++ * the tty and hci0 appears; hciconfig/bluetoothd then drive the standard
++ * HCI command surface).
++ *
++ * Decoded from the stock brcm_patchram_plus binary (v0.84, see
++ * docs/M1-bringup-log.md) and the live ttyS0 trace: with no responder the
++ * guest sends HCI_Reset every 4 s (SIGALRM retry in the patchram's reset
++ * phase) forever and no hci0 ever appears, so the player's embedded bluez
++ * client asserts in adapter_get_properties and crash-loops, freezing the
++ * setup wizard at the timezone screen.
++ *
++ * This chardev sits between the serial core and the (mirrored) real
++ * serial1 backend:
++ *   - every TX byte is mirrored to the upstream backend so the earlycon
++ *     stage (ttyS0 stdout-path) still lands in the capture file;
++ *   - H4 command frames (type 0x01) from userspace (patchram) or from the
++ *     kernel hci_uart get valid H4 Command Complete events injected into
++ *     the uart RX path, paced by qemu_chr_be_can_write so the 16550 recv
++ *     FIFO never overflows;
++ *   - the radio itself is not modelled: the adapter must merely EXIST
++ *     (BD_ADDR + version/features/buffer properties) so bluez stops
++ *     crash-looping; no RF traffic.
++ *
++ * The patchram download surface (decoded byte-exact from the stock
++ * binary + firmware file):
++ *   01 03 0c 00                       HCI_Reset (SIGALRM-retried every 4 s)
++ *   01 18 fc 06 <baud LE> 00 00       VS 0xFC18 baud change (3000000 =
++ *                                     0x002dc6c0, little-endian on wire)
++ *   01 2e fc 00                       VS 0xFC2E download minidriver
++ *   01 4c fc <len> <data>             VS 0xFC4C write RAM (182 records in
++ *                                     BCM4343A1_001.002.009.1010.1030.hcd)
++ *   01 4e fc 04 00 00 00 00           VS 0xFC4E launch RAM
++ *   01 03 0c 00                       post-launch HCI_Reset
++ *   01 18 fc 06 ...                   final baud change
++ *   01 01 fc 06 <addr>                VS 0xFC01 write BD_ADDR (remembered)
++ *   01 27 fc 0c <12 params>           VS 0xFC27 sleep mode (enable_lpm)
++ * Every command gets exactly one Command Complete, which is all both the
++ * patchram (it never validates the opcode) and the kernel hci core need.
++ */
++#define TYPE_CHARDEV_X1600BT "chardev-x1600bt"
++
++typedef struct X1600BtChardev X1600BtChardev;
++DECLARE_INSTANCE_CHECKER(X1600BtChardev, X1600_BT, TYPE_CHARDEV_X1600BT)
++
++struct X1600BtChardev {
++    Chardev parent;
++    CharFrontend mirror;       /* TX mirror into the real serial1 backend */
++    QEMUTimer *ev_timer;       /* pending-event drain (recv FIFO pacing) */
++    /* H4 command reassembly (uart TX arrives one byte per serial core
++     * transmit; the kernel hci_uart may write whole frames per syscall) */
++    int rx_state;              /* 0 idle, 1 header, 2 payload */
++    uint8_t rx_buf[300];       /* 3-byte H4 header + 255-byte max payload */
++    unsigned rx_have, rx_want;
++    /* pending event, flushed into the uart recv FIFO as it drains */
++    uint8_t ev[260];           /* CC max: 7 header + 248 (Read_Local_Name) */
++    unsigned ev_len, ev_off;
++    /* controller state */
++    uint8_t bdaddr[6];
++};
++
++static void x1600_bt_flush(X1600BtChardev *s);
++
++static void x1600_bt_flush_timer(void *opaque)
++{
++    x1600_bt_flush(opaque);
++}
++
++/* Push the pending event into the uart RX path, respecting the serial
++ * core's advertised receive space (serial_receive1 drops on FIFO
++ * overflow). Re-arm a short virtual timer while the guest drains. */
++static void x1600_bt_flush(X1600BtChardev *s)
++{
++    while (s->ev_off < s->ev_len) {
++        int can = qemu_chr_be_can_write(CHARDEV(s));
++        if (can <= 0) {
++            break;
++        }
++        if ((unsigned)can > s->ev_len - s->ev_off) {
++            can = s->ev_len - s->ev_off;
++        }
++        qemu_chr_be_write(CHARDEV(s), &s->ev[s->ev_off], can);
++        s->ev_off += can;
++    }
++    if (s->ev_off < s->ev_len) {
++        timer_mod(s->ev_timer,
++                  qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 20000);
++    }
++}
++
++/* Command Complete with @n return params after the status byte. */
++static void x1600_bt_cc(X1600BtChardev *s, uint16_t opcode, uint8_t status,
++                        const uint8_t *params, unsigned n)
++{
++    if (s->ev_off < s->ev_len) {
++        /* A previous event is still pending; the patchram and the kernel
++         * hci core are strictly request/response, so this cannot happen. */
++        return;
++    }
++    s->ev[0] = 0x04;           /* H4 event packet */
++    s->ev[1] = 0x0e;           /* Command Complete */
++    s->ev[2] = (uint8_t)(4 + n);
++    s->ev[3] = 1;              /* Num_HCI_Command_Packets */
++    s->ev[4] = opcode & 0xff;
++    s->ev[5] = opcode >> 8;
++    s->ev[6] = status;
++    if (n) {
++        memcpy(&s->ev[7], params, n);
++    }
++    s->ev_len = 7 + n;
++    s->ev_off = 0;
++    x1600_bt_flush(s);
++}
++
++static void x1600_bt_cmd(X1600BtChardev *s, uint16_t op, unsigned plen,
++                         const uint8_t *p)
++{
++    switch (op) {
++    case 0x0c03:               /* HCI_Reset */
++        x1600_bt_cc(s, op, 0x00, NULL, 0);
++        break;
++    case 0x1001: {             /* Read_Local_Version_Info */
++        uint8_t v[8] = { 0x06, 0x00, 0x00,   /* hci_ver 4.0, rev 0 */
++                         0x06, 0x0f, 0x00,   /* lmp_ver 4.0, mfr Broadcom */
++                         0x10, 0x10 };       /* lmp_subver (4343A1 1010) */
++        x1600_bt_cc(s, op, 0x00, v, sizeof(v));
++        break;
++    }
++    case 0x1002: {             /* Read_Local_Commands: report no optional
++                                * commands so the kernel init sends only
++                                * the mandatory surface */
++        uint8_t c[64] = { 0 };
++        x1600_bt_cc(s, op, 0x00, c, sizeof(c));
++        break;
++    }
++    case 0x1003: {             /* Read_Local_Features: classic BR/EDR, no LE */
++        uint8_t f[8] = { 0xbc, 0x28, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00 };
++        x1600_bt_cc(s, op, 0x00, f, sizeof(f));
++        break;
++    }
++    case 0x1005: {             /* Read_Buffer_Size */
++        uint8_t b[5] = { 0xfd, 0x03, 0x08,   /* ACL MTU 1021, 8 pkts */
++                         0x40, 0x08 };       /* SCO MTU 64, 8 pkts */
++        x1600_bt_cc(s, op, 0x00, b, sizeof(b));
++        break;
++    }
++    case 0x1009:               /* Read_BD_ADDR */
++        x1600_bt_cc(s, op, 0x00, s->bdaddr, sizeof(s->bdaddr));
++        break;
++    case 0x0c23: {             /* Read_Class_of_Device: the 4.4 kernel sends
++                                * this at the end of the open-time init and
++                                * __hci_req_sync reports the LAST command's
++                                * status as the sync result, so every init
++                                * command must complete with status 0 */
++        uint8_t cod[3] = { 0x0c, 0x02, 0x00 }; /* Phone/Handheld */
++        x1600_bt_cc(s, op, 0x00, cod, sizeof(cod));
++        break;
++    }
++    case 0x0c14: {             /* Read_Local_Name (248-byte name field) */
++        uint8_t name[248] = { 0 };
++        memcpy(name, "HiBy R1", 7);
++        x1600_bt_cc(s, op, 0x00, name, sizeof(name));
++        break;
++    }
++    case 0x0c3b: {             /* Read_Voice_Setting */
++        uint8_t vs[2] = { 0x60, 0x00 };
++        x1600_bt_cc(s, op, 0x00, vs, sizeof(vs));
++        break;
++    }
++    case 0x0c38: {             /* Read_Number_Supported_IAC */
++        uint8_t n[1] = { 0x01 };
++        x1600_bt_cc(s, op, 0x00, n, sizeof(n));
++        break;
++    }
++    case 0x0c39: {             /* Read_Current_IAC_LAP: 1 x GIAC */
++        uint8_t iac[4] = { 0x01, 0x33, 0x8b, 0x9e };
++        x1600_bt_cc(s, op, 0x00, iac, sizeof(iac));
++        break;
++    }
++    case 0x0c16: {             /* Read_Connection_Accept_Timeout (kernel
++                                * uses 0x0c16 in one phase and 0x0c13 in
++                                * another; both read the same 2 bytes) */
++        uint8_t cat[2] = { 0x00, 0x20 };
++        x1600_bt_cc(s, op, 0x00, cat, sizeof(cat));
++        break;
++    }
++    case 0x0c13: {
++        uint8_t cat2[2] = { 0x00, 0x20 };
++        x1600_bt_cc(s, op, 0x00, cat2, sizeof(cat2));
++        break;
++    }
++    case 0x0c47: {             /* Read_Inquiry_Response_TX_Power_Level */
++        uint8_t tp[1] = { 0x00 };
++        x1600_bt_cc(s, op, 0x00, tp, sizeof(tp));
++        break;
++    }
++    case 0x0c25: {             /* Read_Number_of_Broadcast_Retransmissions */
++        uint8_t nb[1] = { 0x00 };
++        x1600_bt_cc(s, op, 0x00, nb, sizeof(nb));
++        break;
++    }
++    case 0x0c17: {             /* Read_Page_Timeout */
++        uint8_t pt[2] = { 0x00, 0x20 };
++        x1600_bt_cc(s, op, 0x00, pt, sizeof(pt));
++        break;
++    }
++    case 0x0c19: {             /* Read_Scan_Enable */
++        uint8_t se[1] = { 0x02 };
++        x1600_bt_cc(s, op, 0x00, se, sizeof(se));
++        break;
++    }
++    case 0x0c1c: {             /* Read_Page_Scan_Activity_Period */
++        uint8_t ps[2] = { 0x00, 0x10 };
++        x1600_bt_cc(s, op, 0x00, ps, sizeof(ps));
++        break;
++    }
++    case 0x0c36: {             /* Read_AFH_Channel_Assessment_Mode */
++        uint8_t am[1] = { 0x00 };
++        x1600_bt_cc(s, op, 0x00, am, sizeof(am));
++        break;
++    }
++    case 0x0c41: {             /* Read_Link_Supervision_Timeout */
++        uint8_t ls[2] = { 0x40, 0x1f };
++        x1600_bt_cc(s, op, 0x00, ls, sizeof(ls));
++        break;
++    }
++    case 0x0c51: {             /* Read_Extended_Inquiry_Response */
++        uint8_t eir[241] = { 0x00 };
++        x1600_bt_cc(s, op, 0x00, eir, sizeof(eir));
++        break;
++    }
++    case 0x0c18: {             /* Write_Page_Timeout (status-only CC; the
++                                * 2 trailing bytes are inert) */
++        uint8_t pt[2] = { 0x00, 0x20 };
++        x1600_bt_cc(s, op, 0x00, pt, sizeof(pt));
++        break;
++    }
++    case 0x0c45: {             /* Read_Inquiry_Mode */
++        uint8_t im[1] = { 0x00 };
++        x1600_bt_cc(s, op, 0x00, im, sizeof(im));
++        break;
++    }
++    /* status-only init writes (Set_Event_Mask, Set_Event_Filter,
++     * Write_Scan_Enable, ...) */
++    case 0x0c01:
++    case 0x0c04:
++    case 0x0c05:
++    case 0x0c1a:
++    case 0x0c1d:
++    case 0x0c52:
++    case 0x0c55:
++    case 0x0c5a:
++    case 0x0c24:
++        x1600_bt_cc(s, op, 0x00, NULL, 0);
++        break;
++    case 0xfc01:               /* VS Write_BD_ADDR: remember for Read_BD_ADDR */
++        if (plen >= 6) {
++            memcpy(s->bdaddr, p, 6);
++        }
++        x1600_bt_cc(s, op, 0x00, NULL, 0);
++        break;
++    /* The rest of the patchram download + setup surface */
++    case 0xfc18:               /* VS baud change */
++    case 0xfc27:               /* VS sleep mode (enable_lpm) */
++    case 0xfc2e:               /* VS download minidriver */
++    case 0xfc4c:               /* VS write RAM block */
++    case 0xfc4e:               /* VS launch RAM */
++    case 0xfc1c:               /* VS SCO PCM config part 1 */
++    case 0xfc1e:               /* VS SCO PCM config part 2 */
++    case 0xfc6d:               /* VS I2S/PCM config */
++        x1600_bt_cc(s, op, 0x00, NULL, 0);
++        break;
++    default:
++        x1600_bt_cc(s, op, 0x01, NULL, 0); /* Unknown HCI Command */
++        break;
++    }
++}
++
++static void x1600_bt_rx_byte(X1600BtChardev *s, uint8_t b)
++{
++    switch (s->rx_state) {
++    case 0:
++        if (b == 0x01) {       /* H4 command packet */
++            s->rx_have = 0;
++            s->rx_state = 1;
++        }
++        break;
++    case 1:
++        s->rx_buf[s->rx_have++] = b;
++        if (s->rx_have == 3) {
++            s->rx_want = 3 + s->rx_buf[2];
++            if (s->rx_want == 3) {
++                x1600_bt_cmd(s, s->rx_buf[0] | (s->rx_buf[1] << 8), 0, NULL);
++                s->rx_state = 0;
++            } else {
++                s->rx_state = 2;
++            }
++        }
++        break;
++    case 2:
++        s->rx_buf[s->rx_have++] = b;
++        if (s->rx_have == s->rx_want) {
++            x1600_bt_cmd(s, s->rx_buf[0] | (s->rx_buf[1] << 8),
++                         s->rx_buf[2], &s->rx_buf[3]);
++            s->rx_state = 0;
++        }
++        break;
++    }
++}
++
++static int x1600_bt_chr_write(Chardev *chr, const uint8_t *buf, int len)
++{
++    X1600BtChardev *s = X1600_BT(chr);
++    int i;
++
++    for (i = 0; i < len; i++) {
++        x1600_bt_rx_byte(s, buf[i]);
++    }
++    /* Mirror the raw stream into the real backend: the earlycon (stock
++     * DTB stdout-path) output must still reach the serial1 capture. */
++    qemu_chr_fe_write(&s->mirror, buf, len);
++    return len;
++}
++
++static bool x1600_bt_chr_open(Chardev *chr, ChardevBackend *backend,
++                              Error **errp)
++{
++    X1600BtChardev *s = X1600_BT(chr);
++
++    s->bdaddr[0] = 0x4c;       /* stock bt_init default MAC prefix */
++    s->bdaddr[1] = 0xbc;
++    s->bdaddr[2] = 0x98;
++    s->bdaddr[3] = 0xb0;
++    s->bdaddr[4] = 0x28;
++    s->bdaddr[5] = 0x00;
++    s->ev_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, x1600_bt_flush_timer, s);
++    return true;
++}
++
++static void x1600_bt_class_init(ObjectClass *oc, const void *data)
++{
++    ChardevClass *cc = CHARDEV_CLASS(oc);
++
++    cc->chr_open = x1600_bt_chr_open;
++    cc->chr_write = x1600_bt_chr_write;
++}
++
++static const TypeInfo x1600_bt_type_info = {
++    .name = TYPE_CHARDEV_X1600BT,
++    .parent = TYPE_CHARDEV,
++    .instance_size = sizeof(X1600BtChardev),
++    .class_init = x1600_bt_class_init,
++};
++
++static void x1600_bt_register_types(void)
++{
++    type_register_static(&x1600_bt_type_info);
++}
++
++type_init(x1600_bt_register_types);
++
+ static void x1600_mach_init(MachineState *ms)
+ {
+     MemoryRegion *sysmem = get_system_memory();
+@@ -3839,8 +4205,19 @@ static void x1600_mach_init(MachineState *ms)
+      * whole buffered log when it registers (CON_PRINTBUFFER), so the
+      * capture still holds the full dmesg. */
+     {
++        /* uart0 (ttyS0) gets the BT-side HCI responder instead of the raw
++         * serial1 backend; the responder mirrors every TX byte into the
++         * real backend so the earlycon capture stays intact. */
++        Chardev *bt_chr = qemu_chardev_new("x1600-bt", TYPE_CHARDEV_X1600BT,
++                                           NULL, NULL, &error_fatal);
++        X1600BtChardev *bt = X1600_BT(bt_chr);
++
++        if (!qemu_chr_fe_init(&bt->mirror, serial_hd(1), &error_fatal)) {
++            error_report("x1600: cannot mirror uart0 into the serial1 backend");
++            exit(1);
++        }
+         SerialMM *uart0 = serial_mm_init(sysmem, X1600_UART0_BASE, 2,
+-                                         uart0_irq, 230400, serial_hd(1),
++                                         uart0_irq, 230400, bt_chr,
+                                          DEVICE_LITTLE_ENDIAN);
+         SerialMM *uart2 = serial_mm_init(sysmem, X1600_UART2_BASE, 2,
+                                          uart2_irq, 230400, serial_hd(0),
+-- 
+2.53.0
+

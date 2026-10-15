@@ -2611,3 +2611,174 @@ and stops at the ChipClkCSR HT-avail handshake
   chip-side response packet + the host-wake GPIO PA08 assert) is the
   next model-side surface once the TX returns 0 — parked here with the
   TX data verified on the wire and the -1 precisely scoped.
+
+## v0.84 (2026-10-15, BT round, worktree qemu-bt-bluez) — the BT bring-up
+decoded and modelled: the bluez crash-loop ends, hci0 registers, the
+wizard reaches the timezone page alive (patch 0123, vendored qemu
+91f3215)
+
+- **The freeze mechanism, decoded end to end.** The timezone-screen
+  freeze was the player aborting itself in a loop: its statically linked
+  bluez GDBus client asserts
+  `ERROR:lib/bluez/adapter.c:194:adapter_get_properties: assertion
+  failed: (ADAPTER_IS(self))` → `Bail out!` → `Aborted`, respawned by
+  the supervisor, crashing again — the respawn flood is what starves the
+  wizard. The root cause is one step below: the AP6212 **BT half** never
+  comes up, so no adapter object ever exists for the player's bluez
+  client. (The WIFI half of the same combo chip is the separate
+  fw-download round parked at v0.83 — untouched here.)
+- **The stock BT bring-up chain (decode of
+  `unpacked/1.6/squashfs-root/etc/init.d/S80_bt_init` →
+  `/usr/bin/bt_init`, a shell script):** dbus-daemon up, rfkill0 on,
+  BD_ADDR generated into `/usr/data/bt_macaddr.txt` (prefix
+  `4C:BC:98:B0`, random 10-bit suffix), firmware selection off the SDIO
+  chipvendor sysfs (AP6212 →
+  `/lib/firmware/bt_bcm/BCM4343A1_001.002.009.1010.1030.hcd`, 46,324
+  bytes), then
+  `brcm_patchram_plus --enable_hci --baudrate 3000000 --no2bytes
+  --patchram <hcd> /dev/ttyS0 --tosleep=50000
+  --use_baudrate_for_download --enable_lpm --bd_addr <addr> &`, sleep 5,
+  `hciconfig hci0 up`, `bluetoothd -E -C`, `hciconfig hci0 reset`,
+  `bt-agent -c NoInputNoOutput`, `bluealsa -p a2dp-source`,
+  `bt-adapter --set Powered On/Alias`, `sdptool add HIBYLINK_SP`,
+  `bt-adapter --set Powered Off`, `/tmp/bt_init_ok`.
+- **brcm_patchram_plus decoded by disassembly** (12.7 KB MIPS32r2,
+  stripped; the classic Broadcom tool rebuilt by HiBy, glibc-linked):
+  state machine = init_uart (cfmakeraw, B115200) → proc_reset →
+  [use_baudrate_for_download && baudrate] proc_baudrate_change →
+  proc_patchram → proc_baudrate_change again → proc_bdaddr →
+  proc_enable_lpm → proc_enable_hci → `sleep(-1)` forever holding the
+  tty. Byte-exact command buffers from .data:
+  - HCI_Reset `01 03 0c 00` — **the SIGALRM retry loop is the live
+    trace's 69 resets**: `signal(SIGALRM, handler)` where the handler
+    re-sends the reset buffer and re-arms `alarm(4)`; the blocking
+    `read_event` is interrupted every 4 s and the command re-fires until
+    a response arrives (the pre-fix ttyS0 capture was exactly 69 ×
+    `01 03 0c 00` then idle).
+  - VS 0xFC18 baud change `01 18 fc 06 <baud LE32> 00 00` — baud
+    3000000 encodes as 0x002dc6c0 little-endian (`c0 c6 2d 00`); the
+    .data baud table maps 115200..4000000 to termios B-constants
+    (B3000000 = 0x100d).
+  - VS 0xFC2E download minidriver `01 2e fc 00`, then the HCD file
+    streamed as raw H4 command records — the file format is
+    `[op_lo op_hi plen payload...]` per record with the H4 type byte
+    prepended by the tool (`li v0,1` + `sb` in the read delay slot):
+    **181 × 0xFC4C write-RAM records (70/255×178/59 bytes) + 1 × 0xFC4E
+    launch record (plen 4)**; `--no2bytes` skips the 2-byte
+    confirmation read, `--tosleep=50000` usleeps before streaming.
+  - post-launch: the tool re-arms B115200 (use_baudrate_for_download
+    path: the relaunched chip drops back to the default UART speed),
+    tail-calls proc_reset (another HCI_Reset, alarm-retried), then the
+    final 0xFC18 baud change, VS 0xFC01 write-BD_ADDR
+    (`01 01 fc 06 <6 bytes straight order>`), VS 0xFC27 sleep mode
+    `01 27 fc 0c 01 01 01 01 01 01 01 00 00 00 00 00`.
+  - `--enable_hci` = `ioctl(TIOCSETD, N_HCI=15)` +
+    `ioctl(0x800455c8 /* HCIUARTSETPROTO */, HCI_UART_H4=0)`; the
+    kernel's hci_uart then owns the tty and hci0 appears (the stock
+    vmlinux has n_hci/hci_uart built in — strings-verified).
+- **The model: a BT-side HCI responder on uart0 (patch 0123, vendored
+  qemu 91f3215).** A `chardev-x1600bt` Chardev interposed between the
+  serial core and the real serial1 backend: every TX byte is mirrored
+  into the upstream backend so the earlycon (stock DTB stdout-path on
+  ttyS0) still lands in the capture file; H4 command frames (from the
+  patchram before the ldisc, from the kernel hci_uart after) are
+  answered with H4 Command Complete events injected via
+  `qemu_chr_be_write`, **paced by `qemu_chr_be_can_write`** because
+  `serial_receive1` drops on recv-FIFO overflow (the largest event,
+  Read_Local_Name's CC, is 7+248 bytes vs a 16-byte FIFO) with a
+  20 µs QEMU_CLOCK_VIRTUAL re-arm timer for the drain. The patchram
+  surface (all commands above incl. 0xFC2E/0xFC4C/0xFC4E) gets status-0
+  CCs; VS 0xFC01's address is **remembered and reported back through
+  Read_BD_ADDR**, so the kernel shows exactly the BD_ADDR bt_init
+  generated. The radio itself is not modelled — no RF traffic, the
+  adapter must merely exist. TEMP-BT-DIAG prints were used during the
+  bring-up and stripped from the commit.
+- **The kernel's open-time HCI init surface, pinned empirically** (the
+  4.4.94 stock kernel's own sequence, one command at a time through
+  hci_uart): `1003` Read_Local_Features → `1001` Read_Local_Version →
+  `1009` Read_BD_ADDR → `1005` Read_Buffer_Size → `0c23`
+  Read_Class_of_Device → `0c14` Read_Local_Name → `0c25`
+  Read_Num_Broadcast_Retransmissions → `0c38`/`0c39` IAC reads →
+  `0c05` Set_Event_Filter → `0c16`/`0c13` Connection_Accept_Timeout
+  reads → `1002` Read_Local_Commands → `0c01` Set_Event_Mask → `0c1c`
+  Page_Scan_Activity_Period → `0c47` Inq_Response_TX_Power → `0c24`
+  status writes — then power transitions (another 0x0c03 Reset per
+  Powered On/Off). **Every one of them must complete with status 0x00:
+  4.4's `__hci_req_sync` reports the LAST command's status as the sync
+  result, and `bt_to_errno(0x01)` turns one Unknown-Command response
+  into the whole HCIDEVUP failing** — that was the mid-bring-up
+  "Can't init device hci0: Invalid request code (54)" stage (the
+  guest glibc strerror for the EBADRQC-family errno on MIPS). Features
+  answer `0xbc 0x28 0x0c 00...` (classic BR/EDR, no LE — features[6]
+  bit 6 clear keeps the LE init out), buffer size ACL MTU 1021/8,
+  SCO 64/8, class `0c 02 00`, name "HiBy R1" (248-byte field),
+  Read_Local_Commands all-zero (the kernel then sends no bitmap-gated
+  extras).
+- **Verified by boot (a) crash-loop stops:** with the responder, the
+  download completes (207 VS commands on the wire, matching the 182
+  HCD records + the reset/baud/minidriver/launch set), the kernel init
+  runs to completion (235 controller commands, zero unknowns),
+  `hciconfig hci0 up/reset` succeed, bluetoothd powers the adapter
+  (`Powered: 1 -> 1`, `Alias: BlueZ 5.54 -> HiBy R1` accepted,
+  `sdptool add HIBYLINK_SP` registers) and bt_init ends
+  (`Powered: 1 -> 0`, `/tmp/bt_init_ok`) — and the console has **zero
+  adapter.c assertions** across every boot since the fix landed (the
+  pre-fix console showed the abort every ~2 s).
+- **Verified (c) hci0 exists, from the respawn shell** (ttyS2 console
+  = `console::respawn:-/bin/sh`, reachable via
+  `-serial telnet:...,server,nowait`): `hciconfig -a` prints
+  `hci0: Type: Primary Bus: UART, BD Address: 4C:BC:98:B0:2A:49, ACL
+  MTU 1021:2112, Features 0xbc 0x28 0x0c 00...` (the BD_ADDR is the
+  one bt_init generated and the responder remembered),
+  `/sys/class/bluetooth/hci0` exists, `hcitool dev` lists it; the
+  adapter ends DOWN because stock bt_init powers it off last —
+  faithful to the real device (the player powers it on demand).
+- **Verified (d) tools/x1600-boot-test.sh PASS** — twice (pre-strip and
+  post-strip builds), 297 distinct messages / 158 structural lines
+  against boot-baseline-v0.75.txt. **Operational note recorded: the
+  SFC/NAND image is the guest's persistence layer — every boot dirties
+  `nand-r1.bin` in the qemu process's cwd (the UBIFS journal replay on
+  the next boot changes the window: "UBIFS recovery needed/mounted"
+  instead of the fresh-format marker "default file-system created"),
+  and the gate then fails on the missing marker.** The worktree gate
+  runs regenerated the pristine image first with
+  `tools/x1600/make_nand_image.py unpacked/1.6/nand-r1.bin
+  unpacked/1.6/xImage unpacked/1.6/rootfs.squashfs`; the regenerated
+  md5 differs from the v0.75 baseline header's (the generator inputs
+  evolved) but the fresh-format window matches byte-for-byte after
+  normalization. The shared demo VM boots with cwd = the main repo, so
+  its boots likewise drift MAIN's nand-r1.bin.
+- **Verified (b) the wizard, visually (VNC + QMP taps, patch 0122's
+  crosshair confirms the pointer):** on the BT-fixed build the wizard
+  is alive and ADVANCES — language picker renders, tapping English
+  re-lays the page into the Region picker (United Kingdom / United
+  States / China / Japan), tapping China advances into the
+  **Time zone page — the exact former freeze point — rendering rows
+  Beijing GMT+08:00 / Urumqi GMT+06:00** with zero assertions in the
+  console. Screendumps: /tmp/kilo/bt/v_before.png (language),
+  v_after_lang.png (Region), v_after_region.png (Time zone).
+- **Residual, parked OUTSIDE this lane with evidence:** the tz page's
+  own row tap does not advance. Reproduced 4× (two VMs, two sessions),
+  including pre-blank; the console stays quiet (0 assertions), the
+  player's threads look healthy (`system_main_thr` and `lg_ial` in
+  `poll_schedule_timeout`, the 33 ms poll loop running). Guest-side
+  diagnosis from the respawn shell: full-process strace shows the
+  player reads NOTHING but its timerfd during tz-page taps (`od -x
+  /dev/input/event1` reads 0 bytes — the kernel hyn_ts chain delivers
+  no events at that point), the touch died between the region tap and
+  the tz tap (~2 s), one `hyn_ts_suspend: set TP to sleep mode fail,
+  ret=-145` + `i2c1 write timeout` in dmesg (the idle/blank touch
+  suspend path), /usr/data is writable (23 MB free, WRITEOK), and the
+  player holds event0-3 open (fd 6 + 22 both event1). This is the
+  v0.78 blanked-state/input wall territory (input + display lanes),
+  not the BT/bluez path — the crash-loop this round was after is gone
+  and the wizard's language→region→tz progression is BT-independent
+  evidence the GUI mainloop is unstarved. The v0.78/0.79 established
+  escape (stock 5-min power-save reboot, tap inside the fresh window)
+  still applies; the tz-row handler needs the input lane's attention.
+- **Demo feed:** the hiby-live-demo VM was rebooted onto the BT-fixed
+  build (persistent bgp, VNC 127.0.0.1:0, QMP/monitor sockets under
+  /tmp/kilo/livedisp/, console now tee'd via a socket chardev
+  `logfile=` to /tmp/kilo/livedisp/console.log with the respawn shell
+  on telnet 127.0.0.1:4448). The feed boots to the wizard with the
+  BT chain fully up and no crash-loop.
