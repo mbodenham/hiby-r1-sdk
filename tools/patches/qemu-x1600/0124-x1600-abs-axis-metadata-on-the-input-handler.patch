@@ -1,0 +1,128 @@
+From dac477a81bd98f1adb599be655a9da9a2b1f35b0 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Thu, 15 Oct 2026 14:14:19 +0900
+Subject: [PATCH] =?UTF-8?q?x1600:=20abs-axis=20metadata=20on=20the=20input?=
+ =?UTF-8?q?=20handler=20=E2=80=94=20QMP=20abs=20values=20map=20predictably?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+QemuInputHandler gains an optional per-axis abs_info table; QMP
+input-send-event abs values are scaled from the QMP convention
+[0, 0x7fff] into the registered [min, max] before the handler's event
+callback runs (handlers without abs_info keep the raw passthrough).
+
+The x1600-r1-input handler registers x/y 0..0x7fff, i.e. the identity:
+QMP abs v maps to panel v*dim>>15 at the cst8xx model — the convention
+verified live in v0.79 and v0.89 (16384,16282 = screen (240,398); raw
+screen pixels are WRONG: raw (240,398) lands at screen (477,791) via
+the 180-deg panel inversion and selects the wrong row). The metadata
+makes that convention explicit for the manager's test harness and any
+future caller.
+
+Verified on the tz-diag VM: language -> region -> time zone page
+reached in-window with the identity mapping unchanged.
+---
+ hw/mips/x1600.c    | 18 ++++++++++++++++++
+ include/ui/input.h | 11 +++++++++++
+ ui/input.c         | 21 +++++++++++++++++++--
+ 3 files changed, 48 insertions(+), 2 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 81d9b0c..828876b 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -3186,12 +3186,30 @@ static void x1600_input_sync(DeviceState *dev)
+ {
+ }
+ 
++/* QMP input-send-event abs convention: values are 0..0x7fff fractions
++ * of the panel (v*dim>>15 at the cst8xx model), verified live (v0.79,
++ * v0.89). The metadata makes the axis ranges explicit so QMP callers
++ * can rely on the mapping; min/max 0..0x7fff keeps the identity. */
++static const QemuInputAbsInfo x1600_abs_info_x = {
++    .min = 0,
++    .max = 0x7fff,
++};
++
++static const QemuInputAbsInfo x1600_abs_info_y = {
++    .min = 0,
++    .max = 0x7fff,
++};
++
+ static const QemuInputHandler x1600_input_handler = {
+     .name  = "x1600-r1-input",
+     .mask  = INPUT_EVENT_MASK_KEY | INPUT_EVENT_MASK_BTN |
+              INPUT_EVENT_MASK_ABS,
+     .event = x1600_input_event,
+     .sync  = x1600_input_sync,
++    .abs_info = {
++        [INPUT_AXIS_X] = &x1600_abs_info_x,
++        [INPUT_AXIS_Y] = &x1600_abs_info_y,
++    },
+ };
+ 
+ static QemuInputHandlerState *x1600_input_handler_state;
+diff --git a/include/ui/input.h b/include/ui/input.h
+index a1560ca..2ad0705 100644
+--- a/include/ui/input.h
++++ b/include/ui/input.h
+@@ -38,11 +38,22 @@ typedef void (*QemuInputHandlerEvent)(DeviceState *dev, QemuConsole *src,
+                                       QemuInputEvent *evt);
+ typedef void (*QemuInputHandlerSync)(DeviceState *dev);
+ 
++/* Absolute-axis range metadata (optional). When a handler registers
++ * abs_info[axis], QMP input-send-event abs values are scaled from the
++ * QMP convention [INPUT_EVENT_ABS_MIN, INPUT_EVENT_ABS_MAX] into
++ * [min, max] before reaching the handler's event callback. Handlers
++ * without abs_info receive the raw QMP value (0..0x7fff). */
++typedef struct QemuInputAbsInfo {
++    int min;
++    int max;
++} QemuInputAbsInfo;
++
+ struct QemuInputHandler {
+     const char             *name;
+     uint32_t               mask;
+     QemuInputHandlerEvent  event;
+     QemuInputHandlerSync   sync;
++    const QemuInputAbsInfo *abs_info[INPUT_AXIS__MAX];
+ };
+ 
+ G_GNUC_WARN_UNUSED_RESULT
+diff --git a/ui/input.c b/ui/input.c
+index b82622c..8dd619d 100644
+--- a/ui/input.c
++++ b/ui/input.c
+@@ -208,9 +208,26 @@ void qmp_input_send_event(const char *device,
+             evt.rel = *qapi->u.rel.data;
+             break;
+ 
+-        case INPUT_EVENT_KIND_ABS:
+-            evt.abs = *qapi->u.abs.data;
++        case INPUT_EVENT_KIND_ABS: {
++            QemuInputHandlerState *abs_hs;
++            const QemuInputAbsInfo *abs_ai = NULL;
++            int abs_v = qapi->u.abs.data->value;
++
++            abs_hs = qemu_input_find_handler(1 << qapi->type, con);
++            if (abs_hs) {
++                abs_ai = abs_hs->handler->abs_info[
++                    qapi->u.abs.data->axis];
++            }
++            if (abs_ai) {
++                abs_v = qemu_input_scale_axis(abs_v,
++                                              INPUT_EVENT_ABS_MIN,
++                                              INPUT_EVENT_ABS_MAX,
++                                              abs_ai->min, abs_ai->max);
++            }
++            evt.abs.axis = qapi->u.abs.data->axis;
++            evt.abs.value = abs_v;
+             break;
++        }
+ 
+         case INPUT_EVENT_KIND_MTT:
+             evt.mtt = *qapi->u.mtt.data;
+-- 
+2.53.0
+
