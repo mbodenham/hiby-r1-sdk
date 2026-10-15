@@ -821,3 +821,54 @@ qemu-vmstate-snapshots, patch 0124)
   post-50 s console shows the documented bluez adapter.c
   crash-loop). The CS43131 codec and I2C0/2 slaves are plain stubs
   (the device list in the round brief was aspirational on those).
+- **Status (M3 tz-dispatch round, v0.90, worktree qemu-tz-dispatch):**
+  the parked 0x4961e0 decode was completed and the freeze picture
+  materially revised; the tz drop itself is now cleanly isolated but
+  still unlocalized. Deliverables this round:
+  - **A SECOND, INDEPENDENT FREEZE DECODED AND FIXED (ops-level):** the
+    shared nand image's ubi1 volume can carry a corrupt UBIFS node; the
+    first background commit (~30 s after mount) hits it, UBIFS switches
+    READ-ONLY, and every /usr/data write then fails EROFS — after which
+    ALL wizard-page input dies GUI-wide (proven: the region page, alive
+    pre-flip, is dead post-flip). The tz page was simply where prior
+    rounds' taps landed after the +30 s commit. The worktree image had
+    diverged from main's via snapshot-restore misuse (restoring an older
+    snapshot over a nand file carrying newer UBIFS writes corrupts the
+    journal — the recipe's QUIET-moment warning is exactly this);
+    re-provisioned from main's clean copy (data fix only, zero
+    model/firmware change). Ops rule for the next rounds: re-save the
+    snapshot after any write-heavy pass before reusing it as a restore
+    base.
+  - **The parked static decode completed:** lg_listview_create
+    (0x4961e0) fully mapped (the 115-entry pattern table at 0x77d150,
+    the item-template lookup "vg_listview_item_%s", the error prints
+    that never fire); the wizard's shared create dispatcher 0x4d2fc0
+    (screen keys "region"/"zone" → symmetric creates); the descriptor
+    table layout (0x867b00, stride 0x20c, click at +0x154); the litegui
+    class records ("lg_viewgroup", ctor 0x457800) with the runtime
+    callback block at rec+0x150..0x174 and the page click at rec+0x168;
+    the name uniquifier 0x430f80 (start counter 150 at 0x4c0d6c/0x4c15a4)
+    and the tz page's ##151-suffixed duplicate back-bar names.
+  - **The tz drop re-proven on a CLEAN image:** with the RO-flip removed
+    (clean image, no UBIFS errors), language → region works and the tz
+    row tap STILL does not advance (Beijing and the observable
+    Urumqi-store test both dead; a 10-point full-screen hold-tap sweep
+    shows zero pixel reaction; keys dead too). The runtime memsave shows
+    the tz viewgroup fully wired (click slot 0x4d3740 at +0x168) — the
+    drop is upstream in litegui's event routing, exactly the parked
+    v0.89 conclusion, now proven independent of the UBIFS state.
+  - **Parked leads (next decode targets):** the listview tap→select
+    state object (v0.77's 0x4335c0 mode-6 gates state+284/288/324, the
+    select callbacks at state+664/668 — the state object is NOT the
+    inner widget; find and diff it per page); the generated per-page
+    heap thunks cross-linked at viewgroup+0x7c / inner+228 (code not in
+    the binary — find their generator); the ##151 duplicate-name
+    routing question; the region-list scroll anomaly (a boot entered
+    with the region list scrolled two rows).
+  - **Gate:** x1600-boot-test.sh did NOT pass this round — not from a
+    code change (zero vendored edits) but from the gate's terminal
+    marker being the first-boot UBIFS-format line, which cannot print
+    on the current main-line image (the userdata is already formatted;
+    the demo VM's live file). See the M1 log v0.90 gate note for the
+    three runs and the condition for a real PASS (a pristine
+    as-extracted userdata volume, or a deliberate re-baseline).

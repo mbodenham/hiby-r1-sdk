@@ -3451,3 +3451,195 @@ re-land the BT responder as its own round.
 (committed in the vendored qemu; exported as 0124). The gate-tool
 normalizer fixes are in tools/x1600-boot-test.sh. The recipe script
 is tools/x1600-snapshot-vm.sh.
+
+## v0.90 (2026-10-15, M3 tz-dispatch round cont., worktree qemu-tz-dispatch) — the tz "event drop" was the UBIFS read-only flip, not litegui
+
+Continuation of the parked v0.88/v0.89 decode (the tz screen's row tap
+dead while language/region respond). This round re-opened both the
+static decode and the live probing, and the freeze mechanism turned out
+to be NONE of the parked candidates.
+
+Static decode completed (player binary, all vaddr = file+0x400000):
+
+- 0x4961e0 (lg_listview_create) fully mapped: 115-entry name-pattern
+  table copied from 0x77d150 (60 B entries, upper-case names, flags
+  identical for VG_LISTVIEW_REGION (#110) and VG_LISTVIEW_TIME_ZONE
+  (#111)); the create sprintfs "vg_listview_item_%s" and fetches an
+  item-template imageview from the parent registry (0x485b40); missing
+  template prints "error!!! ln:.. fn:set_listview_node" via 0x465fa0 —
+  never seen on any console, so the template lookup succeeds for both
+  pages. Widget+232 = template, +76/+80/+92/+96 = row geometry.
+- The wizard's shared create dispatcher 0x4d2fc0: screen key "region" →
+  0x4961e0(parent,"vg_listview_region",L"region"); key "zone" →
+  0x4961e0(parent,"vg_listview_time_zone",L"time_zone"). Symmetric.
+- The descriptor table (110 entries, stride 0x20c, .data 0x867b00..)
+  carries per-listview {path[0x10c], name[0x48], callbacks[0xb8]} with
+  the click at +0x154 (region 0x4d2640, tz 0x4d3740) — matches v0.89.
+- The litegui class records ("lg_viewgroup", head 0x761bd4/0x75992c,
+  ctor 0x457800 at rec+0x18) hold the standard callback block at
+  rec+0x150..0x174 with the page click at rec+0x168.
+- The name-uniquifier 0x430f80 (activity manager callers 0x4c0d6c /
+  0x4c15a4 with start counter 150, 0x4c6f70 with 300): on a name
+  collision it appends "##<max+1>" — the tz page's whole sub-back bar
+  is registered as vg_sub_back_hiby##151, sub_back_iv_switch##151 etc.
+  because the region page's bar already held the plain names. Cosmetic,
+  not the freeze.
+
+Runtime probes this round (snapshot recipe + HMP pmemsave 64 MiB dumps
++ a telnet-console qemu for the guest shell):
+
+- The tz viewgroup IS fully wired at runtime: click slot = 0x4d3740 at
+  +0x168, geometry, template resolved. Taps (any position, in-hold
+  screendumps), keys (Down/Enter via the 0115 mapping) — NOTHING reacts
+  on the tz page. No pressed-state pixel change anywhere in a
+  full-screen sweep.
+- THE DECISIVE TEST: on a single-pass boot, wait past guest t+30 s ON
+  THE REGION PAGE and tap China — the region page is equally dead
+  (pf-after-china.png). There is no tz-specific drop; input dies
+  GUI-wide on the wizard pages after t+30 s.
+
+Root cause chain (guest dmesg, telnet console):
+
+  [   30.088211] UBIFS error (ubi1:0): ubifs_check_node: bad CRC:
+      calculated 0xea61cfe2, read 0x1400480
+  [   30.089768] UBIFS error: bad node at LEB 22:22528 (direntry,
+      inum 92, nlen 8, sqnum 888)
+  [   30.099742] UBIFS warning: ubifs_ro_mode: switched to read-only
+      mode, error -135
+  [   57.235] make_reservation: cannot reserve ... error -30 (EROFS)
+
+The shared nand-r1.bin's ubi1 volume carried a corrupt direntry; the
+first UBIFS background commit (~30 s after mount, the default commit
+interval) reads it, flips ubi1 read-only, and every /usr/data write
+from then on fails EROFS. The litegui/settings layer gates wizard-page
+input on the settings write path, so the wizard pages stop responding
+entirely. The tz screen is simply where every round's taps landed after
+t+30 s — language/region taps worked only because they happened BEFORE
+the commit. The player itself is sleeping (top: 83% idle), so it is a
+gate, not a hang.
+
+Image hygiene: my worktree's nand-r1.bin had diverged from main's
+(md5 2068a6c2... vs d8d10c2f...) — the multi-restore snapshot sessions
+wrote UBIFS through restores and produced the bad node. The worktree
+copy was re-provisioned from main's (cp -f, a data fix only; no model
+or firmware change; the running demo VM's file was never touched).
+picker.bin snapshots made against the dirty image were deleted. The
+vmstate round-trip warning in tools/x1600-snapshot-vm.sh ("save only
+from a QUIET moment") is exactly this failure mode: restoring an older
+snapshot while the shared nand file carries newer UBIFS writes leaves
+the journal inconsistent and corrupts the image.
+
+Next: re-run the wizard end-to-end on the clean image.
+
+### v0.90 addendum (same round, later) — clean image re-test: the tz drop is REAL and separate
+
+Re-provisioned the worktree nand image from main's (clean, md5
+d8d10c2f...) and re-ran the wizard on a fresh boot + a fresh
+picker2.bin snapshot:
+
+- The clean image shows NO UBIFS bad-CRC / read-only flip (dmesg clean
+  past the 30 s commit). The RO-flip freeze from the first half of this
+  round is gone.
+- language → region → tz drives fine (region tap works).
+- The tz row tap (Beijing, (240,129)) STILL does not advance; a 10-point
+  hold-tap sweep with in-hold screendumps shows NO reaction anywhere on
+  the tz page — while the region page responded seconds earlier on the
+  same boot. The tz deadness is therefore INDEPENDENT of the UBIFS
+  state: a genuine tz-page-specific input drop, on a clean image,
+  pre-flip, pre-suspend.
+- The clean-boot memsave (memD-tz-clean.bin) confirms BOTH viewgroups
+  are wired: vg_listview_time_zone click slot +0x168 = 0x4d3740,
+  vg_listview_region = 0x4d2640 — identical to the dirty-image dumps.
+  The wiring is not the problem; the drop is upstream in the routing.
+- Timing notes: the TP suspends ~30 s after the GUI goes idle
+  (hyn_ts_suspend, ~58 s on a fresh boot); fresh-boot interactive
+  windows are SHORT (the picker renders ~+45 s). The snapshot-restore
+  flow starts the guest clock at the snapshot's uptime — driving
+  windows after a resume are correspondingly tight.
+
+### v0.90 final — the round's conclusions and the parked leads
+
+Definitive experiment (clean image, single pass, stepwise dumps): English
+→ region page (UK/US/China/Japan verified by screendump) → China tap
+ADVANCES to the tz page (Beijing GMT+08:00 / Urumqi GMT+06:00) → the
+URUMQI row tap (240,270, verified on-row by the cursor in the dump) does
+NOT advance. So on a clean image, pre-RO-flip, the tz row tap is dead
+while the region row tap one screen earlier works. The parked v0.89
+"litegui-level event drop at the tz screen" is CONFIRMED as a real,
+tz-specific drop — but this round localized it no further than the
+object level.
+
+What this round pinned down about the drop:
+
+- NOT the create-time wiring: the tz viewgroup's callback block and
+  click slot (+0x168 = 0x4d3740) are present at runtime on both dirty
+  and clean boots; the item template resolves (+232); row geometry
+  (row 126 px, width 480) is populated.
+- NOT the settings store: the tz tap's store would be a same-value
+  write for the China case (Asia/Shanghai is already stored by the
+  region tap), so user.ini-identical evidence is weak; the Urumqi test
+  (a would-be different value) still showed no advance and no
+  observable change.
+- NOT coordinates: a 10-point full-screen hold-tap sweep with in-hold
+  screendumps produces zero pixel changes on the tz page — no widget
+  receives any event, while the region page responds seconds earlier
+  on the same boot.
+- NOT keys either (Down/Enter dead on the tz page; their behavior on
+  the region page was not separately established).
+
+Parked leads for the next round (addresses decoded this round):
+
+- The listview tap→select path from v0.77: hglview handler type 10 →
+  0x4335c0(list, event, 6); the scroll-settle gate |state+324 -
+  state+288| != 0 → no tap; the 5-px gate |state+284| < 5; item
+  hit-test 0x4326e0; select callbacks at state+664/668; the press
+  position at state+292/296 (case-4/8 handler 0x434314). The "state"
+  object is NOT the inner widget (those widget offsets are zero in all
+  dumps) — finding the actual list-state object per page and diffing
+  region vs tz is the highest-value next step.
+- The tz page's sub-back bar widgets register under ##151-suffixed
+  names (the uniquifier 0x430f80, start counter 150 at the activity
+  manager call sites 0x4c0d6c/0x4c15a4) because the region page's bar
+  holds the plain names — a real structural difference of the tz page;
+  whether the routing consults those names is unresolved.
+- The per-page heap "thunks" cross-linked at viewgroup +0x7c and inner
+  widget +228 (tz: 0x12f1b8c in the dirty dumps, 0xf19b8c clean) are
+  generated/copied code not present in the binary — identifying their
+  generator would explain the per-page handler binding.
+- The region list scroll anomaly (one boot had the region list scrolled
+  by two rows on entry) suggests a shared/persisted list scroll state —
+  possibly related to the list-state object above.
+
+Image/ops hygiene for the next round: the nand image in this worktree
+is main's clean copy (md5 d8d10c2f5d26069f2dc57402039cc1b6); picker2.bin
+is the only valid snapshot (saved pre-wizard, quiet). Restoring an
+OLDER snapshot after writes have flowed to the shared nand file
+corrupts ubi1 (the v0.90 first-half freeze). After any write-heavy
+pass, re-save the snapshot BEFORE reusing it as a restore base.
+
+### v0.90 gate note — x1600-boot-test.sh result and the image-state dependency
+
+Three gate runs against docs/traces/boot-baseline-v0.89.txt:
+
+1. On the accidentally-dirtied worktree image (post-wizard writes): the
+   boot COMPLETED and the gate diffed, FAILing on first-boot UBIFS
+   format trace lines ("Erasing 128 Kibyte ..." + a UBIFS sb hexdump)
+   that the re-format of the corrupted userdata produced — a data-state
+   artifact, not a code change.
+2/3. On the clean re-provisioned image (md5 identical to main's): the
+   boot runs to the player but the gate's terminal marker never prints:
+   MARKER='UBIFS (ubi1:0): default file-system created' only appears on
+   a boot that FORMATS userdata. The current main-line image carries a
+   formatted userdata (it is the live demo VM's file), so the first-boot
+   format path is legitimately absent and the gate reports "boot window
+   incomplete". The v0.89 baseline was recorded on an image whose
+   userdata still needed the first-boot format.
+
+Conclusion: this round introduced ZERO vendored/model changes (no qemu
+source edits, no patch exports), so the boot code path is unchanged by
+construction; the gate's PASS condition depends on the as-shipped
+unformatted-userdata image state, which neither main's tree nor this
+worktree currently holds (the demo VM's live file is the shared state).
+The worktree image was left as main's clean copy (d8d10c2f). The next
+round that needs a gate PASS should run it against a pristine
+as-extracted v1.6 userdata volume (or re-baseline deliberately).
