@@ -3768,3 +3768,124 @@ invisible blank state in the VNC feed.**
   (git status clean; no 0128 patch — nothing changed); unpacked/1.6/
   nand-r1.bin left as the gate's pristine post-gate state (first-boot
   formatted by the gate run); docs committed on qemu-tap-regress.
+
+## v0.92 (2026-10-16, M3 blank-visible round, worktree qemu-blank-visible) — the FBIOBLANK(4) blank is now VISIBLE in the feed: the panel-dark state decoded from the register trail and rendered on the LCD surface
+
+The v0.91 recommended lever, implemented: the guest's 30 s idle-blank
+darkens the panel and kills the touch on the real device, but the model's
+display surface kept showing the last bright frame — the user could not
+tell the picker was dead. This round decodes the blank state from a live
+register trail and renders it.
+
+- **Worktree ops:** one-time setup per convention (vendors 777M +
+  unpacked 263M cp -a from main; the demo VM was NOT running and the
+  injector was NOT running at copy time — main's live nand-r1.bin moved
+  under the copy (f3ebcded vs 7c7cb788 afterwards), so every round boot
+  used a FRESHLY REGENERATED pristine image (make_nand_image.py,
+  ae41e974e78aab2730774d05c9cbf37c) instead of the copied one; all VMs
+  this round were this worktree's own processes (VNC 127.0.0.1:1/:2,
+  sockets under /tmp/kilo/blank/vm/, telnet console 4445 per the
+  respawn-shell recipe), the demo VM never touched.
+- **The blank-state decode (TEMP-BLANK-DIAG trail, stripped before
+  commit; the trail was in /tmp/kilo/blank/vm/qemu-diag.err):** the
+  idle blank at guest t=55-58 s (i2c1 write timeout + hyn_ts_suspend,
+  the FBIOBLANK(4) wall) reaches the LCD block as EXACTLY ONE write
+  pair: `+0x2000 <- 0x10` (disable_fb, soc_fb.ko 0xeb0 — the engine
+  stop request; the model latches STATE bit7 and raises the stop-done
+  IRQ per patch 0114) then `+0x2008 <- 0x80` (jzfb_irq_handler's W1C
+  ack of the stop-done bit). The whole boot trail holds exactly one
+  +0x2000=0x10 — at the blank; probe/pan/frames never write it. The
+  fb_blank(0) unblank (`echo 0 > /sys/class/graphics/fb0/blank`) writes
+  the panel-on GROUP `+0x200c <- 0x20180, +0x2014 <- 0x30, +0x8000 <-
+  0x61` — the same sequence the probe's display-on path writes at boot
+  init. **The backlight brightness surface does NOT touch the PWM
+  block**: pwm_backlight.ko's update_status drives brightness!=0
+  through pwm2_set_level and brightness==0 through
+  gpiod_direction_output_raw (reloc-disassembled: the 0xa8 reloc is
+  gpiod_direction_output_raw; the pwm_gpio module param + the
+  "failed to request %s" string) — and live probes (`echo 0`/`echo 60`
+  on /sys/class/backlight/backlight_pwm0/brightness; brightness read
+  0 post-blank, max 101) produced ZERO writes to 0x134c0000. The
+  periodic `+0x80/+0x84` PWM writes (0x19c3b, 0x1ea5f, and
+  timestamp-like values) are the leds_pwm/TCU tick, unrelated to the
+  backlight. So "panel dark" is modeled from the LCD registers alone;
+  the PWM block stays the plain 0104-era stub.
+- **The model (vendored commit 70ab29a, exported as patch 0129):** a
+  `blanked` latch on X1600Lcd: SET by the +0x2000=0x10 write (with an
+  immediate dark draw if a backend polls); CLEARED by the +0x200c
+  panel-on write OR by any +0x1004 frame kick. The kick-clear rule
+  covers the brightness-restore wake shape (the GUI's wake ends with
+  frames flowing again) and cannot false-positive during the blank:
+  verified on the trail, the blanked GUI never kicks (no +0x1004
+  between the stop and the panel-on writes). While blanked,
+  x1600_lcd_fb_draw zeroes the 768000 B fb_copy and skips the
+  touch-cursor overlay (nothing is visible on a dark panel — the
+  overlay would defeat the "the panel is dark" signal), then pushes the
+  full 480x800 update; the unblank restores the live frame on the next
+  draw (the +0x2000/+0x200c handlers draw immediately when a backend
+  polls). The latch migrates: VMSTATE_BOOL_V(blanked, ..., 2) on
+  x1600-lcd (version_id 2, minimum_version_id 1 — an old v1 stream
+  loads with blanked=false and the guest re-issues its blank/panel-on
+  events as its policy re-runs).
+- **Verification (per the round plan; pristine image every boot):**
+  - (a) boot to the picker (mean luminance 244.6 — the v0.91-documented
+    lit-picker value; screendump v1_picker_lit.png with the crosshair on
+    the English row) → WAIT → the idle blank fires (hyn_ts_suspend at
+    t=55.15) → screendump v2_blank_dark.png: **mean 0.0, pure black** —
+    the blank is VISIBLE. A second boot: tap→select first (see (c)),
+    the blank fires on the Region page → v10_blank_dark2.png mean 0.0.
+    A manual `echo 4 > /sys/class/graphics/fb0/blank` also renders dark.
+  - (b) wake: a QMP Esc (POWER) key on the dark picker does NOT wake it
+    (v4 mean 0.0 — the stock wizard wake-gates stay closed, the v0.78/
+    v0.91 decode re-confirmed live; NOT a model issue). The faithful
+    unblank — fb_blank(0), the exact kernel call the GUI's main-UI wake
+    issues — restores the feed: `echo 0 > /sys/class/graphics/fb0/blank`
+    → v5_unblank.png mean 244.6, the picker back; on the second cycle
+    the Region page returns (v11 mean 181.4, the page's own dark bottom
+    third). Honest note: after the model-side unblank the GUI's own
+    screen-state stays OFF at the wizard (no re-render kick after the
+    panel-on writes — the litegui wake gates never open there), so the
+    feed shows the last frame on a lit panel, which is what the real
+    device would show behind the GUI's back.
+  - (c) tap→select unaffected: on a fresh boot, the v0.91 in-window
+    recipe (QMP abs 16384,16282 + left press, 200 ms hold, release ~10 s
+    after the picker render) advanced the wizard to the Region page in
+    ENGLISH (v9_after_select.png) — through the modified fb_draw. After
+    a blank+wake, a held tap counts 13 hyn_ts IRQs (1 → 13: the press +
+    the 20 ms held ticks + the lift — the v0.78 touch contract; the
+    resume re-enables the IRQ), but the wizard does not advance: the
+    GUI's own screen-state gate, not the input chain.
+  - (d) gate: tools/x1600-boot-test.sh PASS on the pristine image —
+    "boot window matches baseline (296 distinct messages, 158
+    structural lines)" vs docs/traces/boot-baseline-v0.89.txt; no
+    re-record (the model diff touches only the blank/panel-on writes
+    and the draw path; the boot window ends at the rcS stall marker
+    long before the 30 s idle blank).
+  - vmstate: a dark-state migration round-trip (HMP migrate file: while
+    blanked → -incoming file: in a fresh process → cont) comes up STILL
+    DARK (v12_restored.png mean 0.0) — the latch survives the save/
+    restore, the v0.89 migration convention holds for the new field.
+- **Side observations for the record:**
+  - The keep-alive key recipe did NOT postpone the blank in this
+    round's runs (a 15 s up/down injector confirmed delivering via QMP;
+    the blank fired at t≈58 s anyway, and post-wake the idle blank did
+    not re-fire within a 60 s poll). The v0.91 keeper evidence stands
+    (verified twice there); the difference may be timing vs the GUI's
+    input-listener start on the first-boot image (keys before the
+    listener are dropped). The manager's feed injector is unaffected —
+    it runs on main's demo VM and was not touched.
+  - The +0x2000=0x10 stop write and the +0x200c panel-on write are the
+    ONLY two new observables the model needed; the LCD IRQ semantics
+    (STATE bit7/bit17) are unchanged.
+  - The wizard post-wake screen-state (touch dispatched but the GUI
+    ignores it) is firmware behavior parked with the v0.78 wake-gate
+    decode; the model renders the kernel-visible state faithfully in
+    both directions.
+- Worktree state: vendored qemu committed (70ab29a) + exported
+  0129-x1600-render-the-FBIOBLANK-4-panel-dark-state-on-the.patch;
+  docs+tools committed on qemu-blank-visible. unpacked/1.6/nand-r1.bin
+  left as the gate's pristine post-gate state (first-boot formatted by
+  the gate run; re-run make_nand_image.py before any recording round).
+  Round VMs stopped; /tmp/kilo/blank/ holds the evidence PNGs
+  (v1-v12) + the diag tools (ko-dis.py/qmp.py/hmp.py/console_cap.py/
+  keepalive.py).

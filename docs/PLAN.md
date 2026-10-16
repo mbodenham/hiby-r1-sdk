@@ -908,3 +908,41 @@ qemu-vmstate-snapshots, patch 0124)
   v0.90 gate-note prediction; no baseline re-record (empty model diff,
   unchanged dmesg). Zero vendored changes this round (no 0128 patch);
   docs only.
+
+- **Status (M3 blank-visible round, v0.92, worktree qemu-blank-visible,
+  patch 0129):** the v0.91 recommended lever is DONE — the idle blank
+  is VISIBLE in the feed. Decoded from a live register trail
+  (TEMP-BLANK-DIAG, stripped): the FBIOBLANK(4) path reaches the LCD
+  block as exactly one write pair (+0x2000=0x10 disable_fb stop, then
+  the +0x2008=0x80 stop-done ack — the only +0x2000=0x10 in the whole
+  boot trail), and the FBIOBLANK(0) unblank writes the panel-on group
+  (+0x200c=0x20180, +0x2014=0x30, +0x8000=0x61, the same sequence as
+  the probe's display-on). The backlight brightness surface does NOT
+  touch the PWM block (pwm_backlight drives a GPIO via
+  gpiod_direction_output_raw; the 0/60 sysfs probes produced zero PWM
+  MMIO — the periodic +0x80/+0x84 writes are the leds_pwm/TCU tick), so
+  the PWM stub stays and panel-dark is latched from the LCD registers
+  alone. Model: X1600Lcd.blanked set by +0x2000=0x10, cleared by the
+  +0x200c panel-on write or any +0x1004 kick (the blanked GUI never
+  kicks — trail-verified; the kick rule covers the brightness-restore
+  wake shape); while set the surface renders pure black (fb_copy
+  zeroed, the touch-cursor overlay skipped) and the live frame returns
+  on the next draw. Verified end-to-end on pristine images (every boot
+  freshly regenerated — the one-time cp -a caught main's live nand
+  file mid-write): lit picker 244.6 → idle blank (hyn_ts_suspend
+  t=55-58) → screendump mean 0.0 (twice, second on the Region page
+  after an in-window tap→select that advanced the wizard in ENGLISH
+  through the modified draw — the v0.91 (a) recipe intact) → QMP
+  Esc does NOT wake (the stock wizard wake-gates, re-confirmed) →
+  fb_blank(0) via sysfs restores the feed (244.6 / Region 181.4) → a
+  held tap post-wake counts 13 hyn_ts IRQs (the v0.78 contract) though
+  the wizard stays gated (the GUI's own screen-state, parked with the
+  v0.78 decode). A tap or Esc on the dark feed leaves it black (mean
+  0.0 — nothing visible on a dark panel). The latch migrates
+  (VMSTATE_BOOL_V 2): a dark-state migrate round-trip comes up still
+  dark. Gate PASS (296/158 vs boot-baseline-v0.89, no re-record — the
+  blank happens post-window). Known shape for the feed: post-unblank
+  the panel is lit with the last frame while the GUI's screen-state
+  stays off at the wizard (no re-render kick) — faithful to the real
+  device behind the GUI's back; the GUI wake itself is the v0.78
+  firmware-side parking.

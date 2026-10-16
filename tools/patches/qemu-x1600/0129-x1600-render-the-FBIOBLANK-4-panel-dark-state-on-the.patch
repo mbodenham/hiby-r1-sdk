@@ -1,0 +1,260 @@
+From 70ab29a4cc665d1f2d33fcb8b8dde9708fd96bca Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Fri, 16 Oct 2026 10:52:33 +0900
+Subject: [PATCH] =?UTF-8?q?x1600:=20render=20the=20FBIOBLANK(4)=20panel-da?=
+ =?UTF-8?q?rk=20state=20on=20the=20display=20surface=20=E2=80=94=20the=20i?=
+ =?UTF-8?q?dle=20blank=20is=20visible=20in=20the=20feed?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The idle blank's fb_blank(4) path reaches the LCD block as a single
+write pair: +0x2000=0x10 (disable_fb, the engine stop) then the
++0x2008=0x80 stop-done W1C ack (the v0.92 diag trail; the whole boot
+trail holds exactly one +0x2000=0x10, at the 30 s idle blank). The
+fb_blank(0) unblank writes the panel-on group the probe's display-on
+path uses (+0x200c=0x20180, +0x2014=0x30, +0x8000=0x61). The backlight
+brightness surface does NOT touch the PWM block: pwm_backlight's
+update_status drives a GPIO via gpiod_direction_output_raw (the
+brightness 0/60 sysfs probes produced zero PWM MMIO writes; the
+periodic +0x80/+0x84 writes are the leds_pwm/TCU tick), so panel-dark
+is latched from the LCD registers alone.
+
+The display surface now renders pure black while the blanked latch is
+set (the real panel's backlight is off; the touch cursor overlay is
+skipped too — nothing is visible on a dark panel). The latch clears on
+the +0x200c panel-on write or on the next frame kick (the
+brightness-restore wake ends with the GUI rendering again; the blanked
+GUI never kicks — verified: no +0x1004 between the stop and the
+panel-on writes). This is the v0.91 bisect's recommended lever: the
+feed kept showing a bright picker (mean luminance 244.6) while the
+touch was dead for all but ~25-30 s of the ~5-min idle cycle; now the
+blank is visible (mean 0.0) and the picker returns on the unblank.
+
+Verified (pristine nand ae41e974..., worktree build): picker lit
+(244.6) -> 30 s idle blank -> screendump mean 0.0 (pure black; a tap
+and an Esc key leave it black — the stock wizard wake-gates stay
+closed, v0.78/0.91) -> echo 0 > /sys/class/graphics/fb0/blank
+(fb_blank(0)) -> the picker returns (244.6) -> an in-window QMP tap
+still selects English (the wizard advances to the Region page, the
+v0.91 (a) recipe through the modified model) -> a second blank/wake
+cycle renders dark and restores the Region page; the held tap after
+the wake counts 13 hyn_ts IRQs (press + 20 ms held ticks + lift, the
+v0.78 touch contract). The blanked latch migrates (VMSTATE_BOOL_V 2 on
+x1600-lcd; a dark-state save/restore round-trip comes up still dark).
+Boot gate PASS (296 distinct messages, 158 structural lines vs
+boot-baseline-v0.89; the blank happens post-window).
+---
+ hw/mips/x1600.c | 141 ++++++++++++++++++++++++++++++++++--------------
+ 1 file changed, 100 insertions(+), 41 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 717beb9..065be5a 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -3623,6 +3623,15 @@ static const VMStateDescription x1600_efuse_vmstate = {
+ /* backend poll (gfx_update), so with -display none no timer, no copy   */
+ /* and no wakeups ever run — the boot-gate path is byte-for-byte the    */
+ /* v0.69 model.                                                         */
++/* v0.92 fb-blank visibility: the idle blank's FBIOBLANK(4) path        */
++/* reaches this block as +0x2000=0x10 (disable_fb stop) + the +0x2008   */
++/* stop-done ack — the real panel goes dark there, so the surface       */
++/* renders black while the blanked latch is set; the +0x200c panel-on   */
++/* write (the fb_blank(0) group) or the next frame kick restores the    */
++/* live frame. The backlight brightness surface does NOT touch the PWM  */
++/* block (pwm_backlight drives a GPIO; pwm2_set_level short-circuits),  */
++/* so the brightness-only blank variant carries no LCD trace and is     */
++/* covered only via the kick rule (frames flowing again = panel lit).   */
+ /* ----------------------------------------------------------------- */
+ 
+ #define X1600_FB_WIDTH     480
+@@ -3643,6 +3652,12 @@ typedef struct X1600Lcd {
+     uint8_t *fb_copy;
+     QEMUTimer *fb_timer;
+     bool backend_seen;   /* a display backend / screendump polled the console */
++    bool blanked;        /* FBIOBLANK(4) powerdown latched (v0.92): the
++                          * +0x2000=0x10 stop write sets it, the +0x200c
++                          * panel-on write or a frame kick clears it — the
++                          * surface renders black while set (the real
++                          * panel's backlight is off; the v0.91 bisect's
++                          * "invisible blank" in the VNC feed). */
+ } X1600Lcd;
+ 
+ static X1600Lcd x1600_lcd_dev;
+@@ -3682,40 +3697,50 @@ static void x1600_lcd_fb_draw(X1600Lcd *s)
+         s->fb_copy = qemu_memalign(64, X1600_FB_BYTES);
+         memset(s->fb_copy, 0, X1600_FB_BYTES);
+     }
+-    if (dma_memory_read(&address_space_memory, lineaddr, s->fb_copy,
+-                        X1600_FB_BYTES, MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
+-        return;
+-    }
+-    if (x1600_cursor_seen) {
+-        /* touch-cursor overlay: an 11 px magenta crosshair at the VNC
+-         * pointer position with a 1 px black outline, so every VNC
+-         * client shows where a click lands (QEMU sends no cursor
+-         * shape for this console). fb_copy is RGB565, stride 960 B. */
+-        int cx = x1600_cursor_x, cy = x1600_cursor_y, d;
+-        if (cx < 0) cx = 0;
+-        if (cx > X1600_FB_WIDTH - 1) cx = X1600_FB_WIDTH - 1;
+-        if (cy < 0) cy = 0;
+-        if (cy > X1600_FB_HEIGHT - 1) cy = X1600_FB_HEIGHT - 1;
+-        for (d = -6; d <= 6; d++) {
+-            uint16_t *row = (uint16_t *)(s->fb_copy + cy * X1600_FB_STRIDE);
+-            uint16_t *col;
+-            int px = cx + d, py = cy + d;
+-            if (px >= 0 && px < X1600_FB_WIDTH) {
+-                uint16_t *p = row + px;
+-                if (d != 0) {
+-                    *p = 0xf81f;
+-                }
+-                if (abs(d) == 6) {          /* arm tips: black caps */
+-                    *p = 0x0000;
+-                }
+-            }
+-            if (py >= 0 && py < X1600_FB_HEIGHT) {
+-                col = (uint16_t *)(s->fb_copy + py * X1600_FB_STRIDE) + cx;
+-                if (d != 0) {
+-                    *col = 0xf81f;
++    if (s->blanked) {
++        /* panel dark (v0.92): the FBIOBLANK(4) powerdown stopped the
++         * engine and killed the backlight — the real panel shows
++         * nothing. Render pure black (zero the surface feed; the touch
++         * cursor overlay is skipped too — nothing is visible on a dark
++         * panel). The live frame returns on the panel-on write or the
++         * first kick after a brightness-restore wake. */
++        memset(s->fb_copy, 0, X1600_FB_BYTES);
++    } else {
++        if (dma_memory_read(&address_space_memory, lineaddr, s->fb_copy,
++                            X1600_FB_BYTES, MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
++            return;
++        }
++        if (x1600_cursor_seen) {
++            /* touch-cursor overlay: an 11 px magenta crosshair at the VNC
++             * pointer position with a 1 px black outline, so every VNC
++             * client shows where a click lands (QEMU sends no cursor
++             * shape for this console). fb_copy is RGB565, stride 960 B. */
++            int cx = x1600_cursor_x, cy = x1600_cursor_y, d;
++            if (cx < 0) cx = 0;
++            if (cx > X1600_FB_WIDTH - 1) cx = X1600_FB_WIDTH - 1;
++            if (cy < 0) cy = 0;
++            if (cy > X1600_FB_HEIGHT - 1) cy = X1600_FB_HEIGHT - 1;
++            for (d = -6; d <= 6; d++) {
++                uint16_t *row = (uint16_t *)(s->fb_copy + cy * X1600_FB_STRIDE);
++                uint16_t *col;
++                int px = cx + d, py = cy + d;
++                if (px >= 0 && px < X1600_FB_WIDTH) {
++                    uint16_t *p = row + px;
++                    if (d != 0) {
++                        *p = 0xf81f;
++                    }
++                    if (abs(d) == 6) {          /* arm tips: black caps */
++                        *p = 0x0000;
++                    }
+                 }
+-                if (abs(d) == 6) {
+-                    *col = 0x0000;
++                if (py >= 0 && py < X1600_FB_HEIGHT) {
++                    col = (uint16_t *)(s->fb_copy + py * X1600_FB_STRIDE) + cx;
++                    if (d != 0) {
++                        *col = 0xf81f;
++                    }
++                    if (abs(d) == 6) {
++                        *col = 0x0000;
++                    }
+                 }
+             }
+         }
+@@ -3819,13 +3844,38 @@ static void x1600_lcd_write(void *opaque, hwaddr addr,
+          * enable word, SLCD stop-done bit) then spins on jzfb+0x44 until
+          * jzfb_irq_handler sees STATE bit7 and clears it — the engine
+          * stop-done IRQ. Without it the blank path stalls 1 s per frame
+-         * ("is_wait_stop_cnt >= 100"). Latch bit7 + assert the line. */
++         * ("is_wait_stop_cnt >= 100"). Latch bit7 + assert the line.
++         * v0.92 fb-blank visibility: this write pair (+0x2000=0x10, then
++         * the +0x2008=0x80 stop-done W1C ack) is the ONLY trace of the
++         * idle blank on the LCD block (TEMP-BLANK-DIAG trail, worktree
++         * boot: the FBIOBLANK(4) path fires at the 30 s idle; the whole
++         * boot trail holds exactly one +0x2000=0x10 write). The real
++         * panel goes dark (backlight off) — latch the blanked state so
++         * the display surface renders black until the panel-on path. */
+         s->regs[0x2010 / 4] |= 0x80u;
++        s->blanked = true;
+         x1600_lcd_update_irq(s);
++        if (s->backend_seen) {
++            x1600_lcd_fb_draw(s);       /* the feed goes dark now */
++        }
++    }
++    if (addr == 0x200c) {
++        /* panel-on group (+0x200c=0x20180, +0x2014=0x30, +0x8000=0x61):
++         * the fb_blank(0) unblank writes the same init sequence the
++         * probe's display-on path does (v0.92 trail) — the panel is lit
++         * again, the live frame returns on the next kick/draw. */
++        s->blanked = false;
+     }
+     if (addr == 0x1004 && (val & 1)) {
+         /* frame kick: descriptor stored at +0x1000, EOF latches */
+         s->regs[0x2010 / 4] |= 0x20000u;
++        if (s->blanked) {
++            /* frames flowing again = the panel is lit (the brightness
++             * restore wake ends with the GUI rendering again; the blanked
++             * GUI never kicks — verified on the v0.92 trail: no +0x1004
++             * between the +0x2000=0x10 stop and the +0x200c panel-on). */
++            s->blanked = false;
++        }
+         x1600_lcd_update_irq(s);
+         /* v0.70 live display: push the panned frame to the console and
+          * (re)arm the 25 Hz progressive-refresh timer — but only once a
+@@ -3851,11 +3901,15 @@ static const MemoryRegionOps x1600_lcd_ops = {
+ 
+ /* Snapshot state (v0.89): the jzfb regfile (config/timing regs, the
+  * +0x1000 descriptor tap, the int/state block, the SLCD window), the
+- * IRQ state and the backend-seen latch. The display surface, the host
+- * fb copy and the console are runtime-rebuildable (post_load leaves
+- * them; the next gfx_update/fb_draw recreates what a fresh process
+- * needs) — the 25 Hz fb timer reloads its deadline from the stream
+- * (created eagerly in x1600_mach_init so the restore side has it). */
++ * IRQ state and the backend-seen latch. v0.92 adds the blanked latch
++ * (VMSTATE_V 2: a v1 stream loads with blanked=false — the restore
++ * shows the last frame until the next blank/panel-on event, which the
++ * guest re-issues when its idle policy re-runs). The display surface,
++ * the host fb copy and the console are runtime-rebuildable (post_load
++ * leaves them; the next gfx_update/fb_draw recreates what a fresh
++ * process needs) — the 25 Hz fb timer reloads its deadline from the
++ * stream (created eagerly in x1600_mach_init so the restore side has
++ * it). */
+ static int x1600_lcd_post_load(void *opaque, int version_id)
+ {
+     X1600Lcd *s = opaque;
+@@ -3866,13 +3920,14 @@ static int x1600_lcd_post_load(void *opaque, int version_id)
+ 
+ static const VMStateDescription x1600_lcd_vmstate = {
+     .name = "x1600-lcd",
+-    .version_id = 1,
++    .version_id = 2,
+     .minimum_version_id = 1,
+     .post_load = x1600_lcd_post_load,
+     .fields = (const VMStateField[]) {
+         VMSTATE_TIMER_PTR(fb_timer, X1600Lcd),
+         VMSTATE_UINT32_ARRAY(regs, X1600Lcd, X1600_LCD_SIZE / 4),
+         VMSTATE_BOOL(backend_seen, X1600Lcd),
++        VMSTATE_BOOL_V(blanked, X1600Lcd, 2),
+         VMSTATE_END_OF_LIST()
+     },
+ };
+@@ -5057,7 +5112,11 @@ static void x1600_mach_init(MachineState *ms)
+     vmstate_register(NULL, 0, &x1600_efuse_vmstate, &x1600_efuse_dev);
+ 
+     /* AHB2 PWM 0x134c0000: persistent regfile (soc_pwm RMWs its div/mode/
+-     * level registers; no polled semantics pinned by the boot yet). */
++     * level registers; no polled semantics pinned by the boot yet — the
++     * v0.92 decode found the backlight brightness path does NOT touch
++     * this block (pwm_backlight drives a GPIO via
++     * gpiod_direction_output_raw; the periodic +0x80/+0x84 writes here
++     * are the leds_pwm/TCU tick), so it stays a plain stub. */
+     x1600_add_stub(sysmem, "x1600-pwm", X1600_PWM_BASE, X1600_PWM_SIZE);
+ 
+     /* SFC + SPI-NAND (M2): command engine backed by the raw page+OOB
+-- 
+2.53.0
+
