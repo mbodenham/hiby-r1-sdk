@@ -3889,3 +3889,139 @@ register trail and renders it.
   Round VMs stopped; /tmp/kilo/blank/ holds the evidence PNGs
   (v1-v12) + the diag tools (ko-dis.py/qmp.py/hmp.py/console_cap.py/
   keepalive.py).
+
+## v0.93 — wake-from-blank decode (wake2 round)
+
+Round: qemu-wake-decode worktree. Targets: (1) what the GUI's wake
+listens for, (2) the model-side delivery, (3) verify. Result: the wake
+path is decoded end-to-end; the model now carries the wake chain
+(commit e8001eb, patch 0130). The final PM-flag handshake is decoded to
+the address level but the kernel's own setter path stays unreachable —
+the model latches the wake word directly (see the last entry).
+
+### The GUI's blank/unblank is its OWN fb layer (v0.78's false negative)
+
+v0.78 concluded hiby_player has no FBIOBLANK because the 0x460b
+constant scan missed. Wrong constant: FBIOBLANK is _IO('F',0x11) =
+0x4611 = 17937, and the player's hgl_fb layer has both wrappers:
+
+- powerdown 0x473720: ioctl(fb0, 0x4611, 4) + state flag *(0x8b4b18)=1,
+  "(hgl_fb: W) failed to access ioctl FB_BLANK_POWERDOWN" on error;
+- unblank 0x473640: requires *(0x8b4b18)!=0, ioctl(fb0, 0x4611, 0) +
+  FBIOGET_VSCREENINFO, flag=0.
+
+The screen ON handler 0x467a00 (called by 0x435260, 0x4352c0, the PM
+resume path 0x435ba0 and the app paths) = the unblank wrapper +
+brightness restore from *(0x8b4798); the screen OFF handler 0x467a80 =
+brightness 0 (the file util on
+/sys/class/backlight/backlight_pwm0/brightness) + the powerdown. The
+player IS the fb_blank issuer both ways (v0.78's sys_server conclusion
+was a shim-restart artifact; sys_server is a BT/wifi daemon with no fb
+strings). The 0129 dark-render latch sees exactly these panel-on
+writes, so an FBIOBLANK(0) unblanks the feed.
+
+### The wake the GUI's litegui layer listens for (and why keys don't)
+
+- The listener name classifier (0x466c80) accepts gpio-keys,
+  md-gpio-keys, the adc_ prefix, "jz adc keyboard" AND
+  sa-ring-keys — v0.78's "skips jz adc keyboard by name" was wrong;
+  the SADC keys DO reach the same key handler as the gpio keys
+  (0x4661a0, table 0x764e60: 164->0x20, 163->0x10, 165->0x1, 139->0x2,
+  114->0x800, 115->0x2000, 116->0x1000, 200->0x4000).
+- Message-thread wake path (0x44e2e0): a type-2 message with code
+  16384 (the key-200 mask) with screen flag *(0x8b47a4)!=0 calls
+  0x435260 = stop blank timer + ON handler. Type-3/4 code-16384
+  messages count at 0x8b41c4; the 11th calls 0x467b20 = the OFF
+  handler + system("reboot") — the power-key force-reboot.
+- The dispatcher (0x4ecfc0) also counts code-16384 type>=5 messages
+  (0x8b6f48) and wakes after the 4th via 0x4352c0, gated by
+  0x4784e0/0x4786c0.
+- POWER (code 116 -> mask 0x1000 -> msg 4096) and VOLUP (8192) hit the
+  wake-gate path 0x4ed3d0: can-handle = setting(6)==0 && screen flag
+  !=0; with the screen OFF it returns "consumed" WITHOUT waking
+  (0x4ed208) — this is why QMP Esc/Up never unblank, matching the
+  live evidence. can-handle getters: setting(6)=*(base+612),
+  setting(93)=*(base+1776) via the 143-entry jump table at 0x758cf0.
+
+### The real wake: system PM suspend/resume
+
+The GUI deep-idles with system("echo mem > /sys/power/state")
+(string 0x765898, flow 0x46a1xx: blank, echo mem, bt_resume, PM
+prints). Stock vmlinux PM chain prints "x1600 suspend begin /
+prepare / finish" + "post wakeup!". The suspend prepare (0x800141d8)
+copies resume trampolines into the PDMA scratch window (0xb3422000/
+0xb3422400/0xb3423000 = the phys 0x13422000.., which is why those
+writes appear inside the model's PDMA region), stores the resume entry
+(0xb0030000) at 0x808e2090, unmasks core IRQ bits, then the CPU waits
+in the idle loop (arch/idle.c, 0x80019378: flag check on *(gp+4) bit2,
+sync, wait). The PM wake IRQ is INTC line 61 = /apb/i2c@0x10050000
+(the PMU bus — the real board's PMU INT edge is the wake source;
+stock DTB interrupts <61>). The player's resume path 0x435ba0 (setting
+122, 0x42da40(4), ON handler 0x467a00, ...) ends in the unblank.
+
+Decoded module facts for the record: keyboard_gpio_add registers
+md-gpio-keys with PC31->116 (wakeup=y) and PC28->163 from the rcS;
+keyboard_adc_multifunc registers "jz adc keyboard" with key1
+0 mV->code 164 reuse 165, key2 1000 mV->114, key3 1650 mV->115 (all
+multifunc_enable=0), key_config = "<key_num> <enable> <swap>" (the
+GUI writes "0 0 0" at startup driven by setting 140: 0 keep, 1 swap
+code/reuse, 2 enable multifunc; a held multifunc key emits the reuse
+code press+release, the multi-click timer re-fires the base code at
+detectime*10 ms).
+
+### What the model needed (patch 0130, commit e8001eb)
+
+1. The hyn 0xa5 sleep write used to stay incomplete by design (the
+   recorded "set TP to sleep mode fail"). That txn held the i2c bus
+   and aborted the system PM's device phase silently. The slave now
+   completes the write like the real IC and still arms the wake-check
+   (the resume work's reg 0xaa read answers 0). The blank-time call
+   sits ~55 s in, outside the boot-window gate.
+2. The suspend phase now runs to completion with the console visible:
+   "PM: suspend of devices complete after 103.826 msecs", the late and
+   noirq suspend complete, the syscore list (phy, sched_clock,
+   timekeeping, irq_gc, fw, pinctrl) runs, the trampoline copy lands
+   in the PDMA scratch window. While the copy happens the OST clockevent
+   keeps firing (the model's periodic semantics), which floods
+   timekeeping.c:715 warnings via tick_irq_enter/ktime_get during the
+   suspended timekeeping — recorded, benign for the decode, and the
+   reason the OST shutdown semantics were attempted and reverted (the
+   +0x10=0xfffffffe write turned out to be part of the normal
+   ack/register pair, not a shutdown; honouring it froze calibration
+   at boot).
+3. The wake latch: armed by the trampoline copy (PDMA+0x3000.., the
+   boot never writes that window), cleared by the resumed wake-check
+   read; snapshot state registered. While armed the INTC delivers the
+   GPIO bank lines 14..17 and the PM line 61 past the sleep mask in
+   both the CPU-line update and the IPR register view, and a GPIO wake
+   edge (QMP Esc = PC31 press) pulses line 61 with a timer deassert.
+4. The wake edge also ors 0x4 into the PM wait-loop flag word at the
+   physical 0x75e004 (the kernel's KSEG0 0x8075e004, _gp+4; the first
+   attempt wrote the virtual value as a physical address and no-op'd —
+   the reason the early wake tests read the flag unchanged).
+
+### Where it stands
+
+- Gate PASS on the pristine ae41e974 image (296 distinct messages,
+  158 structural lines).
+- Verified live: blank at ~55 s (dark 0129 render), echo mem reaches
+  the full PM chain (suspend begin, devices/late/noirq complete,
+  syscore list, trampoline copy), QMP Esc arms the cascade (trace:
+  "wake cascade irq=15 -> line61 pulse") and the CPU leaves the wait
+  for the demux (the intc IPR reads show the line-15 gpio pending and
+  the line-61 bypass bit).
+- Parked: the PM wait-loop flag's kernel-side setter. The wait loop
+  polls *(gp+4) bit2; the model sets it on the wake edge, but the
+  value reads back unchanged and the CPU re-enters the idle loop —
+  the kernel's own setter path (which the real wake controller
+  triggers) has not been identified in the stripped vmlinux (no
+  gp-relative or absolute stores to 0x8075e004 found; the PM DTB node
+  with its wake IRQ is still unpinned). Next round: pin the setter
+  (trace the stores to the word with the gdbstub, or decode the PM
+  driver's platform device from the DTB "x1600 suspend" strings), or
+  hook the idle-loop exit the same way the real wake controller does.
+- The keep-alive/demo note: the type-2 code-16384 wake message comes
+  from a key the stock firmware never registers (code 200 exists in
+  the GPIO map table but nothing emits it in this build), so the
+  litegui-only wake is dead code on stock; the real wake is the PM
+  path above.

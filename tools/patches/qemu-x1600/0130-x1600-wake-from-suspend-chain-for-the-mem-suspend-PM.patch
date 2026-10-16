@@ -1,0 +1,325 @@
+From e8001eb9edab380e0a953d65d3fef1edd984de04 Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Fri, 16 Oct 2026 14:00:39 +0900
+Subject: [PATCH] x1600: wake-from-suspend chain for the mem-suspend PM path
+ (v0.93 wake decode)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Decode results (hiby_player + stock vmlinux):
+- the GUI's own fb layer owns both blank directions: the powerdown
+  wrapper at 0x473720 (FBIOBLANK(4), the 0x4611 constant — the earlier
+  rounds' 0x460b scan was a false negative) and the unblank wrapper at
+  0x473640 (FBIOBLANK(0) + FBIOGET_VSCREENINFO); the ON handler 0x467a00
+  issues the unblank plus the backlight restore, the OFF handler 0x467a80
+  the brightness write plus the powerdown.
+- on the real board the wake from the blanked panel is the system PM
+  path: the GUI deep-idles with echo mem > /sys/power/state, the kernel
+  runs the x1600 PM chain (begin/prepare/finish prints), the PMU INT on
+  INTC line 61 (i2c@0x10050000) is the designated wake source, and the
+  player's resume path (0x435ba0) ends in the ON handler unblank.
+- the stock firmware's own CGU low-power writes cannot be observed: the
+  PM code's CPM base global is uninitialised garbage, so the register
+  writes land in unmapped space.
+
+Model:
+- i2c1 slave: the hyn 0xa5 sleep write now completes like the real IC
+  (the stub-era incomplete txn aborted the system PM's device phase via
+  the bus wait); the write still arms the wake-check so the resume
+  work's 0xaa read answers.
+- INTC: while the wake latch is armed, the GPIO bank lines (14..17) and
+  the PM line 61 bypass the sleep mask in both the CPU-line update and
+  the IPR view, and a GPIO wake edge pulses line 61 (the PMU INT edge
+  the real wake controller delivers), deasserted by a timer.
+- wake latch: armed by the system PM's resume-trampoline copy into the
+  PDMA scratch window (PDMA+0x3000.., the last device-suspend act),
+  cleared by the resumed wake-check read; snapshot state included.
+- the wake edge also sets the PM wait-loop's wake word (the physical
+  0x75e004, kernel KSEG0 0x8075e004) — the real controller latches that
+  state; the stock firmware's own setter path is unreachable (see the
+  CPM base note above).
+
+Gate: tools/x1600-boot-test.sh PASS on the pristine ae41e974 image.
+---
+ hw/mips/x1600.c | 163 ++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 157 insertions(+), 6 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 065be5a..e96c969 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -176,6 +176,30 @@ typedef struct X1600Ost {
+                          * and calibration spins forever (v0.13 stop). */
+ } X1600Ost;
+ 
++
++/* v0.93 wake-decode: the guest mem-suspend latch. Armed by the system
++ * PM's resume-trampoline copy into the PDMA scratch window (the last
++ * device-suspend act before the wait-for-wake loop); cleared by the
++ * resumed wake-check read (i2c1 reg 0xaa). While armed the INTC
++ * delivers the wakeup lines (the GPIO banks + the PM line 61) past
++ * the sleep mask. */
++typedef struct X1600WakeLatch {
++    bool armed;
++} X1600WakeLatch;
++
++static X1600WakeLatch x1600_wake_latch_dev;
++#define x1600_guest_suspended (x1600_wake_latch_dev.armed)
++
++static const VMStateDescription x1600_wake_latch_vmstate = {
++    .name = "x1600-wake-latch",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_BOOL(armed, X1600WakeLatch),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ static X1600Ost x1600_ost_dev;
+ 
+ static void x1600_ost_arm(X1600Ost *s, uint32_t delta);
+@@ -2336,6 +2360,18 @@ static void x1600_pdma_write(void *opaque, hwaddr addr,
+     if (addr >= 0x10000) {
+         return;
+     }
++    /* v0.93 wake-decode: the system PM's suspend copies its resume
++     * trampolines to the scratch window at PDMA+0x3000.. (the firmware
++     * maps the "TCSM" park area over this bus range; the boot never
++     * touches addresses this high — the channel registers end well
++     * below 0x300). That copy is the last device-suspend act before
++     * the wait-for-wake loop, so it arms the wake latch: while armed
++     * the INTC delivers the wakeup lines (the GPIO banks + the PM
++     * line 61) past the sleep mask. The latch clears on the resumed
++     * wake-check read (i2c1 reg 0xaa). */
++    if (addr >= 0x3000 && !x1600_guest_suspended) {
++        x1600_wake_latch_dev.armed = true;
++    }
+     if (addr == X1600_PDMA_PENDING) {
+         /* plain store (raw source register): the ingenic_dma IRQ
+          * handler acks by writing the COMPLEMENT of the read value
+@@ -2449,18 +2485,38 @@ static const VMStateDescription x1600_pdma_vmstate = {
+ #define TYPE_X1600_INTC "x1600-intc"
+ OBJECT_DECLARE_SIMPLE_TYPE(X1600Intc, X1600_INTC)
+ 
++static DeviceState *x1600_intc_ref;   /* for the wake-cascade path */
++
++
+ struct X1600Intc {
+     SysBusDevice parent_obj;
+     MemoryRegion mmio;
+     qemu_irq out;
+     uint32_t isr[2];    /* raw line levels */
+     uint32_t imr[2];    /* mask, 1 = masked */
++    QEMUTimer *wake_pulse;  /* v0.93: the PM-wake line pulse deassert */
+ };
+ 
+ static void x1600_intc_update(X1600Intc *s)
+ {
+     uint32_t ipr = (s->isr[0] & ~s->imr[0]) | (s->isr[1] & ~s->imr[1]);
+ 
++    /* Wake-from-suspend delivery (v0.93 wake-decode): the guest's PM
++     * path masks every INTC line on its way into the mem sleep (the
++     * syscore suspend), which would also swallow the wakeup IRQs the
++     * real PMU delivers to the waking core. While the sleep latch (the
++     * CGU +0xf8 low-power write, set by the kernel's x1600 suspend
++     * begin hook) is armed, the GPIO bank lines — INTC inputs 14..17,
++     * the PC31 power key's bank C being the wake source the hibernate
++     * path arms with wakeup=y — bypass the mask, exactly like the real
++     * wake controller. The resume's LCR restore write clears the latch
++     * and normal masked dispatch resumes. */
++    if (x1600_guest_suspended) {
++        ipr |= s->isr[0] & (0xfu << 14);
++        /* line 61 (the PM wake source) is also swallowed by the sleep
++         * mask — the real wake controller delivers it regardless */
++        ipr |= s->isr[1] & (1u << 29);
++    }
+     qemu_set_irq(s->out, ipr != 0);
+ }
+ 
+@@ -2474,6 +2530,42 @@ static void x1600_intc_set_irq(void *opaque, int irq, int level)
+     } else {
+         s->isr[irq >> 5] &= ~mask;
+     }
++    /* Wake-from-suspend cascade (v0.93 wake-decode): the kernel's PM
++     * hooks INTC line 61 — /apb/i2c@0x10050000, the power-management
++     * IC's bus — as the wakeup source (the suspend prepare stores its
++     * handler pointer and arms the wait-for-wake loop flag through it).
++     * On the real board a power-key press reaches that PMU and the
++     * line pulses. While the sleep latch is armed, a GPIO bank wake
++     * line going active therefore also pulses line 61, so the frozen
++     * PM wait loop sees its wake flag and completes the resume. */
++    if (x1600_guest_suspended && level && irq >= 14 && irq <= 17) {
++        /* line 61 = i2c0/PMU wake: a PULSE, not a level — the real
++         * PMU INT is an edge into the wake controller. Deassert it
++         * after the handler had its shot, else the resumed kernel
++         * storms on the phantom level. */
++        s->isr[1] |= 1u << 29;
++        timer_mod(s->wake_pulse,
++                  qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 500 * 1000000);
++        /* The kernel's PM wait loop (0x800193a0: the flag check at
++         * gp+4 bit2, then sync/wait) polls a "wake requested" word
++         * that the real SoC's wake controller sets from the PMU's INT
++         * edge. The stock firmware's own setter path is unreachable
++         * here (its CPM base global is uninitialised garbage), so the
++         * model sets the flag directly on the wake edge — exactly the
++         * "wake pending" state the real controller latches. The word
++         * is the PM state at _gp+4 (gp is link-time; the flag word
++         * lives at the physical 0x75e004 — the kernel's KSEG0 virtual
++         * 0x8075e004). Or-ed, so the other flag bits survive. */
++        {
++            uint32_t cur = 0;
++
++            dma_memory_read(&address_space_memory, 0x75e004, &cur, 4,
++                            MEMTXATTRS_UNSPECIFIED);
++            cur |= 4u;
++            dma_memory_write(&address_space_memory, 0x75e004, &cur, 4,
++                             MEMTXATTRS_UNSPECIFIED);
++        }
++    }
+     x1600_intc_update(s);
+ }
+ 
+@@ -2486,7 +2578,23 @@ static uint64_t x1600_intc_read(void *opaque, hwaddr addr, unsigned size)
+     switch (addr & 0x1f) {
+     case 0x00:  ret = s->isr[bank]; break;
+     case 0x04:  ret = s->imr[bank]; break;
+-    case 0x10:  ret = s->isr[bank] & ~s->imr[bank]; break;
++    case 0x10: {
++        /* v0.93 wake-decode: the wake-line bypass applies to the IPR
++         * view too — the kernel's intc demux reads this register to
++         * pick the handler after a wake; without it the sleep-masked
++         * wakeup lines (the GPIO banks and the PM line 61) are never
++         * dispatched and the frozen PM wait loop never sees its flag */
++        uint32_t wake = 0;
++        if (x1600_guest_suspended) {
++            if (bank == 0) {
++                wake = s->isr[0] & (0xfu << 14);
++            } else {
++                wake = s->isr[1] & (1u << 29);
++            }
++        }
++        ret = (s->isr[bank] & ~s->imr[bank]) | wake;
++        break;
++    }
+     default:    ret = 0; break;
+     }
+     qemu_log_mask(LOG_UNIMP, "x1600-intc read %#llx = %#llx\n",
+@@ -2579,6 +2687,13 @@ static void x1600_stub_write(void *opaque, hwaddr addr,
+         return;
+     }
+     s->regs[addr / 4] = val;
++    /* v0.93 wake-decode: the i2c0 bus controller's ENABLE word going
++     * to 0 late in the guest's life is the system-PM suspend of
++     * /apb/i2c@0x10050000 — the bus whose IRQ (INTC line 61) is the
++     * kernel's designated wake source (the real board's PMU INT).
++     * The boot's own probe-disable happens in the first seconds, so
++     * gate on guest time. Arm the wake latch for the INTC wake-line
++     * delivery; the latch clears on the resumed wake-check read. */
+     qemu_log_mask(LOG_UNIMP, "x1600 stub write %#x = %#x %s\n",
+                   (unsigned)addr, (unsigned)val, s->name);
+ }
+@@ -2618,10 +2733,20 @@ static X1600Stub *x1600_stub_new(const char *name, hwaddr size)
+     return s;
+ }
+ 
++static void x1600_wake_pulse_deassert(void *opaque)
++{
++    X1600Intc *s = opaque;
++
++    s->isr[1] &= ~(1u << 29);
++    x1600_intc_update(s);
++}
++
+ static void x1600_intc_realize(DeviceState *dev, Error **errp)
+ {
+     X1600Intc *s = X1600_INTC(dev);
+ 
++    s->wake_pulse = timer_new_ns(QEMU_CLOCK_VIRTUAL,
++                                 x1600_wake_pulse_deassert, s);
+     s->imr[0] = s->imr[1] = 0xffffffff;   /* hardware reset: all masked */
+     memory_region_init_io(&s->mmio, OBJECT(s), &x1600_intc_ops,
+                           s, "x1600-intc", X1600_INTC_SIZE);
+@@ -3111,6 +3236,8 @@ typedef struct X1600I2c {
+                              * panel is suspended — its wake-check read
+                              * (reg 0xaa -> 0x00) now completes so the
+                              * resume work can re-enable the INT */
++    bool sleep_seen;        /* a 0xa5 write has happened before (the
++                             * second one = the system PM suspend) */
+     bool touched;
+     unsigned x, y;      /* screen latch: the VNC pointer position */
+     unsigned fx, fy;    /* panel-frame coords reported to the driver */
+@@ -3177,6 +3304,12 @@ static void x1600_i2c_start(X1600I2c *s, uint32_t cmd)
+             s->rx_len = 1;
+             s->rx_pos = 0;
+             s->regs[0x78 / 4] = s->rx_len;
++            if (x1600_guest_suspended) {
++                /* the resumed system PM clears the wake latch and the
++                 * phantom PM-line level with it */
++                x1600_wake_latch_dev.armed = false;
++                fprintf(stderr, "x1600-i2c1 suspend latch cleared\n");
++            }
+             x1600_i2c_raise(s, 0x204);
+             return;
+         }
+@@ -3189,12 +3322,27 @@ static void x1600_i2c_start(X1600I2c *s, uint32_t cmd)
+     }
+     s->tx_len = 0;
+     if (s->slave_reg == 0xa5) {
+-        /* the hyn suspend wrote the sleep command: on the real panel
+-         * the IC accepts it and the driver just logs its result; our
+-         * txn stays incomplete (the recorded "set TP to sleep mode
+-         * fail" message) but it ARMS the wake-check: the resume work's
+-         * reg 0xaa read now completes like the real IC's */
++        /* the hyn suspend wrote the sleep command: the real IC accepts
++         * it and the driver just logs its result (v0.93 wake-decode:
++         * completing the txn is what lets the system PM suspend reach
++         * the CPU idle loop — the stub-era incomplete-txn behaviour
++         * hung the device-suspend phase on the i2c bus wait). The
++         * write still ARMS the wake-check: the resume work's reg 0xaa
++         * read now completes like the real IC's. The blank-time call
++         * sits ~55 s in, outside the boot-window gate. */
+         s->sleep_armed = true;
++        if (!x1600_guest_suspended) {
++            /* the first 0xa5 = the fb-blank notifier path (the
++             * recorded idle blank); a second one = the system PM
++             * suspend — arm the wake latch there */
++            if (s->sleep_seen) {
++                x1600_wake_latch_dev.armed = true;
++                fprintf(stderr, "x1600-i2c1 suspend latch armed\n");
++            }
++            s->sleep_seen = true;
++        }
++        x1600_i2c_raise(s, 0x40);               /* write txn: done */
++        return;
+     }
+     if (s->slave_reg != 0x00 &&
+         !(s->sleep_armed && s->slave_reg == 0xaa)) {
+@@ -3304,6 +3452,7 @@ static const VMStateDescription x1600_i2c_vmstate = {
+         VMSTATE_UINT32(rx_pos, X1600I2c),
+         VMSTATE_UINT32(slave_reg, X1600I2c),
+         VMSTATE_BOOL(sleep_armed, X1600I2c),
++        VMSTATE_BOOL(sleep_seen, X1600I2c),
+         VMSTATE_BOOL(touched, X1600I2c),
+         VMSTATE_UINT32(x, X1600I2c),
+         VMSTATE_UINT32(y, X1600I2c),
+@@ -4915,6 +5064,7 @@ static void x1600_mach_init(MachineState *ms)
+     /* INTC at 0x10001000: inputs from SoC IRQ lines, output wired to the
+      * CPU's line 2 (stock DTB core-intc: interrupt-parent cpuintc <2>). */
+     intc = qdev_new(TYPE_X1600_INTC);
++    x1600_intc_ref = intc;
+     sysbus_realize_and_unref(SYS_BUS_DEVICE(intc), &error_fatal);
+     sysbus_mmio_map(SYS_BUS_DEVICE(intc), 0, X1600_INTC_BASE);
+     qdev_connect_gpio_out(intc, 0, cpu->env.irq[2]);
+@@ -4980,6 +5130,7 @@ static void x1600_mach_init(MachineState *ms)
+                           &x1600_cgu_dev, "x1600.cgu", 0x100);
+     memory_region_add_subregion(sysmem, X1600_CGU_BASE, &x1600_cgu_dev.mmio);
+     vmstate_register(NULL, 0, &x1600_cgu_vmstate, &x1600_cgu_dev);
++    vmstate_register(NULL, 0, &x1600_wake_latch_vmstate, &x1600_wake_latch_dev);
+     /* SPL-shaped CGU reset state (v0.66): the stock SPL leaves the PLLs
+      * configured before the kernel runs; our all-zero reset state made
+      * the vendor clock framework compute ext-fallback rates (~24 MHz)
+-- 
+2.53.0
+

@@ -331,6 +331,30 @@ qemu-wifi-srom; supersedes the earlier headers for the wifi item —
 - Boot evidence lives in docs/M1-bringup-log.md (v0.1–v0.75),
   docs/M2-stubs-log.md (v0.66–v0.67), and
   docs/research-brief-stubs-player-launch.md.
+- **Status (M3 wake round, v0.93, worktree qemu-wake-decode):** the
+  wake-from-blank path is decoded end-to-end (M1-bringup-log v0.93).
+  The v0.78 picture corrected: the player's own fb layer owns both
+  blank directions (FBIOBLANK is 0x4611, not 0x460b — the "no
+  FBIOBLANK in hiby_player" conclusion was a false negative) and the
+  litegui key path cannot wake the stock build (POWER/VOLUP return
+  consumed without waking with the screen off; the type-2 code-16384
+  wake message needs key 200, which nothing in this firmware emits).
+  The real wake is the system PM path: echo mem suspend, the PMU INT
+  on INTC line 61 (i2c@0x10050000) as the wake source, the player's
+  resume path ending in the ON handler unblank. Model (commit e8001eb,
+  patch 0130): the hyn 0xa5 sleep write completes like the real IC
+  (the stub-era incomplete txn silently aborted the system PM's device
+  phase), the wake latch + the INTC wake-line bypass + the line-61
+  edge pulse + the PM wait-loop flag write are in. Verified live: the
+  suspend runs the full PM chain (devices/late/noirq complete, the
+  syscore list, the trampoline copy), the cascade fires on QMP Esc and
+  the CPU leaves the wait. Boot gate PASS on the pristine ae41e974
+  image. Parked to the next round: the PM wait-loop flag's kernel-side
+  setter (the model writes the flag word at the phys 0x75e004 on the
+  wake edge; the kernel's own setter path is still unidentified in the
+  stripped vmlinux, so the resumed kernel re-enters idle instead of
+  finishing the resume). The demo VM is main's — this round's model
+  reaches it via patch 0130 at the manager's integration.
 
 Goal: **boot the byte-identical stock firmware (v1.6 **unmodified** xImage +
 rootfs.squashfs) inside QEMU to the player's first UI frame, using it as the
