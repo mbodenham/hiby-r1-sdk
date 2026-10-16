@@ -1,0 +1,36 @@
+From a2a4c7a03a38bc97f00491e46b62ece4b9835e8e Mon Sep 17 00:00:00 2001
+From: Matthew Bodenham <matthew@bodenham.me>
+Date: Fri, 16 Oct 2026 10:35:36 +0900
+Subject: [PATCH] =?UTF-8?q?x1600:=20restore=20the=20abs-axis=20metadata=20?=
+ =?UTF-8?q?(exonerated=20by=20the=20v0.91=20bisect)=20=E2=80=94=20QMP=20ab?=
+ =?UTF-8?q?s=20mapping=20predictable?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ hw/mips/x1600.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/hw/mips/x1600.c b/hw/mips/x1600.c
+index 6d2e8c9..717beb9 100644
+--- a/hw/mips/x1600.c
++++ b/hw/mips/x1600.c
+@@ -3473,8 +3473,12 @@ static void x1600_input_sync(DeviceState *dev)
+ 
+ /* QMP input-send-event abs convention: values are 0..0x7fff fractions
+  * of the panel (v*dim>>15 at the cst8xx model), verified live (v0.79,
+- * v0.89). The metadata makes the axis ranges explicit so QMP callers
+- * can rely on the mapping; min/max 0..0x7fff keeps the identity. */
++ * re-verified after the abs-axis metadata revert: the raw pass-through
++ * is what the cst8xx/litegui chain expects). */
++/* The abs-axis metadata (v0.89/v0.91): explicit 0..0x7fff ranges so QMP
++ * callers can rely on the mapping. The tap-regression bisect (v0.91)
++ * exonerated this of the tap drop — the stock 30 s idle-blank window was
++ * the cause — so the metadata is restored for QMP predictability. */
+ static const QemuInputAbsInfo x1600_abs_info_x = {
+     .min = 0,
+     .max = 0x7fff,
+-- 
+2.53.0
+
