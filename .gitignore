@@ -2,3 +2,4 @@ unpacked/
 tools/vendors/
 .cctmp/
 .goalmill/
+__pycache__/
